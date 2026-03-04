@@ -475,18 +475,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
           // Map clip_duration_sec to valid Kling duration ("5" or "10")
           const klingDuration = (project.clip_duration_sec || 10) >= 10 ? "10" : "5";
 
-          for (let i = 0; i < scenes.length; i++) {
+          // Submit Kling tasks concurrently in batches of 3
+          const CONCURRENCY = 3;
+          const submitTask = async (i: number) => {
             const scene = scenes[i];
-            const status = await checkRunStatus();
-            if (status !== "running") {
-              await log("info", "Run halted during video generation");
-              return json({ status: "halted" });
-            }
-
-            await log("info", `Submitting Kling task for scene ${scene.scene_index}`);
             await supabase.from("scenes").update({ status: "clip_requested" as const }).eq("id", scene.id);
 
-            // Build Kling request body
             const startImageUrl = i > 0 && sceneKeyframes[scenes[i - 1].scene_index]
               ? sceneKeyframes[scenes[i - 1].scene_index]
               : sceneKeyframes[scene.scene_index];
@@ -502,7 +496,6 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
               sound: soundSupported && project.kling_sound ? "on" : "off",
             };
 
-            // Add end frame only in pro mode (std mode doesn't support image_tail for most models)
             const klingMode = project.kling_mode || "pro";
             if (klingMode === "pro" && endImageUrl && endImageUrl !== startImageUrl) {
               klingBody.image_tail = endImageUrl;
@@ -510,7 +503,6 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
 
             await log("debug", `Kling request body for scene ${scene.scene_index}`, klingBody);
 
-            // Submit task
             const klingToken = await getKlingToken();
             const createResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
               method: "POST",
@@ -525,18 +517,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             if (createResult.code !== 0 || !createResult.data?.task_id) {
               await log("error", `Kling task creation failed for scene ${scene.scene_index}: ${createResult.message}`, createResult);
               await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
-              continue;
+              return;
             }
 
             const taskId = createResult.data.task_id;
             await log("info", `Kling task ${taskId} submitted for scene ${scene.scene_index}`);
 
-            // Store task ID in scene metadata for polling
-            await supabase.from("scenes").update({
-              kling_prompt: scene.kling_prompt, // keep existing
-            }).eq("id", scene.id);
-
-            // Store kling task ID as an asset metadata entry
             await supabase.from("assets").insert({
               supabase_path: `pending-kling/${runId}/scene-${scene.scene_index}`,
               type: "clip" as any,
@@ -544,6 +530,23 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
               scene_id: scene.id,
               metadata: { kling_task_id: taskId, scene_index: scene.scene_index, status: "submitted" },
             });
+          };
+
+          // Process in batches of CONCURRENCY
+          for (let batch = 0; batch < scenes.length; batch += CONCURRENCY) {
+            const status = await checkRunStatus();
+            if (status !== "running") {
+              await log("info", "Run halted during video generation");
+              return json({ status: "halted" });
+            }
+
+            const batchEnd = Math.min(batch + CONCURRENCY, scenes.length);
+            const batchPromises = [];
+            for (let i = batch; i < batchEnd; i++) {
+              await log("info", `Submitting Kling task for scene ${scenes[i].scene_index}`);
+              batchPromises.push(submitTask(i));
+            }
+            await Promise.all(batchPromises);
           }
         }
 
