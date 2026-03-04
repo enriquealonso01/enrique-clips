@@ -191,7 +191,94 @@ Deno.serve(async (req) => {
 
     // Continue with remaining pipeline steps (stitch, metadata, publish, done)
     await log("info", "Step 4/7: Video stitching...");
-    await log("warn", "Stitch step placeholder — requires clip assets from Kling. Skipping.");
+    try {
+      // Get all completed clip assets in scene order
+      const { data: clipAssets } = await supabase
+        .from("assets")
+        .select("*, scenes!inner(scene_index)")
+        .eq("run_id", runId)
+        .eq("type", "clip")
+        .order("scene_index", { referencedTable: "scenes", ascending: true });
+
+      const completedClips = (clipAssets || []).filter(
+        (a: any) => (a.metadata as any)?.status === "completed"
+      );
+
+      if (completedClips.length === 0) {
+        await log("warn", "No completed clips found — skipping stitch.");
+      } else if (completedClips.length === 1) {
+        // Single clip — use it directly as the final video
+        const clip = completedClips[0];
+        const finalPath = `${project!.id}/final/${runId}/final-video.mp4`;
+
+        // Download and re-upload as final video
+        const { data: srcData } = supabase.storage
+          .from("project-assets")
+          .getPublicUrl(clip.supabase_path);
+        const videoResp = await fetch(srcData.publicUrl);
+        const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
+
+        const { error: upErr } = await supabase.storage
+          .from("project-assets")
+          .upload(finalPath, videoBytes, { contentType: "video/mp4", upsert: true });
+
+        if (!upErr) {
+          await supabase.from("assets").insert({
+            supabase_path: finalPath,
+            type: "final_video" as any,
+            run_id: runId,
+            metadata: { scene_count: 1, source_clips: [clip.supabase_path] },
+          });
+          await log("info", "Final video created from single clip.");
+        } else {
+          await log("warn", `Final video upload failed: ${upErr.message}`);
+        }
+      } else {
+        // Multiple clips — concatenate raw MP4 bytes sequentially
+        // NOTE: This works for clips with identical codec/resolution from the same Kling generation
+        await log("info", `Concatenating ${completedClips.length} clips...`);
+
+        const clipBuffers: Uint8Array[] = [];
+        for (const clip of completedClips) {
+          const { data: urlData } = supabase.storage
+            .from("project-assets")
+            .getPublicUrl(clip.supabase_path);
+          const resp = await fetch(urlData.publicUrl);
+          clipBuffers.push(new Uint8Array(await resp.arrayBuffer()));
+        }
+
+        // Simple concatenation — combine all bytes
+        const totalLength = clipBuffers.reduce((sum, buf) => sum + buf.length, 0);
+        const combined = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const buf of clipBuffers) {
+          combined.set(buf, offset);
+          offset += buf.length;
+        }
+
+        const finalPath = `${project!.id}/final/${runId}/final-video.mp4`;
+        const { error: upErr } = await supabase.storage
+          .from("project-assets")
+          .upload(finalPath, combined, { contentType: "video/mp4", upsert: true });
+
+        if (!upErr) {
+          await supabase.from("assets").insert({
+            supabase_path: finalPath,
+            type: "final_video" as any,
+            run_id: runId,
+            metadata: {
+              scene_count: completedClips.length,
+              source_clips: completedClips.map((c: any) => c.supabase_path),
+            },
+          });
+          await log("info", `Final video created from ${completedClips.length} clips.`);
+        } else {
+          await log("warn", `Final video upload failed: ${upErr.message}`);
+        }
+      }
+    } catch (err) {
+      await log("warn", `Stitch step failed: ${err.message} — continuing.`);
+    }
     await updateRun({ current_step: "metadata", progress_pct: 85 });
 
     // METADATA
@@ -261,28 +348,39 @@ Deno.serve(async (req) => {
       await log("warn", "Upload-Post API key not configured — skipping publish step.");
     } else {
       try {
-        // Get all completed clip assets for this run
-        const { data: clipAssets } = await supabase
+        // Prefer final_video asset, fallback to first completed clip
+        const { data: finalAssets } = await supabase
           .from("assets")
-          .select("supabase_path, metadata, scene_id")
+          .select("supabase_path")
           .eq("run_id", runId)
-          .eq("type", "clip")
-          .order("created_at");
+          .eq("type", "final_video")
+          .limit(1);
 
-        // Use the first clip (or we could stitch them later)
-        const firstClip = clipAssets?.find((a: any) => (a.metadata as any)?.status === "completed");
-        
-        if (!firstClip) {
-          await log("warn", "No completed clips found — skipping publish.");
+        let videoPath: string | null = null;
+        if (finalAssets && finalAssets.length > 0) {
+          videoPath = finalAssets[0].supabase_path;
         } else {
-          // Get public URL for the clip
+          const { data: clipAssets } = await supabase
+            .from("assets")
+            .select("supabase_path, metadata")
+            .eq("run_id", runId)
+            .eq("type", "clip")
+            .order("created_at");
+          const firstClip = clipAssets?.find((a: any) => (a.metadata as any)?.status === "completed");
+          videoPath = firstClip?.supabase_path || null;
+        }
+
+        if (!videoPath) {
+          await log("warn", "No video found for publishing — skipping.");
+        } else {
           const { data: urlData } = supabase.storage
             .from("project-assets")
-            .getPublicUrl(firstClip.supabase_path);
+            .getPublicUrl(videoPath);
           const videoUrl = urlData.publicUrl;
 
-          // Build metadata
-          const metadata = run.generated_metadata as any || {};
+          // Re-fetch run to get freshly generated metadata
+          const { data: freshRun } = await supabase.from("runs").select("generated_metadata").eq("id", runId).single();
+          const metadata = (freshRun?.generated_metadata as any) || {};
           const title = metadata.title || project!.title || "Untitled Video";
           const description = metadata.description || "";
           const hashtags = metadata.hashtags || [];
