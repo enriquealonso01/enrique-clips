@@ -7,6 +7,17 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Plus, Play, Pause, Square } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -53,6 +64,38 @@ export default function ProjectsPage() {
     onError: () => toast({ title: "Error", description: "Failed to create project", variant: "destructive" }),
   });
 
+  const runNow = useMutation({
+    mutationFn: async (projectId: string) => {
+      const { data, error } = await supabase
+        .from("runs")
+        .insert({ project_id: projectId, status: "queued" as const })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["latest-runs"] });
+      toast({ title: "Run created", description: "Navigating to run monitor..." });
+      navigate(`/runs/${data.id}`);
+    },
+    onError: () => toast({ title: "Error", description: "Failed to create run", variant: "destructive" }),
+  });
+
+  const updateRunStatus = useMutation({
+    mutationFn: async ({ runId, status }: { runId: string; status: string }) => {
+      const updates: Record<string, unknown> = { status };
+      if (status === "stopped") updates.finished_at = new Date().toISOString();
+      const { error } = await supabase.from("runs").update(updates).eq("id", runId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["latest-runs"] });
+      toast({ title: "Updated", description: "Run status updated" });
+    },
+    onError: () => toast({ title: "Error", description: "Failed to update run", variant: "destructive" }),
+  });
+
   const toggleEnabled = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
       const { error } = await supabase.from("projects").update({ is_enabled: enabled }).eq("id", id);
@@ -95,6 +138,10 @@ export default function ProjectsPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {projects?.map((project) => {
             const latestRun = getLatestRun(project.id);
+            const canPause = latestRun?.status === "running";
+            const canResume = latestRun?.status === "paused";
+            const canStop = latestRun && ["running", "paused", "queued"].includes(latestRun.status);
+
             return (
               <Card
                 key={project.id}
@@ -127,15 +174,59 @@ export default function ProjectsPage() {
                     <span>{project.scene_count} × {project.clip_duration_sec}s</span>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); }}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={runNow.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        runNow.mutate(project.id);
+                      }}
+                    >
                       <Play className="h-3 w-3" />
                     </Button>
-                    <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); }}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canPause && !canResume}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (latestRun) {
+                          updateRunStatus.mutate({
+                            runId: latestRun.id,
+                            status: canPause ? "paused" : "running",
+                          });
+                        }
+                      }}
+                    >
                       <Pause className="h-3 w-3" />
                     </Button>
-                    <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); }}>
-                      <Square className="h-3 w-3" />
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!canStop}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Square className="h-3 w-3" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Stop this run?</AlertDialogTitle>
+                          <AlertDialogDescription>This will stop the current run. This action cannot be undone.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => {
+                            if (latestRun) updateRunStatus.mutate({ runId: latestRun.id, status: "stopped" });
+                          }}>
+                            Stop Run
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 </CardContent>
               </Card>

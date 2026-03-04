@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,14 +7,20 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Play, Pause, Square } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { toast } from "@/hooks/use-toast";
 
 const STEPS = ["plan", "keyframes", "kling", "stitch", "metadata", "publish", "done"] as const;
 
 export default function RunMonitor() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [logFilter, setLogFilter] = useState<string>("all");
 
   const { data: run } = useQuery({
@@ -25,7 +31,6 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
-    refetchInterval: 5000,
   });
 
   const { data: scenes } = useQuery({
@@ -48,7 +53,6 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
-    refetchInterval: 5000,
   });
 
   const { data: publishJobs } = useQuery({
@@ -61,9 +65,47 @@ export default function RunMonitor() {
     enabled: !!runId,
   });
 
+  // Realtime subscriptions
+  useEffect(() => {
+    if (!runId) return;
+
+    const channel = supabase
+      .channel(`run-monitor-${runId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'runs', filter: `id=eq.${runId}` }, () => {
+        queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scenes', filter: `run_id=eq.${runId}` }, () => {
+        queryClient.invalidateQueries({ queryKey: ["scenes", runId] });
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'run_logs', filter: `run_id=eq.${runId}` }, () => {
+        queryClient.invalidateQueries({ queryKey: ["run-logs", runId, logFilter] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'publish_jobs', filter: `run_id=eq.${runId}` }, () => {
+        queryClient.invalidateQueries({ queryKey: ["publish-jobs", runId] });
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [runId, logFilter, queryClient]);
+
+  const updateStatus = async (status: string) => {
+    const updates: Record<string, unknown> = { status };
+    if (status === "stopped") updates.finished_at = new Date().toISOString();
+    const { error } = await supabase.from("runs").update(updates).eq("id", runId!);
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } else {
+      queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      toast({ title: "Updated", description: `Run ${status}` });
+    }
+  };
+
   if (!run) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading run...</div>;
 
   const currentStepIndex = STEPS.indexOf(run.current_step);
+  const canPause = run.status === "running";
+  const canResume = run.status === "paused";
+  const canStop = ["running", "paused", "queued"].includes(run.status);
 
   return (
     <div className="space-y-6">
@@ -79,9 +121,29 @@ export default function RunMonitor() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline"><Play className="h-3 w-3" /></Button>
-          <Button size="sm" variant="outline"><Pause className="h-3 w-3" /></Button>
-          <Button size="sm" variant="outline"><Square className="h-3 w-3" /></Button>
+          <Button size="sm" variant="outline" disabled={!canResume} onClick={() => updateStatus("running")}>
+            <Play className="h-3 w-3" />
+          </Button>
+          <Button size="sm" variant="outline" disabled={!canPause} onClick={() => updateStatus("paused")}>
+            <Pause className="h-3 w-3" />
+          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="outline" disabled={!canStop}>
+                <Square className="h-3 w-3" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Stop this run?</AlertDialogTitle>
+                <AlertDialogDescription>This will stop the current run. This action cannot be undone.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => updateStatus("stopped")}>Stop Run</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 

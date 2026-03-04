@@ -9,18 +9,30 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, Copy, RefreshCw, AlertTriangle } from "lucide-react";
+import { StatusBadge } from "@/components/StatusBadge";
+import { ArrowLeft, Save, Copy, RefreshCw, AlertTriangle, Upload, X, Loader2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Project = Tables<"projects">;
+
+async function hashTokenSHA256(token: string): Promise<string> {
+  const data = new TextEncoder().encode(token);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 export default function ProjectEditor() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Partial<Project>>({});
+  const [uploading, setUploading] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -32,9 +44,46 @@ export default function ProjectEditor() {
     enabled: !!projectId,
   });
 
+  // Fetch initial image asset
+  const { data: initialAsset } = useQuery({
+    queryKey: ["initial-asset", project?.initial_asset_id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("assets").select("*").eq("id", project!.initial_asset_id!).single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!project?.initial_asset_id,
+  });
+
+  // Fetch runs for this project
+  const { data: runs } = useQuery({
+    queryKey: ["project-runs", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("runs")
+        .select("*")
+        .eq("project_id", projectId!)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!projectId,
+  });
+
   useEffect(() => {
     if (project) setForm(project);
   }, [project]);
+
+  // Get public URL for the initial image
+  useEffect(() => {
+    if (initialAsset?.supabase_path) {
+      const { data } = supabase.storage.from("project-assets").getPublicUrl(initialAsset.supabase_path);
+      setImageUrl(data.publicUrl);
+    } else {
+      setImageUrl(null);
+    }
+  }, [initialAsset]);
 
   const updateProject = useMutation({
     mutationFn: async (updates: Partial<Project>) => {
@@ -55,6 +104,59 @@ export default function ProjectEditor() {
   };
 
   const update = (field: keyof Project, value: any) => setForm((prev) => ({ ...prev, [field]: value }));
+
+  const handleImageUpload = async (file: File) => {
+    if (!projectId) return;
+    setUploading(true);
+    try {
+      const path = `${projectId}/initial-image/${file.name}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("project-assets")
+        .upload(path, file, { upsert: true });
+      if (uploadErr) throw uploadErr;
+
+      // Create asset record
+      const { data: asset, error: assetErr } = await supabase
+        .from("assets")
+        .insert({ supabase_path: path, type: "initial_image" as const })
+        .select()
+        .single();
+      if (assetErr) throw assetErr;
+
+      // Update project
+      const { error: projErr } = await supabase
+        .from("projects")
+        .update({ initial_asset_id: asset.id })
+        .eq("id", projectId);
+      if (projErr) throw projErr;
+
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["initial-asset"] });
+      toast({ title: "Uploaded", description: "Initial image set successfully" });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleRemoveImage = async () => {
+    if (!projectId || !project?.initial_asset_id) return;
+    try {
+      await supabase.from("projects").update({ initial_asset_id: null }).eq("id", projectId);
+      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["initial-asset"] });
+      toast({ title: "Removed", description: "Initial image removed" });
+    } catch {
+      toast({ title: "Error", description: "Failed to remove image", variant: "destructive" });
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith("image/")) handleImageUpload(file);
+  };
 
   const totalDuration = (form.scene_count || 0) * (form.clip_duration_sec || 0);
   const durationWarning = totalDuration > 180;
@@ -96,13 +198,14 @@ export default function ProjectEditor() {
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="series">Series</TabsTrigger>
           <TabsTrigger value="image">Image</TabsTrigger>
           <TabsTrigger value="kling">Kling</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="api">API</TabsTrigger>
+          <TabsTrigger value="runs">Runs</TabsTrigger>
         </TabsList>
 
         <TabsContent value="series" className="space-y-4 mt-4">
@@ -164,11 +267,57 @@ export default function ProjectEditor() {
               <CardDescription>Seed image for consistent scene generation</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="border-2 border-dashed rounded-lg p-8 text-center">
-                <p className="text-muted-foreground mb-2">Upload an initial image</p>
-                <p className="text-xs text-muted-foreground mb-4">This image seeds all keyframe generation for visual consistency</p>
-                <Button variant="outline">Choose File</Button>
-              </div>
+              {imageUrl ? (
+                <div className="space-y-4">
+                  <div className="relative inline-block">
+                    <img src={imageUrl} alt="Initial image" className="max-h-64 rounded-lg border border-border" />
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2 h-6 w-6"
+                      onClick={handleRemoveImage}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                      Replace Image
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {uploading ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                      <p className="text-muted-foreground">Uploading...</p>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                      <p className="text-muted-foreground mb-2">Drop an image here or click to upload</p>
+                      <p className="text-xs text-muted-foreground">This image seeds all keyframe generation for visual consistency</p>
+                    </>
+                  )}
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageUpload(file);
+                  e.target.value = "";
+                }}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -204,9 +353,7 @@ export default function ProjectEditor() {
 
         <TabsContent value="publish" className="space-y-4 mt-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Upload-Post Configuration</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Upload-Post Configuration</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>API Key</Label>
@@ -347,10 +494,11 @@ export default function ProjectEditor() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => {
+                <Button variant="outline" onClick={async () => {
                   const token = crypto.randomUUID();
                   const hint = token.slice(-4);
-                  update("project_control_token_hash", token);
+                  const hash = await hashTokenSHA256(token);
+                  update("project_control_token_hash", hash);
                   update("project_control_token_hint", hint);
                   navigator.clipboard.writeText(token);
                   toast({ title: "Token Generated", description: "Copied to clipboard. Save it — you won't see it again." });
@@ -365,13 +513,47 @@ export default function ProjectEditor() {
               <div className="space-y-2">
                 <Label>Endpoints</Label>
                 <div className="space-y-1 text-sm font-mono text-muted-foreground bg-muted p-3 rounded-md">
-                  <p>POST /functions/v1/projects/{projectId}/trigger</p>
-                  <p>POST /functions/v1/projects/{projectId}/pause</p>
-                  <p>POST /functions/v1/projects/{projectId}/resume</p>
-                  <p>POST /functions/v1/projects/{projectId}/stop</p>
-                  <p>GET  /functions/v1/projects/{projectId}/status</p>
+                  <p>POST /functions/v1/project-control?project_id={projectId}&action=trigger</p>
+                  <p>POST /functions/v1/project-control?project_id={projectId}&action=pause</p>
+                  <p>POST /functions/v1/project-control?project_id={projectId}&action=resume</p>
+                  <p>POST /functions/v1/project-control?project_id={projectId}&action=stop</p>
+                  <p>GET  /functions/v1/project-control?project_id={projectId}&action=status</p>
                 </div>
+                <p className="text-xs text-muted-foreground">Include header: <code className="bg-muted px-1 rounded">X-Project-Token: YOUR_TOKEN</code></p>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="runs" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Run History</CardTitle>
+              <CardDescription>Recent runs for this project</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {runs && runs.length > 0 ? (
+                <div className="space-y-2">
+                  {runs.map((run) => (
+                    <div
+                      key={run.id}
+                      className="flex items-center justify-between p-3 rounded-md border border-border hover:bg-muted/50 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/runs/${run.id}`)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <StatusBadge status={run.status} />
+                        <span className="text-sm text-muted-foreground capitalize">{run.current_step}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                        <span>{run.progress_pct}%</span>
+                        <span>{new Date(run.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-center text-muted-foreground py-8">No runs yet. Click "Run Now" from the projects list to start one.</p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
