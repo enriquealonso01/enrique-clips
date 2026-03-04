@@ -1,73 +1,71 @@
 
-# Phase 1: Social Media AI Creator Manager — UI + Database Foundation
 
-## Overview
-Build the web app shell and Supabase database schema for managing a chain of automated social media AI creator/poster projects. This phase focuses on the UI, data model, and project management — no pipeline execution yet.
+# Phase 2: Edge Functions, Image Upload, Run Triggering & Wiring
 
-## 1. Database Schema (Supabase Cloud)
-Set up all core tables with proper relationships and RLS:
-- **projects** — title, prompts, scene config, Kling config, Upload-Post config, scheduling, platform toggles, publish_defaults JSON, control token
-- **runs** — status state machine (queued → running → paused → stopped → failed → completed), current_step, progress
-- **scenes** — per-run scene data with prompts, status tracking
-- **assets** — references to stored files (initial images, keyframes, clips, final videos) with type enum and metadata
-- **publish_jobs** — Upload-Post tracking with request_id, job_id, per-platform results
-- **run_logs** — structured logging with level, message, data
-- Storage buckets for project assets (initial images, keyframes, clips, final videos)
+Phase 1 delivered the UI shell and database. Phase 2 connects everything: functional image uploads, run creation, project control API endpoints, and real-time run monitoring.
 
-## 2. Projects List Page
-- Card/table view showing all projects with title, enabled/disabled toggle, last run status, next scheduled run
-- Quick action buttons: Run Now, Pause/Resume, Stop
-- Create new project button
+## 1. Initial Image Upload (Image Tab)
+Wire the "Choose File" button in the Project Editor Image tab to actually upload images to the `project-assets` storage bucket.
 
-## 3. Project Editor (Tabbed Interface)
-**Series Tab:**
-- Title, series prompt, series rules, negative prompt
-- Scene count, clip duration, aspect ratio selector (9:16 / 16:9)
-- Total duration estimate with Shorts/Reels length warnings (max 180s)
+- File input with drag-and-drop support
+- Upload to `project-assets/{projectId}/initial-image/{filename}`
+- Create an `assets` record with `type = 'initial_image'`
+- Update `projects.initial_asset_id` to point to the new asset
+- Show preview of uploaded image with replace/remove buttons
+- Display loading state during upload
 
-**Initial Image Tab:**
-- Image upload to Supabase Storage
-- Preview of current initial image
-- Replace/remove functionality
+## 2. Run Now / Pause / Resume / Stop Wiring
+Connect the action buttons on the Projects List and Run Monitor pages.
 
-**Kling Tab:**
-- Model name, mode (pro/std), sound toggle
+- **Run Now**: Insert a new `runs` row with `status = 'queued'`, navigate to Run Monitor
+- **Pause**: Update run `status` to `'paused'`
+- **Resume**: Update run `status` back to `'running'`
+- **Stop**: Update run `status` to `'stopped'`
+- Add confirmation dialogs for Stop
+- Disable buttons based on current run state (e.g., can't pause a queued run)
 
-**Publish Tab:**
-- Upload-Post API key field (stored securely, shows configured/not configured)
-- Profile username input
-- Platform toggles: TikTok, Instagram, YouTube, Facebook
-- Per-platform settings panels matching the publish_defaults JSON schema (privacy, media type, AI disclosure flags, etc.)
-- Facebook page ID field
+## 3. Project Control API (Edge Functions)
+Create edge functions for external automation, secured by project control tokens.
 
-**Schedule Tab:**
-- Frequency type: manual, interval hours, or cron expression
-- Timezone selector (default America/New_York)
+- **`project-control`** edge function handling routes:
+  - `POST /trigger` — creates a new run for the project
+  - `POST /pause` — pauses the active run
+  - `POST /resume` — resumes a paused run
+  - `POST /stop` — stops the active run
+  - `GET /status` — returns current run status
+- Token validation: hash the incoming `X-Project-Token` header and compare against `project_control_token_hash`
+- Set `verify_jwt = false` in config.toml for this function
 
-**API Tab:**
-- Generate/regenerate project control token
-- Show token hint (last 4 chars)
-- Display endpoint URLs for external automation
+## 4. Upload-Post Webhook Receiver (Edge Function)
+Create an edge function to receive webhook callbacks from Upload-Post.
 
-## 4. Run Monitor Page
-- Step-by-step timeline visualization (Plan → Keyframes → Kling → Stitch → Metadata → Publish → Done)
-- Per-scene table with columns for scene index, title, status, keyframe previews (placeholder), clip link (placeholder)
-- Pause/Resume/Stop controls
-- Logs panel with filterable log levels
-- Publish results panel showing per-platform status
+- **`uploadpost-webhook`** edge function
+- Receives POST with platform results payload
+- Updates `publish_jobs.platform_results` and `publish_jobs.status`
+- Set `verify_jwt = false` in config.toml
 
-## 5. Global Settings Page
-- API key configuration fields for: OpenAI, Gemini, Kling, Upload-Post (placeholder storage, marked as "will be stored securely")
-- Webhook URL display for Upload-Post
+## 5. Runs History on Project Detail
+Add a "Runs" section to the Project Editor showing past runs.
 
-## 6. Navigation & Layout
-- Sidebar navigation: Projects, Settings
-- Project detail pages accessible from the list
-- Responsive layout with clean, professional design
-- Toast notifications for actions
+- List of recent runs with status badges, timestamps, and links to Run Monitor
+- Visible below or as a tab in the Project Editor
 
-## Design Style
-- Clean, modern dashboard aesthetic
-- Dark-friendly with proper color tokens
-- Status badges with color coding (green=completed, yellow=running, red=failed, gray=queued)
-- Card-based layouts for project list, table-based for scenes/logs
+## 6. Realtime for Run Monitor
+Enable realtime on `runs`, `scenes`, and `run_logs` tables so the Run Monitor page auto-updates without polling.
+
+- Add tables to `supabase_realtime` publication
+- Replace `refetchInterval` polling with Supabase realtime subscriptions
+- Live log streaming and progress updates
+
+## 7. API Key Secure Storage
+Store API keys as project-level encrypted values rather than plaintext in the projects table.
+
+- The Upload-Post API key in the Publish tab currently saves to `uploadpost_api_key_encrypted` as plaintext
+- Hash or encrypt before storing; show only configured/not-configured status
+- Global settings keys (OpenAI, Gemini, Kling) stored as Cloud secrets via the secrets tool
+
+## Technical Notes
+- Edge functions use CORS headers for browser access
+- Project control token is hashed with SHA-256 before comparison
+- Realtime migration: `ALTER PUBLICATION supabase_realtime ADD TABLE runs, scenes, run_logs;`
+
