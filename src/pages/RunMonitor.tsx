@@ -31,7 +31,10 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
+    refetchInterval: 5000,
   });
+
+  const isActive = run?.status === "running" || run?.status === "queued" || run?.status === "paused";
 
   const { data: scenes } = useQuery({
     queryKey: ["scenes", runId],
@@ -41,6 +44,7 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
+    refetchInterval: 5000,
   });
 
   const { data: logs } = useQuery({
@@ -53,6 +57,7 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
+    refetchInterval: 5000,
   });
 
   const { data: publishJobs } = useQuery({
@@ -63,6 +68,7 @@ export default function RunMonitor() {
       return data;
     },
     enabled: !!runId,
+    refetchInterval: 5000,
   });
 
   // Realtime subscriptions
