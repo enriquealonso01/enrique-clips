@@ -260,10 +260,103 @@ Deno.serve(async (req) => {
     if (!project!.uploadpost_api_key_encrypted || !project!.uploadpost_api_key_configured) {
       await log("warn", "Upload-Post API key not configured — skipping publish step.");
     } else {
-      await supabase
-        .from("publish_jobs")
-        .insert({ run_id: runId, status: "not_started" as const });
-      await log("info", "Publish job created.");
+      try {
+        // Get all completed clip assets for this run
+        const { data: clipAssets } = await supabase
+          .from("assets")
+          .select("supabase_path, metadata, scene_id")
+          .eq("run_id", runId)
+          .eq("type", "clip")
+          .order("created_at");
+
+        // Use the first clip (or we could stitch them later)
+        const firstClip = clipAssets?.find((a: any) => (a.metadata as any)?.status === "completed");
+        
+        if (!firstClip) {
+          await log("warn", "No completed clips found — skipping publish.");
+        } else {
+          // Get public URL for the clip
+          const { data: urlData } = supabase.storage
+            .from("project-assets")
+            .getPublicUrl(firstClip.supabase_path);
+          const videoUrl = urlData.publicUrl;
+
+          // Build metadata
+          const metadata = run.generated_metadata as any || {};
+          const title = metadata.title || project!.title || "Untitled Video";
+          const description = metadata.description || "";
+          const hashtags = metadata.hashtags || [];
+          const hashtagStr = hashtags.map((h: string) => `#${h}`).join(" ");
+          const fullDescription = description + (hashtagStr ? `\n\n${hashtagStr}` : "");
+
+          // Determine platforms
+          const platforms = project!.publish_platforms as Record<string, boolean>;
+          const enabledPlatforms = Object.entries(platforms)
+            .filter(([_, enabled]) => enabled)
+            .map(([platform]) => platform);
+
+          if (enabledPlatforms.length === 0) {
+            await log("warn", "No publish platforms enabled — skipping.");
+          } else {
+            // Create publish job
+            const { data: publishJob } = await supabase
+              .from("publish_jobs")
+              .insert({ run_id: runId, status: "submitted" as const })
+              .select()
+              .single();
+
+            // Call Upload-Post API
+            const apiKey = project!.uploadpost_api_key_encrypted!;
+            const formData = new FormData();
+            formData.append("video", videoUrl);
+            formData.append("title", title);
+            formData.append("description", fullDescription);
+            if (project!.uploadpost_profile_username) {
+              formData.append("user", project!.uploadpost_profile_username);
+            }
+            for (const platform of enabledPlatforms) {
+              formData.append("platform[]", platform);
+            }
+            formData.append("async_upload", "true");
+
+            await log("info", `Calling Upload-Post API for platforms: ${enabledPlatforms.join(", ")}`);
+
+            const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
+              method: "POST",
+              headers: {
+                "Authorization": `Apikey ${apiKey}`,
+              },
+              body: formData,
+            });
+
+            const uploadResult = await uploadResp.json();
+            await log("info", "Upload-Post API response", uploadResult);
+
+            if (uploadResp.ok && uploadResult.request_id) {
+              await supabase
+                .from("publish_jobs")
+                .update({
+                  uploadpost_request_id: uploadResult.request_id,
+                  uploadpost_job_id: uploadResult.job_id || null,
+                  status: "polling" as const,
+                })
+                .eq("id", publishJob!.id);
+              await log("info", `Upload-Post job submitted: ${uploadResult.request_id}`);
+            } else {
+              await supabase
+                .from("publish_jobs")
+                .update({
+                  status: "failed" as const,
+                  platform_results: uploadResult,
+                })
+                .eq("id", publishJob!.id);
+              await log("error", `Upload-Post API failed: ${JSON.stringify(uploadResult)}`);
+            }
+          }
+        }
+      } catch (err) {
+        await log("error", `Publish step failed: ${err.message}`);
+      }
     }
 
     // DONE
