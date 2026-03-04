@@ -35,6 +35,32 @@ export default function RunMonitor() {
   });
 
   const isActive = run?.status === "running" || run?.status === "queued" || run?.status === "paused";
+  const isKlingStep = run?.current_step === "kling" && run?.status === "running";
+
+  // Auto-poll Kling tasks when in kling step
+  useEffect(() => {
+    if (!isKlingStep || !runId) return;
+
+    const pollKling = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("poll-kling", {
+          body: { run_id: runId },
+        });
+        if (data) {
+          queryClient.invalidateQueries({ queryKey: ["run", runId] });
+          queryClient.invalidateQueries({ queryKey: ["scenes", runId] });
+          queryClient.invalidateQueries({ queryKey: ["run-logs", runId] });
+        }
+      } catch (err) {
+        console.error("Poll-kling error:", err);
+      }
+    };
+
+    // Poll immediately, then every 15 seconds
+    pollKling();
+    const interval = setInterval(pollKling, 15000);
+    return () => clearInterval(interval);
+  }, [isKlingStep, runId, queryClient]);
 
   const { data: scenes } = useQuery({
     queryKey: ["scenes", runId],
