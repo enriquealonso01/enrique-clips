@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import Index from "./pages/Index";
 import ProjectEditor from "./pages/ProjectEditor";
+import ProjectGallery from "./pages/ProjectGallery";
 import RunMonitor from "./pages/RunMonitor";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
@@ -22,6 +23,7 @@ const App = () => (
           <Route element={<AppLayout />}>
             <Route path="/" element={<Index />} />
             <Route path="/projects/:projectId" element={<ProjectEditor />} />
+            <Route path="/projects/:projectId/gallery" element={<ProjectGallery />} />
             <Route path="/runs/:runId" element={<RunMonitor />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
