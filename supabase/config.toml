@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.uploadpost-webhook]
 verify_jwt = false
+
+[functions.run-pipeline]
+verify_jwt = false

@@ -239,6 +239,7 @@ export type Database = {
           current_step: Database["public"]["Enums"]["run_step"]
           error_message: string | null
           finished_at: string | null
+          generated_metadata: Json | null
           id: string
           progress_pct: number
           project_id: string
@@ -250,6 +251,7 @@ export type Database = {
           current_step?: Database["public"]["Enums"]["run_step"]
           error_message?: string | null
           finished_at?: string | null
+          generated_metadata?: Json | null
           id?: string
           progress_pct?: number
           project_id: string
@@ -261,6 +263,7 @@ export type Database = {
           current_step?: Database["public"]["Enums"]["run_step"]
           error_message?: string | null
           finished_at?: string | null
+          generated_metadata?: Json | null
           id?: string
           progress_pct?: number
           project_id?: string

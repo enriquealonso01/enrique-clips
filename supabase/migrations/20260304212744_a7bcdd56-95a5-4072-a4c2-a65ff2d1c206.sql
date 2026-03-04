@@ -1,0 +1,1 @@
+ALTER TABLE public.runs ADD COLUMN generated_metadata jsonb DEFAULT '{}'::jsonb;
