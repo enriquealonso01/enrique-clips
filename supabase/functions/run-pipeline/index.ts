@@ -51,8 +51,14 @@ Deno.serve(async (req) => {
     return data?.status || "unknown";
   }
 
-  // Helper: call Lovable AI (non-streaming)
-  async function callAI(messages: Array<{ role: string; content: string }>, tools?: any[], tool_choice?: any, model?: string) {
+  // Helper: call Lovable AI (non-streaming, with optional modalities)
+  async function callAI(
+    messages: Array<{ role: string; content: any }>,
+    tools?: any[],
+    tool_choice?: any,
+    model?: string,
+    modalities?: string[]
+  ) {
     const body: any = {
       model: model || "google/gemini-3-flash-preview",
       messages,
@@ -60,6 +66,7 @@ Deno.serve(async (req) => {
     };
     if (tools) body.tools = tools;
     if (tool_choice) body.tool_choice = tool_choice;
+    if (modalities) body.modalities = modalities;
 
     const resp = await fetch(AI_GATEWAY, {
       method: "POST",
@@ -77,8 +84,96 @@ Deno.serve(async (req) => {
     return await resp.json();
   }
 
-  // Return 202 immediately, process in background
-  // (We process synchronously but the client doesn't wait)
+  // Helper: extract image from AI response, upload to storage, create asset
+  async function extractAndUploadImage(
+    aiResult: any,
+    storagePath: string,
+    assetType: string,
+    assetMeta: Record<string, unknown>
+  ): Promise<string | null> {
+    const message = aiResult.choices?.[0]?.message;
+    if (!message) return null;
+
+    // Check images array (Lovable AI gateway format)
+    const images = message.images;
+    if (images && Array.isArray(images) && images.length > 0) {
+      const imgUrl = images[0]?.image_url?.url;
+      if (imgUrl) {
+        const base64Match = imgUrl.match(/^data:([^;]+);base64,(.+)$/s);
+        if (base64Match) {
+          const mimeType = base64Match[1];
+          const raw = atob(base64Match[2]);
+          const imageData = new Uint8Array(raw.length);
+          for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
+
+          const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
+          const fullPath = `${storagePath}.${ext}`;
+
+          const { error: uploadErr } = await supabase.storage
+            .from("project-assets")
+            .upload(fullPath, imageData, { contentType: mimeType, upsert: true });
+
+          if (!uploadErr) {
+            const { data: asset } = await supabase
+              .from("assets")
+              .insert({
+                supabase_path: fullPath,
+                type: assetType as any,
+                run_id: assetMeta.run_id as string || null,
+                scene_id: assetMeta.scene_id as string || null,
+                metadata: assetMeta,
+              })
+              .select()
+              .single();
+            return asset?.id || null;
+          } else {
+            await log("warn", `Upload failed for ${fullPath}: ${uploadErr.message}`);
+          }
+        }
+      }
+    }
+
+    // Fallback: check content array for inline images
+    const content = message.content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        let imgUrl: string | undefined;
+        if (part.type === "image_url" && part.image_url?.url) imgUrl = part.image_url.url;
+        if (imgUrl) {
+          const base64Match = imgUrl.match(/^data:([^;]+);base64,(.+)$/s);
+          if (base64Match) {
+            const mimeType = base64Match[1];
+            const raw = atob(base64Match[2]);
+            const imageData = new Uint8Array(raw.length);
+            for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
+            const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
+            const fullPath = `${storagePath}.${ext}`;
+            const { error: uploadErr } = await supabase.storage
+              .from("project-assets")
+              .upload(fullPath, imageData, { contentType: mimeType, upsert: true });
+            if (!uploadErr) {
+              const { data: asset } = await supabase.from("assets").insert({
+                supabase_path: fullPath, type: assetType as any,
+                run_id: assetMeta.run_id as string || null,
+                scene_id: assetMeta.scene_id as string || null,
+                metadata: assetMeta,
+              }).select().single();
+              return asset?.id || null;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  const json = (data: unknown, status = 200) =>
+    new Response(JSON.stringify(data), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
   try {
     // Fetch run and project
     const { data: run, error: runErr } = await supabase
@@ -86,12 +181,7 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("id", runId)
       .single();
-    if (runErr || !run) {
-      return new Response(JSON.stringify({ error: "Run not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (runErr || !run) return json({ error: "Run not found" }, 404);
 
     const { data: project, error: projErr } = await supabase
       .from("projects")
@@ -101,10 +191,7 @@ Deno.serve(async (req) => {
     if (projErr || !project) {
       await log("error", "Project not found");
       await updateRun({ status: "failed", error_message: "Project not found" });
-      return new Response(JSON.stringify({ error: "Project not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Project not found" }, 404);
     }
 
     // Start run
@@ -115,6 +202,41 @@ Deno.serve(async (req) => {
       progress_pct: 0,
     });
     await log("info", "Pipeline started");
+
+    // ===== STEP 0: GENERATE INITIAL IMAGE =====
+    // The initial image is generated per-run to maintain visual consistency across all scenes
+    await log("info", "Generating initial consistency image for this run...");
+    try {
+      const initialImagePrompt = project.series_prompt
+        ? `Generate a single high-quality ${project.aspect_ratio} reference image that captures the visual style, mood, and key character/subject for this series: "${project.series_prompt}". This image will be used as a visual anchor to keep all scenes consistent. Style: cinematic, high detail, rich colors.`
+        : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
+
+      const imageResult = await callAI(
+        [{ role: "user", content: initialImagePrompt }],
+        undefined,
+        undefined,
+        "google/gemini-3-pro-image-preview",
+        ["image", "text"]
+      );
+
+      const assetId = await extractAndUploadImage(
+        imageResult,
+        `${project.id}/initial-image/${runId}/reference`,
+        "initial_image",
+        { run_id: runId, purpose: "run_consistency_anchor" }
+      );
+
+      if (assetId) {
+        await log("info", "Initial consistency image generated and saved");
+      } else {
+        await log("warn", "Could not extract image from AI response — pipeline continues without initial image");
+      }
+
+      await updateRun({ progress_pct: 5 });
+    } catch (err) {
+      await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
+      await updateRun({ progress_pct: 5 });
+    }
 
     // ===== STEP 1: PLAN =====
     await log("info", "Step 1/7: Generating scene plan...");
@@ -167,14 +289,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
         { type: "function", function: { name: "create_scene_plan" } }
       );
 
-      // Parse tool call response
       const toolCall = planResult.choices?.[0]?.message?.tool_calls?.[0];
       if (!toolCall) throw new Error("No tool call in plan response");
 
       const scenePlan = JSON.parse(toolCall.function.arguments);
       await log("info", `Generated plan with ${scenePlan.scenes.length} scenes`, scenePlan);
 
-      // Insert scenes
       for (const scene of scenePlan.scenes) {
         await supabase.from("scenes").insert({
           run_id: runId,
@@ -192,18 +312,13 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
     } catch (err) {
       await log("error", `Plan step failed: ${err.message}`);
       await updateRun({ status: "failed", error_message: `Plan failed: ${err.message}`, finished_at: new Date().toISOString() });
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: err.message }, 500);
     }
 
     // Check if stopped
     if ((await checkRunStatus()) !== "running") {
       await log("info", "Run was stopped/paused, halting pipeline");
-      return new Response(JSON.stringify({ status: "halted" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ status: "halted" });
     }
 
     // ===== STEP 2: KEYFRAMES =====
@@ -215,92 +330,70 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
         .eq("run_id", runId)
         .order("scene_index");
 
+      // Fetch initial image for this run to use as visual reference
+      const { data: initialAssets } = await supabase
+        .from("assets")
+        .select("supabase_path")
+        .eq("run_id", runId)
+        .eq("type", "initial_image")
+        .limit(1);
+
+      let initialImageUrl: string | null = null;
+      if (initialAssets && initialAssets.length > 0) {
+        const { data: urlData } = supabase.storage
+          .from("project-assets")
+          .getPublicUrl(initialAssets[0].supabase_path);
+        initialImageUrl = urlData.publicUrl;
+      }
+
       if (scenes) {
         for (let i = 0; i < scenes.length; i++) {
           const scene = scenes[i];
           const status = await checkRunStatus();
           if (status !== "running") {
             await log("info", "Run halted during keyframe generation");
-            return new Response(JSON.stringify({ status: "halted" }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            return json({ status: "halted" });
           }
 
           await log("info", `Generating keyframe for scene ${scene.scene_index}: ${scene.scene_title}`);
 
           try {
-            // Generate end keyframe image using AI image model
+            // Build message with optional initial image reference for consistency
+            const userContent: any[] = [
+              {
+                type: "text",
+                text: `Generate a high-quality ${project.aspect_ratio} image for this scene. Keep visual style consistent with the reference image. Scene: ${scene.end_keyframe_prompt}. Style: cinematic, high detail, vibrant colors.`,
+              },
+            ];
+
+            if (initialImageUrl) {
+              userContent.push({
+                type: "image_url",
+                image_url: { url: initialImageUrl },
+              });
+            }
+
             const imageResult = await callAI(
-              [
-                {
-                  role: "user",
-                  content: `Generate a high-quality ${project.aspect_ratio} image: ${scene.end_keyframe_prompt}. Style: cinematic, high detail, vibrant colors.`,
-                },
-              ],
+              [{ role: "user", content: userContent }],
               undefined,
               undefined,
-              "google/gemini-3-pro-image-preview"
+              "google/gemini-3-pro-image-preview",
+              ["image", "text"]
             );
 
-            // Check response for inline image data
-            const message = imageResult.choices?.[0]?.message;
-            let imageData: Uint8Array | null = null;
-            let mimeType = "image/png";
+            const assetId = await extractAndUploadImage(
+              imageResult,
+              `${project.id}/keyframes/${runId}/scene-${scene.scene_index}-end`,
+              "keyframe",
+              { run_id: runId, scene_id: scene.id, keyframe_type: "end", scene_index: scene.scene_index }
+            );
 
-            if (message?.content) {
-              // Content may be array of parts or string
-              const content = message.content;
-              if (Array.isArray(content)) {
-                for (const part of content) {
-                  if (part.type === "image_url" && part.image_url?.url) {
-                    const base64Match = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
-                    if (base64Match) {
-                      mimeType = base64Match[1];
-                      const raw = atob(base64Match[2]);
-                      imageData = new Uint8Array(raw.length);
-                      for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
-                    }
-                  } else if (part.type === "inline_data" && part.data) {
-                    mimeType = part.mime_type || "image/png";
-                    const raw = atob(part.data);
-                    imageData = new Uint8Array(raw.length);
-                    for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
-                  }
-                }
-              }
-
-              if (imageData) {
-                const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
-                const storagePath = `${project.id}/keyframes/${runId}/scene-${scene.scene_index}-end.${ext}`;
-
-                const { error: uploadErr } = await supabase.storage
-                  .from("project-assets")
-                  .upload(storagePath, imageData, { contentType: mimeType, upsert: true });
-
-                if (!uploadErr) {
-                  const { data: asset } = await supabase
-                    .from("assets")
-                    .insert({
-                      supabase_path: storagePath,
-                      type: "keyframe" as const,
-                      run_id: runId,
-                      scene_id: scene.id,
-                      metadata: { keyframe_type: "end", scene_index: scene.scene_index },
-                    })
-                    .select()
-                    .single();
-
-                  await log("info", `Keyframe saved for scene ${scene.scene_index}`);
-                  await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
-                } else {
-                  await log("warn", `Failed to upload keyframe for scene ${scene.scene_index}: ${uploadErr.message}`);
-                }
-              } else {
-                await log("warn", `No image data in AI response for scene ${scene.scene_index}. Keyframe generation may need a different model.`);
-                // Still mark as ready so pipeline continues
-                await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
-              }
+            if (assetId) {
+              await log("info", `Keyframe saved for scene ${scene.scene_index}`);
+            } else {
+              await log("warn", `No image data for scene ${scene.scene_index}`);
             }
+            await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           } catch (sceneErr) {
             await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
             await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
@@ -316,17 +409,14 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
     } catch (err) {
       await log("error", `Keyframes step failed: ${err.message}`);
       await updateRun({ status: "failed", error_message: `Keyframes failed: ${err.message}`, finished_at: new Date().toISOString() });
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: err.message }, 500);
     }
 
     // ===== STEP 3: KLING (Video Generation) =====
     await log("info", "Step 3/7: Video generation (Kling)...");
     const KLING_API_KEY = Deno.env.get("KLING_API_KEY");
     if (!KLING_API_KEY) {
-      await log("warn", "KLING_API_KEY not configured — skipping video generation. Add your Kling API key in Cloud secrets to enable this step.");
+      await log("warn", "KLING_API_KEY not configured — skipping video generation.");
       await updateRun({ current_step: "stitch", progress_pct: 70 });
     } else {
       try {
@@ -342,17 +432,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             const status = await checkRunStatus();
             if (status !== "running") {
               await log("info", "Run halted during video generation");
-              return new Response(JSON.stringify({ status: "halted" }), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-              });
+              return json({ status: "halted" });
             }
 
             await log("info", `Requesting Kling video for scene ${scene.scene_index}`);
             await supabase.from("scenes").update({ status: "clip_requested" as const }).eq("id", scene.id);
-
-            // TODO: Implement actual Kling API call
-            // For now, log that it needs implementation with the actual Kling API endpoints
-            await log("info", `Kling API call placeholder for scene ${scene.scene_index} — awaiting Kling API integration`);
+            await log("info", `Kling API call placeholder for scene ${scene.scene_index} — awaiting full Kling API integration`);
 
             const progress = 40 + Math.round((30 * (i + 1)) / scenes.length);
             await updateRun({ progress_pct: progress });
@@ -364,16 +449,13 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
       } catch (err) {
         await log("error", `Kling step failed: ${err.message}`);
         await updateRun({ status: "failed", error_message: `Kling failed: ${err.message}`, finished_at: new Date().toISOString() });
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return json({ error: err.message }, 500);
       }
     }
 
     // ===== STEP 4: STITCH =====
     await log("info", "Step 4/7: Video stitching...");
-    await log("warn", "Stitch step placeholder — video concatenation requires clip assets from Kling. Skipping.");
+    await log("warn", "Stitch step placeholder — requires clip assets from Kling. Skipping.");
     await updateRun({ current_step: "metadata", progress_pct: 85 });
 
     // ===== STEP 5: METADATA =====
@@ -440,18 +522,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
     if (!project.uploadpost_api_key_encrypted || !project.uploadpost_api_key_configured) {
       await log("warn", "Upload-Post API key not configured — skipping publish step.");
     } else {
-      // Create publish job record
       const { data: publishJob } = await supabase
         .from("publish_jobs")
-        .insert({
-          run_id: runId,
-          status: "not_started" as const,
-        })
+        .insert({ run_id: runId, status: "not_started" as const })
         .select()
         .single();
-
-      await log("info", "Publish job created. Video upload to Upload-Post requires stitched final video — marking as pending.");
-      // Actual Upload-Post API call would go here when we have a final video
+      await log("info", "Publish job created — awaiting final video for Upload-Post submission.");
     }
 
     // ===== STEP 7: DONE =====
@@ -463,15 +539,10 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
     });
     await log("info", "Pipeline completed successfully! 🎉");
 
-    return new Response(JSON.stringify({ status: "completed", run_id: runId }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ status: "completed", run_id: runId });
   } catch (err) {
     await log("error", `Pipeline failed: ${err.message}`);
     await updateRun({ status: "failed", error_message: err.message, finished_at: new Date().toISOString() });
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ error: err.message }, 500);
   }
 });

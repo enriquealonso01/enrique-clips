@@ -10,9 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, Copy, RefreshCw, AlertTriangle, Upload, X, Loader2 } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Project = Tables<"projects">;
@@ -30,9 +30,6 @@ export default function ProjectEditor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Partial<Project>>({});
-  const [uploading, setUploading] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -42,17 +39,6 @@ export default function ProjectEditor() {
       return data;
     },
     enabled: !!projectId,
-  });
-
-  // Fetch initial image asset
-  const { data: initialAsset } = useQuery({
-    queryKey: ["initial-asset", project?.initial_asset_id],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("assets").select("*").eq("id", project!.initial_asset_id!).single();
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!project?.initial_asset_id,
   });
 
   // Fetch runs for this project
@@ -75,16 +61,6 @@ export default function ProjectEditor() {
     if (project) setForm(project);
   }, [project]);
 
-  // Get public URL for the initial image
-  useEffect(() => {
-    if (initialAsset?.supabase_path) {
-      const { data } = supabase.storage.from("project-assets").getPublicUrl(initialAsset.supabase_path);
-      setImageUrl(data.publicUrl);
-    } else {
-      setImageUrl(null);
-    }
-  }, [initialAsset]);
-
   const updateProject = useMutation({
     mutationFn: async (updates: Partial<Project>) => {
       const { error } = await supabase.from("projects").update(updates).eq("id", projectId!);
@@ -104,59 +80,6 @@ export default function ProjectEditor() {
   };
 
   const update = (field: keyof Project, value: any) => setForm((prev) => ({ ...prev, [field]: value }));
-
-  const handleImageUpload = async (file: File) => {
-    if (!projectId) return;
-    setUploading(true);
-    try {
-      const path = `${projectId}/initial-image/${file.name}`;
-      const { error: uploadErr } = await supabase.storage
-        .from("project-assets")
-        .upload(path, file, { upsert: true });
-      if (uploadErr) throw uploadErr;
-
-      // Create asset record
-      const { data: asset, error: assetErr } = await supabase
-        .from("assets")
-        .insert({ supabase_path: path, type: "initial_image" as const })
-        .select()
-        .single();
-      if (assetErr) throw assetErr;
-
-      // Update project
-      const { error: projErr } = await supabase
-        .from("projects")
-        .update({ initial_asset_id: asset.id })
-        .eq("id", projectId);
-      if (projErr) throw projErr;
-
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["initial-asset"] });
-      toast({ title: "Uploaded", description: "Initial image set successfully" });
-    } catch (err: any) {
-      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleRemoveImage = async () => {
-    if (!projectId || !project?.initial_asset_id) return;
-    try {
-      await supabase.from("projects").update({ initial_asset_id: null }).eq("id", projectId);
-      queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-      queryClient.invalidateQueries({ queryKey: ["initial-asset"] });
-      toast({ title: "Removed", description: "Initial image removed" });
-    } catch {
-      toast({ title: "Error", description: "Failed to remove image", variant: "destructive" });
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) handleImageUpload(file);
-  };
 
   const totalDuration = (form.scene_count || 0) * (form.clip_duration_sec || 0);
   const durationWarning = totalDuration > 180;
@@ -198,9 +121,8 @@ export default function ProjectEditor() {
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="series">Series</TabsTrigger>
-          <TabsTrigger value="image">Image</TabsTrigger>
           <TabsTrigger value="kling">Kling</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
@@ -208,6 +130,7 @@ export default function ProjectEditor() {
           <TabsTrigger value="runs">Runs</TabsTrigger>
         </TabsList>
 
+        {/* Series Tab */}
         <TabsContent value="series" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -260,68 +183,7 @@ export default function ProjectEditor() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="image" className="space-y-4 mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Initial Image</CardTitle>
-              <CardDescription>Seed image for consistent scene generation</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {imageUrl ? (
-                <div className="space-y-4">
-                  <div className="relative inline-block">
-                    <img src={imageUrl} alt="Initial image" className="max-h-64 rounded-lg border border-border" />
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      className="absolute top-2 right-2 h-6 w-6"
-                      onClick={handleRemoveImage}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                      Replace Image
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 transition-colors"
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  {uploading ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                      <p className="text-muted-foreground">Uploading...</p>
-                    </div>
-                  ) : (
-                    <>
-                      <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                      <p className="text-muted-foreground mb-2">Drop an image here or click to upload</p>
-                      <p className="text-xs text-muted-foreground">This image seeds all keyframe generation for visual consistency</p>
-                    </>
-                  )}
-                </div>
-              )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleImageUpload(file);
-                  e.target.value = "";
-                }}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
+        {/* Kling Tab */}
         <TabsContent value="kling" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -351,6 +213,7 @@ export default function ProjectEditor() {
           </Card>
         </TabsContent>
 
+        {/* Publish Tab */}
         <TabsContent value="publish" className="space-y-4 mt-4">
           <Card>
             <CardHeader><CardTitle>Upload-Post Configuration</CardTitle></CardHeader>
@@ -448,6 +311,7 @@ export default function ProjectEditor() {
           )}
         </TabsContent>
 
+        {/* Schedule Tab */}
         <TabsContent value="schedule" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -486,6 +350,7 @@ export default function ProjectEditor() {
           </Card>
         </TabsContent>
 
+        {/* API Tab */}
         <TabsContent value="api" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
@@ -525,11 +390,12 @@ export default function ProjectEditor() {
           </Card>
         </TabsContent>
 
+        {/* Runs Tab */}
         <TabsContent value="runs" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
               <CardTitle>Run History</CardTitle>
-              <CardDescription>Recent runs for this project</CardDescription>
+              <CardDescription>Recent runs for this project — each run generates its own initial image for visual consistency</CardDescription>
             </CardHeader>
             <CardContent>
               {runs && runs.length > 0 ? (
