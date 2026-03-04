@@ -99,72 +99,83 @@ Deno.serve(async (req) => {
     let allDone = true;
     let anyProcessing = false;
 
-    for (const asset of pendingAssets) {
-      const meta = asset.metadata as any;
-      if (!meta?.kling_task_id || meta.status === "completed" || meta.status === "failed") continue;
+    // Filter to only pending tasks
+    const pendingTasks = pendingAssets.filter((a) => {
+      const meta = a.metadata as any;
+      return meta?.kling_task_id && meta.status !== "completed" && meta.status !== "failed";
+    });
 
-      const taskId = meta.kling_task_id;
-      const sceneIndex = meta.scene_index;
+    if (pendingTasks.length === 0) {
+      // All tasks already resolved
+    } else {
+      // Poll up to 3 concurrently
+      const CONCURRENCY = 3;
+      for (let batch = 0; batch < pendingTasks.length; batch += CONCURRENCY) {
+        const batchItems = pendingTasks.slice(batch, batch + CONCURRENCY);
+        const results = await Promise.all(batchItems.map(async (asset) => {
+          const meta = asset.metadata as any;
+          const taskId = meta.kling_task_id;
+          const sceneIndex = meta.scene_index;
 
-      try {
-        const klingToken = await getKlingToken();
-        const pollResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video/${taskId}`, {
-          method: "GET",
-          headers: { "Authorization": `Bearer ${klingToken}` },
-        });
-        const pollResult = await pollResp.json();
-        const taskStatus = pollResult.data?.task_status;
+          try {
+            const klingToken = await getKlingToken();
+            const pollResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video/${taskId}`, {
+              method: "GET",
+              headers: { "Authorization": `Bearer ${klingToken}` },
+            });
+            const pollResult = await pollResp.json();
+            const taskStatus = pollResult.data?.task_status;
 
-        if (taskStatus === "succeed") {
-          const videoUrl = pollResult.data?.task_result?.videos?.[0]?.url || null;
-          await log("info", `Kling task ${taskId} succeeded for scene ${sceneIndex}`);
+            if (taskStatus === "succeed") {
+              const videoUrl = pollResult.data?.task_result?.videos?.[0]?.url || null;
+              await log("info", `Kling task ${taskId} succeeded for scene ${sceneIndex}`);
 
-          if (videoUrl) {
-            // Download and upload video
-            const videoResp = await fetch(videoUrl);
-            const videoData = new Uint8Array(await videoResp.arrayBuffer());
-            const storagePath = `${project!.id}/clips/${runId}/scene-${sceneIndex}.mp4`;
+              if (videoUrl) {
+                const videoResp = await fetch(videoUrl);
+                const videoData = new Uint8Array(await videoResp.arrayBuffer());
+                const storagePath = `${project!.id}/clips/${runId}/scene-${sceneIndex}.mp4`;
 
-            const { error: uploadErr } = await supabase.storage
-              .from("project-assets")
-              .upload(storagePath, videoData, { contentType: "video/mp4", upsert: true });
+                const { error: uploadErr } = await supabase.storage
+                  .from("project-assets")
+                  .upload(storagePath, videoData, { contentType: "video/mp4", upsert: true });
 
-            if (!uploadErr) {
-              // Update the pending asset to be the real clip
-              await supabase.from("assets").update({
-                supabase_path: storagePath,
-                metadata: { kling_task_id: taskId, scene_index: sceneIndex, status: "completed" },
-              }).eq("id", asset.id);
-
-              await supabase.from("scenes").update({ status: "clip_ready" as const }).eq("id", asset.scene_id);
-              await log("info", `Video clip saved for scene ${sceneIndex}`);
-            } else {
-              await log("error", `Failed to upload video for scene ${sceneIndex}: ${uploadErr.message}`);
-              await supabase.from("assets").update({
-                metadata: { ...meta, status: "failed" },
-              }).eq("id", asset.id);
+                if (!uploadErr) {
+                  await supabase.from("assets").update({
+                    supabase_path: storagePath,
+                    metadata: { kling_task_id: taskId, scene_index: sceneIndex, status: "completed" },
+                  }).eq("id", asset.id);
+                  await supabase.from("scenes").update({ status: "clip_ready" as const }).eq("id", asset.scene_id);
+                  await log("info", `Video clip saved for scene ${sceneIndex}`);
+                } else {
+                  await log("error", `Failed to upload video for scene ${sceneIndex}: ${uploadErr.message}`);
+                  await supabase.from("assets").update({ metadata: { ...meta, status: "failed" } }).eq("id", asset.id);
+                  await supabase.from("scenes").update({ status: "failed" as const }).eq("id", asset.scene_id);
+                }
+              } else {
+                await supabase.from("assets").update({ metadata: { ...meta, status: "failed" } }).eq("id", asset.id);
+                await supabase.from("scenes").update({ status: "failed" as const }).eq("id", asset.scene_id);
+              }
+              return "done";
+            } else if (taskStatus === "failed") {
+              await log("error", `Kling task ${taskId} failed: ${pollResult.data?.task_status_msg}`, pollResult.data);
+              await supabase.from("assets").update({ metadata: { ...meta, status: "failed" } }).eq("id", asset.id);
               await supabase.from("scenes").update({ status: "failed" as const }).eq("id", asset.scene_id);
+              return "done";
+            } else {
+              return "pending";
             }
-          } else {
-            await supabase.from("assets").update({
-              metadata: { ...meta, status: "failed" },
-            }).eq("id", asset.id);
-            await supabase.from("scenes").update({ status: "failed" as const }).eq("id", asset.scene_id);
+          } catch (err) {
+            await log("error", `Error polling Kling task ${taskId}: ${err.message}`);
+            return "pending";
           }
-        } else if (taskStatus === "failed") {
-          await log("error", `Kling task ${taskId} failed: ${pollResult.data?.task_status_msg}`, pollResult.data);
-          await supabase.from("assets").update({
-            metadata: { ...meta, status: "failed" },
-          }).eq("id", asset.id);
-          await supabase.from("scenes").update({ status: "failed" as const }).eq("id", asset.scene_id);
-        } else {
-          // Still processing
-          allDone = false;
-          anyProcessing = true;
+        }));
+
+        for (const r of results) {
+          if (r === "pending") {
+            allDone = false;
+            anyProcessing = true;
+          }
         }
-      } catch (err) {
-        await log("error", `Error polling Kling task ${taskId}: ${err.message}`);
-        allDone = false;
       }
     }
 
