@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import type { Tables } from "@/integrations/supabase/types";
@@ -121,13 +121,16 @@ export default function ProjectEditor() {
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="series">Series</TabsTrigger>
           <TabsTrigger value="kling">Kling</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="api">API</TabsTrigger>
           <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="gallery" onClick={() => navigate(`/projects/${projectId}/gallery`)}>
+            <ImageIcon className="h-3 w-3 mr-1" /> Gallery
+          </TabsTrigger>
         </TabsList>
 
         {/* Series Tab */}
