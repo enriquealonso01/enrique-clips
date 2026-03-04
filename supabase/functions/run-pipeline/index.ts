@@ -525,89 +525,31 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             if (createResult.code !== 0 || !createResult.data?.task_id) {
               await log("error", `Kling task creation failed for scene ${scene.scene_index}: ${createResult.message}`, createResult);
               await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
-              const progress = 40 + Math.round((30 * (i + 1)) / scenes.length);
-              await updateRun({ progress_pct: progress });
               continue;
             }
 
             const taskId = createResult.data.task_id;
             await log("info", `Kling task ${taskId} submitted for scene ${scene.scene_index}`);
 
-            // Poll for completion (max ~10 minutes per scene)
-            const maxPolls = 60;
-            const pollIntervalMs = 10_000;
-            let videoUrl: string | null = null;
+            // Store task ID in scene metadata for polling
+            await supabase.from("scenes").update({
+              kling_prompt: scene.kling_prompt, // keep existing
+            }).eq("id", scene.id);
 
-            for (let poll = 0; poll < maxPolls; poll++) {
-              // Check if run was stopped
-              const runStatus = await checkRunStatus();
-              if (runStatus !== "running") {
-                await log("info", "Run halted during Kling polling");
-                return json({ status: "halted" });
-              }
-
-              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-
-              const pollToken = await getKlingToken();
-              const pollResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video/${taskId}`, {
-                method: "GET",
-                headers: { "Authorization": `Bearer ${pollToken}` },
-              });
-              const pollResult = await pollResp.json();
-              const taskStatus = pollResult.data?.task_status;
-
-              if (taskStatus === "succeed") {
-                videoUrl = pollResult.data?.task_result?.videos?.[0]?.url || null;
-                await log("info", `Kling task ${taskId} succeeded for scene ${scene.scene_index}`);
-                break;
-              } else if (taskStatus === "failed") {
-                await log("error", `Kling task ${taskId} failed: ${pollResult.data?.task_status_msg}`, pollResult.data);
-                break;
-              }
-              // still processing, continue polling
-            }
-
-            if (videoUrl) {
-              // Download video and upload to storage
-              try {
-                const videoResp = await fetch(videoUrl);
-                const videoData = new Uint8Array(await videoResp.arrayBuffer());
-                const storagePath = `${project.id}/clips/${runId}/scene-${scene.scene_index}.mp4`;
-
-                const { error: uploadErr } = await supabase.storage
-                  .from("project-assets")
-                  .upload(storagePath, videoData, { contentType: "video/mp4", upsert: true });
-
-                if (!uploadErr) {
-                  await supabase.from("assets").insert({
-                    supabase_path: storagePath,
-                    type: "clip" as any,
-                    run_id: runId,
-                    scene_id: scene.id,
-                    metadata: { kling_task_id: taskId, scene_index: scene.scene_index },
-                  });
-                  await supabase.from("scenes").update({ status: "clip_ready" as const }).eq("id", scene.id);
-                  await log("info", `Video clip saved for scene ${scene.scene_index}`);
-                } else {
-                  await log("error", `Failed to upload video for scene ${scene.scene_index}: ${uploadErr.message}`);
-                  await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
-                }
-              } catch (dlErr) {
-                await log("error", `Failed to download Kling video for scene ${scene.scene_index}: ${dlErr.message}`);
-                await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
-              }
-            } else {
-              await log("warn", `No video URL obtained for scene ${scene.scene_index}`);
-              await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
-            }
-
-            const progress = 40 + Math.round((30 * (i + 1)) / scenes.length);
-            await updateRun({ progress_pct: progress });
+            // Store kling task ID as an asset metadata entry
+            await supabase.from("assets").insert({
+              supabase_path: `pending-kling/${runId}/scene-${scene.scene_index}`,
+              type: "clip" as any,
+              run_id: runId,
+              scene_id: scene.id,
+              metadata: { kling_task_id: taskId, scene_index: scene.scene_index, status: "submitted" },
+            });
           }
         }
 
-        await updateRun({ current_step: "stitch", progress_pct: 70 });
-        await log("info", "Kling video generation step complete");
+        // All Kling tasks submitted — return and let poll-kling handle the rest
+        await log("info", "All Kling tasks submitted. Waiting for poll-kling to check completion.");
+        return json({ status: "kling_polling", run_id: runId });
       } catch (err) {
         await log("error", `Kling step failed: ${err.message}`);
         await updateRun({ status: "failed", error_message: `Kling failed: ${err.message}`, finished_at: new Date().toISOString() });
@@ -615,93 +557,6 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
       }
     }
 
-    // ===== STEP 4: STITCH =====
-    await log("info", "Step 4/7: Video stitching...");
-    await log("warn", "Stitch step placeholder — requires clip assets from Kling. Skipping.");
-    await updateRun({ current_step: "metadata", progress_pct: 85 });
-
-    // ===== STEP 5: METADATA =====
-    await log("info", "Step 5/7: Generating metadata...");
-    try {
-      const { data: scenes } = await supabase
-        .from("scenes")
-        .select("scene_title, scene_description")
-        .eq("run_id", runId)
-        .order("scene_index");
-
-      const scenesSummary = scenes?.map((s) => `${s.scene_title}: ${s.scene_description}`).join("\n") || "";
-
-      const metaResult = await callAI(
-        [
-          {
-            role: "system",
-            content: "You are a social media content expert. Generate engaging metadata for a short-form video post.",
-          },
-          {
-            role: "user",
-            content: `Generate a title, description, and hashtags for this video:\n\nSeries: ${project.series_prompt || project.title}\nScenes:\n${scenesSummary}`,
-          },
-        ],
-        [
-          {
-            type: "function",
-            function: {
-              name: "generate_metadata",
-              description: "Generate video post metadata",
-              parameters: {
-                type: "object",
-                properties: {
-                  title: { type: "string", description: "Catchy video title (max 100 chars)" },
-                  description: { type: "string", description: "Engaging video description (max 500 chars)" },
-                  hashtags: { type: "array", items: { type: "string" }, description: "Relevant hashtags without # prefix" },
-                },
-                required: ["title", "description", "hashtags"],
-                additionalProperties: false,
-              },
-            },
-          },
-        ],
-        { type: "function", function: { name: "generate_metadata" } }
-      );
-
-      const metaToolCall = metaResult.choices?.[0]?.message?.tool_calls?.[0];
-      if (metaToolCall) {
-        const metadata = JSON.parse(metaToolCall.function.arguments);
-        await updateRun({ generated_metadata: metadata, progress_pct: 95 });
-        await log("info", "Metadata generated", metadata);
-      } else {
-        await log("warn", "No metadata generated from AI response");
-      }
-
-      await updateRun({ current_step: "publish", progress_pct: 95 });
-    } catch (err) {
-      await log("warn", `Metadata step failed: ${err.message} — continuing to publish`);
-      await updateRun({ current_step: "publish", progress_pct: 95 });
-    }
-
-    // ===== STEP 6: PUBLISH =====
-    await log("info", "Step 6/7: Publishing...");
-    if (!project.uploadpost_api_key_encrypted || !project.uploadpost_api_key_configured) {
-      await log("warn", "Upload-Post API key not configured — skipping publish step.");
-    } else {
-      const { data: publishJob } = await supabase
-        .from("publish_jobs")
-        .insert({ run_id: runId, status: "not_started" as const })
-        .select()
-        .single();
-      await log("info", "Publish job created — awaiting final video for Upload-Post submission.");
-    }
-
-    // ===== STEP 7: DONE =====
-    await updateRun({
-      current_step: "done",
-      status: "completed",
-      progress_pct: 100,
-      finished_at: new Date().toISOString(),
-    });
-    await log("info", "Pipeline completed successfully! 🎉");
-
-    return json({ status: "completed", run_id: runId });
   } catch (err) {
     await log("error", `Pipeline failed: ${err.message}`);
     await updateRun({ status: "failed", error_message: err.message, finished_at: new Date().toISOString() });
