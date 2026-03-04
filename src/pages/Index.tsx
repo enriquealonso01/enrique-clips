@@ -76,7 +76,13 @@ export default function ProjectsPage() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["latest-runs"] });
-      toast({ title: "Run created", description: "Navigating to run monitor..." });
+      toast({ title: "Run created", description: "Pipeline starting..." });
+      // Fire and forget - invoke pipeline
+      supabase.functions.invoke('run-pipeline', { body: { run_id: data.id } })
+        .then((res) => {
+          if (res.error) console.error('Pipeline invoke error:', res.error);
+        })
+        .catch(err => console.error('Pipeline invoke failed:', err));
       navigate(`/runs/${data.id}`);
     },
     onError: () => toast({ title: "Error", description: "Failed to create run", variant: "destructive" }),
