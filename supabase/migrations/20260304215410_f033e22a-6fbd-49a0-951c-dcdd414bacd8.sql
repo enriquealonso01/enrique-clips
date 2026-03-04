@@ -1,0 +1,1 @@
+ALTER TABLE public.projects ALTER COLUMN kling_model_name SET DEFAULT 'kling-v1';

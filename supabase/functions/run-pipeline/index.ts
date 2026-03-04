@@ -415,6 +415,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
     // ===== STEP 3: KLING (Video Generation) =====
     await log("info", "Step 3/7: Video generation (Kling)...");
     const KLING_API_KEY = Deno.env.get("KLING_API_KEY");
+    const KLING_API_BASE = "https://api-singapore.klingai.com";
     if (!KLING_API_KEY) {
       await log("warn", "KLING_API_KEY not configured — skipping video generation.");
       await updateRun({ current_step: "stitch", progress_pct: 70 });
@@ -427,6 +428,29 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
           .order("scene_index");
 
         if (scenes) {
+          // Gather keyframe asset URLs for each scene
+          const sceneKeyframes: Record<number, string> = {};
+          for (const scene of scenes) {
+            const { data: keyframeAssets } = await supabase
+              .from("assets")
+              .select("supabase_path")
+              .eq("run_id", runId)
+              .eq("scene_id", scene.id)
+              .eq("type", "keyframe")
+              .limit(1);
+            if (keyframeAssets && keyframeAssets.length > 0) {
+              const { data: urlData } = supabase.storage
+                .from("project-assets")
+                .getPublicUrl(keyframeAssets[0].supabase_path);
+              sceneKeyframes[scene.scene_index] = urlData.publicUrl;
+            }
+          }
+
+          // Determine if sound is supported (only v2.6+)
+          const soundSupported = project.kling_model_name?.startsWith("kling-v2-6");
+          // Map clip_duration_sec to valid Kling duration ("5" or "10")
+          const klingDuration = (project.clip_duration_sec || 10) >= 10 ? "10" : "5";
+
           for (let i = 0; i < scenes.length; i++) {
             const scene = scenes[i];
             const status = await checkRunStatus();
@@ -435,9 +459,120 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
               return json({ status: "halted" });
             }
 
-            await log("info", `Requesting Kling video for scene ${scene.scene_index}`);
+            await log("info", `Submitting Kling task for scene ${scene.scene_index}`);
             await supabase.from("scenes").update({ status: "clip_requested" as const }).eq("id", scene.id);
-            await log("info", `Kling API call placeholder for scene ${scene.scene_index} — awaiting full Kling API integration`);
+
+            // Build Kling request body
+            const startImageUrl = i > 0 && sceneKeyframes[scenes[i - 1].scene_index]
+              ? sceneKeyframes[scenes[i - 1].scene_index]
+              : sceneKeyframes[scene.scene_index];
+            const endImageUrl = sceneKeyframes[scene.scene_index];
+
+            const klingBody: Record<string, any> = {
+              model_name: project.kling_model_name || "kling-v1",
+              image: startImageUrl || "",
+              prompt: scene.kling_prompt || "",
+              negative_prompt: project.negative_prompt || "",
+              duration: klingDuration,
+              mode: project.kling_mode || "pro",
+              sound: soundSupported && project.kling_sound ? "on" : "off",
+            };
+
+            // Add end frame if we have a different end keyframe
+            if (endImageUrl && endImageUrl !== startImageUrl) {
+              klingBody.image_tail = endImageUrl;
+            }
+
+            await log("debug", `Kling request body for scene ${scene.scene_index}`, klingBody);
+
+            // Submit task
+            const createResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${KLING_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(klingBody),
+            });
+
+            const createResult = await createResp.json();
+            if (createResult.code !== 0 || !createResult.data?.task_id) {
+              await log("error", `Kling task creation failed for scene ${scene.scene_index}: ${createResult.message}`, createResult);
+              await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+              const progress = 40 + Math.round((30 * (i + 1)) / scenes.length);
+              await updateRun({ progress_pct: progress });
+              continue;
+            }
+
+            const taskId = createResult.data.task_id;
+            await log("info", `Kling task ${taskId} submitted for scene ${scene.scene_index}`);
+
+            // Poll for completion (max ~10 minutes per scene)
+            const maxPolls = 60;
+            const pollIntervalMs = 10_000;
+            let videoUrl: string | null = null;
+
+            for (let poll = 0; poll < maxPolls; poll++) {
+              // Check if run was stopped
+              const runStatus = await checkRunStatus();
+              if (runStatus !== "running") {
+                await log("info", "Run halted during Kling polling");
+                return json({ status: "halted" });
+              }
+
+              await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+              const pollResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video/${taskId}`, {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${KLING_API_KEY}` },
+              });
+              const pollResult = await pollResp.json();
+              const taskStatus = pollResult.data?.task_status;
+
+              if (taskStatus === "succeed") {
+                videoUrl = pollResult.data?.task_result?.videos?.[0]?.url || null;
+                await log("info", `Kling task ${taskId} succeeded for scene ${scene.scene_index}`);
+                break;
+              } else if (taskStatus === "failed") {
+                await log("error", `Kling task ${taskId} failed: ${pollResult.data?.task_status_msg}`, pollResult.data);
+                break;
+              }
+              // still processing, continue polling
+            }
+
+            if (videoUrl) {
+              // Download video and upload to storage
+              try {
+                const videoResp = await fetch(videoUrl);
+                const videoData = new Uint8Array(await videoResp.arrayBuffer());
+                const storagePath = `${project.id}/clips/${runId}/scene-${scene.scene_index}.mp4`;
+
+                const { error: uploadErr } = await supabase.storage
+                  .from("project-assets")
+                  .upload(storagePath, videoData, { contentType: "video/mp4", upsert: true });
+
+                if (!uploadErr) {
+                  await supabase.from("assets").insert({
+                    supabase_path: storagePath,
+                    type: "clip" as any,
+                    run_id: runId,
+                    scene_id: scene.id,
+                    metadata: { kling_task_id: taskId, scene_index: scene.scene_index },
+                  });
+                  await supabase.from("scenes").update({ status: "clip_ready" as const }).eq("id", scene.id);
+                  await log("info", `Video clip saved for scene ${scene.scene_index}`);
+                } else {
+                  await log("error", `Failed to upload video for scene ${scene.scene_index}: ${uploadErr.message}`);
+                  await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+                }
+              } catch (dlErr) {
+                await log("error", `Failed to download Kling video for scene ${scene.scene_index}: ${dlErr.message}`);
+                await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+              }
+            } else {
+              await log("warn", `No video URL obtained for scene ${scene.scene_index}`);
+              await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+            }
 
             const progress = 40 + Math.round((30 * (i + 1)) / scenes.length);
             await updateRun({ progress_pct: progress });
