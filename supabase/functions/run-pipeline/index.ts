@@ -414,10 +414,34 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
 
     // ===== STEP 3: KLING (Video Generation) =====
     await log("info", "Step 3/7: Video generation (Kling)...");
-    const KLING_API_KEY = Deno.env.get("KLING_API_KEY");
+    const KLING_ACCESS_KEY = Deno.env.get("KLING_ACCESS_KEY");
+    const KLING_SECRET_KEY = Deno.env.get("KLING_SECRET_KEY");
     const KLING_API_BASE = "https://api-singapore.klingai.com";
-    if (!KLING_API_KEY) {
-      await log("warn", "KLING_API_KEY not configured — skipping video generation.");
+
+    // Helper: generate Kling JWT token (valid 30 min)
+    async function getKlingToken(): Promise<string> {
+      const encoder = new TextEncoder();
+      const keyData = encoder.encode(KLING_SECRET_KEY);
+      const key = await crypto.subtle.importKey(
+        "raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+      );
+      const now = Math.floor(Date.now() / 1000);
+      const header = { alg: "HS256", typ: "JWT" };
+      const payload = { iss: KLING_ACCESS_KEY, exp: now + 1800, iat: now };
+
+      const b64url = (data: Uint8Array | string) => {
+        const str = typeof data === "string" ? data : String.fromCharCode(...data);
+        return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      };
+      const encHeader = b64url(JSON.stringify(header));
+      const encPayload = b64url(JSON.stringify(payload));
+      const sigInput = encoder.encode(`${encHeader}.${encPayload}`);
+      const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, sigInput));
+      return `${encHeader}.${encPayload}.${b64url(signature)}`;
+    }
+
+    if (!KLING_ACCESS_KEY || !KLING_SECRET_KEY) {
+      await log("warn", "KLING_ACCESS_KEY/KLING_SECRET_KEY not configured — skipping video generation.");
       await updateRun({ current_step: "stitch", progress_pct: 70 });
     } else {
       try {
@@ -486,10 +510,11 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             await log("debug", `Kling request body for scene ${scene.scene_index}`, klingBody);
 
             // Submit task
+            const klingToken = await getKlingToken();
             const createResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
               method: "POST",
               headers: {
-                "Authorization": `Bearer ${KLING_API_KEY}`,
+                "Authorization": `Bearer ${klingToken}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify(klingBody),
@@ -522,9 +547,10 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
 
               await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 
+              const pollToken = await getKlingToken();
               const pollResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video/${taskId}`, {
                 method: "GET",
-                headers: { "Authorization": `Bearer ${KLING_API_KEY}` },
+                headers: { "Authorization": `Bearer ${pollToken}` },
               });
               const pollResult = await pollResp.json();
               const taskStatus = pollResult.data?.task_status;
