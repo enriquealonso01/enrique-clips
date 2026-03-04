@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const KLING_API_BASE = "https://api.klingai.com";
+const KLING_API_BASE = "https://api-singapore.klingai.com";
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {

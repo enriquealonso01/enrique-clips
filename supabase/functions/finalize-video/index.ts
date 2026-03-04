@@ -637,10 +637,12 @@ function concatenateMP4(files: Uint8Array[]): Uint8Array {
     const replacements = new Map<string, Uint8Array>();
     replacements.set("stts", buildStts(compactedStts));
     if (hasCtts) replacements.set("ctts", buildCtts(cttsVersion, mergedCtts));
-    replacements.set("stsz", buildStsz(
-      mergedSampleSize > 0 ? mergedSampleSize : 0,
-      mergedSampleSize > 0 ? new Array(cumulativeSamples) : mergedSizes
-    ));
+    // For constant sample size, pass count via a properly-sized placeholder array
+    if (mergedSampleSize > 0) {
+      replacements.set("stsz", buildStsz(mergedSampleSize, new Array(cumulativeSamples).fill(mergedSampleSize)));
+    } else {
+      replacements.set("stsz", buildStsz(0, mergedSizes));
+    }
     replacements.set("stsc", buildStsc(mergedStsc));
     replacements.set("co64", buildCo64(mergedStco)); // always use co64 for safety
     if (hasStss) replacements.set("stss", buildStss(mergedStss));
@@ -821,6 +823,19 @@ Deno.serve(async (req) => {
     const { data: run } = await supabase.from("runs").select("*").eq("id", runId).single();
     if (!run) return json({ error: "Run not found" }, 404);
     if (run.status !== "running") return json({ status: "not_running" });
+    if (run.current_step === "done") return json({ status: "already_completed" });
+
+    // Idempotency: check if final video already exists
+    const { data: existingFinal } = await supabase
+      .from("assets")
+      .select("id")
+      .eq("run_id", runId)
+      .eq("type", "final_video")
+      .limit(1);
+    if (existingFinal && existingFinal.length > 0 && run.current_step !== "stitch") {
+      // Final video exists and we're past stitch — skip to where we are
+      await log("info", "Final video already exists, skipping stitch step.");
+    }
 
     const { data: project } = await supabase.from("projects").select("*").eq("id", run.project_id).single();
     if (!project) {
@@ -1027,8 +1042,15 @@ Deno.serve(async (req) => {
     }
 
     // ===== STEP 6: PUBLISH =====
-    await log("info", "Step 6/7: Publishing...");
-    if (!project.uploadpost_api_key_encrypted || !project.uploadpost_api_key_configured) {
+    // Idempotency: skip if publish job already exists
+    const { data: existingJobs } = await supabase
+      .from("publish_jobs")
+      .select("id")
+      .eq("run_id", runId)
+      .limit(1);
+    if (existingJobs && existingJobs.length > 0) {
+      await log("info", "Publish job already exists — skipping duplicate publish.");
+    } else if (!project.uploadpost_api_key_encrypted || !project.uploadpost_api_key_configured) {
       await log("warn", "Upload-Post API key not configured — skipping publish.");
     } else {
       try {
