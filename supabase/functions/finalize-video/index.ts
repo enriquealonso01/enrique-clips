@@ -15,10 +15,17 @@ function json(data: unknown, status = 200) {
   });
 }
 
-// ===== MP4 CONCATENATION UTILITIES =====
+// ===== PRODUCTION MP4 CONCATENATION =====
+// Handles: stts, stsz, stsc, stco/co64, stss, ctts, sdtp
+// Updates: mvhd, tkhd, mdhd durations
+// Validates: track count, codec consistency
 
 function readU32(d: Uint8Array, o: number): number {
   return ((d[o] << 24) | (d[o + 1] << 16) | (d[o + 2] << 8) | d[o + 3]) >>> 0;
+}
+
+function readU16(d: Uint8Array, o: number): number {
+  return ((d[o] << 8) | d[o + 1]) >>> 0;
 }
 
 function writeU32(d: Uint8Array, o: number, v: number) {
@@ -26,6 +33,23 @@ function writeU32(d: Uint8Array, o: number, v: number) {
   d[o + 1] = (v >>> 16) & 0xff;
   d[o + 2] = (v >>> 8) & 0xff;
   d[o + 3] = v & 0xff;
+}
+
+function writeU16(d: Uint8Array, o: number, v: number) {
+  d[o] = (v >>> 8) & 0xff;
+  d[o + 1] = v & 0xff;
+}
+
+function readU64(d: Uint8Array, o: number): number {
+  // JS can't handle full 64-bit, but for reasonable file sizes this is fine
+  const hi = readU32(d, o);
+  const lo = readU32(d, o + 4);
+  return hi * 0x100000000 + lo;
+}
+
+function writeU64(d: Uint8Array, o: number, v: number) {
+  writeU32(d, o, Math.floor(v / 0x100000000));
+  writeU32(d, o + 4, v >>> 0);
 }
 
 function boxType(d: Uint8Array, o: number): string {
@@ -40,7 +64,7 @@ interface Box {
   type: string;
   start: number;
   size: number;
-  hdr: number;
+  hdr: number; // header size (8 or 16 for extended)
 }
 
 function scanBoxes(data: Uint8Array, from: number, to: number): Box[] {
@@ -51,10 +75,11 @@ function scanBoxes(data: Uint8Array, from: number, to: number): Box[] {
     const type = boxType(data, pos + 4);
     let hdr = 8;
     if (size === 1 && pos + 16 <= to) {
-      size = readU32(data, pos + 12);
+      // 64-bit extended size
+      size = readU64(data, pos + 8);
       hdr = 16;
     }
-    if (size === 0) size = to - pos;
+    if (size === 0) size = to - pos; // box extends to end
     if (size < 8 || pos + size > to) break;
     result.push({ type, start: pos, size, hdr });
     pos += size;
@@ -78,7 +103,13 @@ function findBox(data: Uint8Array, boxes: Box[], ...path: string[]): Box | null 
   return null;
 }
 
-// Parse sample table entries from stbl sub-boxes
+// ---- Fullbox version/flags reader ----
+function fullboxVersion(data: Uint8Array, box: Box): number {
+  return data[box.start + box.hdr]; // version byte after box header
+}
+
+// ---- Sample table parsers ----
+
 function parseStts(data: Uint8Array, box: Box): number[][] {
   const base = box.start + box.hdr;
   const count = readU32(data, base + 4);
@@ -89,7 +120,18 @@ function parseStts(data: Uint8Array, box: Box): number[][] {
   return entries;
 }
 
-function parseStsz(data: Uint8Array, box: Box): { sampleSize: number; sizes: number[] } {
+function parseCtts(data: Uint8Array, box: Box): { version: number; entries: number[][] } {
+  const base = box.start + box.hdr;
+  const version = data[base]; // version 0: unsigned offsets, version 1: signed
+  const count = readU32(data, base + 4);
+  const entries: number[][] = [];
+  for (let i = 0; i < count; i++) {
+    entries.push([readU32(data, base + 8 + i * 8), readU32(data, base + 8 + i * 8 + 4)]);
+  }
+  return { version, entries };
+}
+
+function parseStsz(data: Uint8Array, box: Box): { sampleSize: number; count: number; sizes: number[] } {
   const base = box.start + box.hdr;
   const sampleSize = readU32(data, base + 4);
   const count = readU32(data, base + 8);
@@ -97,7 +139,7 @@ function parseStsz(data: Uint8Array, box: Box): { sampleSize: number; sizes: num
   if (sampleSize === 0) {
     for (let i = 0; i < count; i++) sizes.push(readU32(data, base + 12 + i * 4));
   }
-  return { sampleSize, sizes };
+  return { sampleSize, count, sizes };
 }
 
 function parseStsc(data: Uint8Array, box: Box): number[][] {
@@ -119,6 +161,14 @@ function parseStco(data: Uint8Array, box: Box): number[] {
   return offsets;
 }
 
+function parseCo64(data: Uint8Array, box: Box): number[] {
+  const base = box.start + box.hdr;
+  const count = readU32(data, base + 4);
+  const offsets: number[] = [];
+  for (let i = 0; i < count; i++) offsets.push(readU64(data, base + 8 + i * 8));
+  return offsets;
+}
+
 function parseStss(data: Uint8Array, box: Box): number[] {
   const base = box.start + box.hdr;
   const count = readU32(data, base + 4);
@@ -127,101 +177,191 @@ function parseStss(data: Uint8Array, box: Box): number[] {
   return samples;
 }
 
-// Build sample table box from entries
-function buildStts(entries: number[][]): Uint8Array {
-  const size = 8 + 8 + entries.length * 8;
+function parseSdtp(data: Uint8Array, box: Box, sampleCount: number): Uint8Array {
+  const base = box.start + box.hdr + 4; // version + flags
+  return data.slice(base, base + sampleCount);
+}
+
+// ---- Get duration from mdhd ----
+function parseMdhd(data: Uint8Array, box: Box): { version: number; timescale: number; duration: number } {
+  const base = box.start + box.hdr;
+  const version = data[base];
+  if (version === 0) {
+    return { version, timescale: readU32(data, base + 12), duration: readU32(data, base + 16) };
+  } else {
+    return { version, timescale: readU32(data, base + 20), duration: readU64(data, base + 24) };
+  }
+}
+
+function parseTkhd(data: Uint8Array, box: Box): { version: number; duration: number } {
+  const base = box.start + box.hdr;
+  const version = data[base];
+  if (version === 0) {
+    return { version, duration: readU32(data, base + 20) };
+  } else {
+    return { version, duration: readU64(data, base + 28) };
+  }
+}
+
+function parseMvhd(data: Uint8Array, box: Box): { version: number; timescale: number; duration: number } {
+  const base = box.start + box.hdr;
+  const version = data[base];
+  if (version === 0) {
+    return { version, timescale: readU32(data, base + 12), duration: readU32(data, base + 16) };
+  } else {
+    return { version, timescale: readU32(data, base + 20), duration: readU64(data, base + 24) };
+  }
+}
+
+// ---- Sample table builders ----
+
+function buildFullBox(type: string, version: number, flags: number, payload: Uint8Array): Uint8Array {
+  const size = 8 + 4 + payload.length;
   const buf = new Uint8Array(size);
   writeU32(buf, 0, size);
-  buf.set(makeBoxType("stts"), 4);
-  writeU32(buf, 12, entries.length);
-  for (let i = 0; i < entries.length; i++) {
-    writeU32(buf, 16 + i * 8, entries[i][0]);
-    writeU32(buf, 16 + i * 8 + 4, entries[i][1]);
-  }
+  buf.set(makeBoxType(type), 4);
+  buf[8] = version;
+  buf[9] = (flags >> 16) & 0xff;
+  buf[10] = (flags >> 8) & 0xff;
+  buf[11] = flags & 0xff;
+  buf.set(payload, 12);
   return buf;
+}
+
+function buildStts(entries: number[][]): Uint8Array {
+  const payload = new Uint8Array(4 + entries.length * 8);
+  writeU32(payload, 0, entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    writeU32(payload, 4 + i * 8, entries[i][0]);
+    writeU32(payload, 4 + i * 8 + 4, entries[i][1]);
+  }
+  return buildFullBox("stts", 0, 0, payload);
+}
+
+function buildCtts(version: number, entries: number[][]): Uint8Array {
+  const payload = new Uint8Array(4 + entries.length * 8);
+  writeU32(payload, 0, entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    writeU32(payload, 4 + i * 8, entries[i][0]);
+    writeU32(payload, 4 + i * 8 + 4, entries[i][1]);
+  }
+  return buildFullBox("ctts", version, 0, payload);
 }
 
 function buildStsz(sampleSize: number, sizes: number[]): Uint8Array {
   const hasIndividual = sampleSize === 0;
-  const size = 8 + 12 + (hasIndividual ? sizes.length * 4 : 0);
-  const buf = new Uint8Array(size);
-  writeU32(buf, 0, size);
-  buf.set(makeBoxType("stsz"), 4);
-  writeU32(buf, 12, sampleSize);
-  writeU32(buf, 16, sizes.length);
+  const payload = new Uint8Array(8 + (hasIndividual ? sizes.length * 4 : 0));
+  writeU32(payload, 0, sampleSize);
+  writeU32(payload, 4, hasIndividual ? sizes.length : sizes.length || 0);
   if (hasIndividual) {
-    for (let i = 0; i < sizes.length; i++) writeU32(buf, 20 + i * 4, sizes[i]);
+    for (let i = 0; i < sizes.length; i++) writeU32(payload, 8 + i * 4, sizes[i]);
   }
-  return buf;
+  return buildFullBox("stsz", 0, 0, payload);
 }
 
 function buildStsc(entries: number[][]): Uint8Array {
-  const size = 8 + 8 + entries.length * 12;
-  const buf = new Uint8Array(size);
-  writeU32(buf, 0, size);
-  buf.set(makeBoxType("stsc"), 4);
-  writeU32(buf, 12, entries.length);
+  const payload = new Uint8Array(4 + entries.length * 12);
+  writeU32(payload, 0, entries.length);
   for (let i = 0; i < entries.length; i++) {
-    const o = 16 + i * 12;
-    writeU32(buf, o, entries[i][0]);
-    writeU32(buf, o + 4, entries[i][1]);
-    writeU32(buf, o + 8, entries[i][2]);
+    const o = 4 + i * 12;
+    writeU32(payload, o, entries[i][0]);
+    writeU32(payload, o + 4, entries[i][1]);
+    writeU32(payload, o + 8, entries[i][2]);
   }
-  return buf;
+  return buildFullBox("stsc", 0, 0, payload);
 }
 
-function buildStco(offsets: number[]): Uint8Array {
-  const size = 8 + 8 + offsets.length * 4;
-  const buf = new Uint8Array(size);
-  writeU32(buf, 0, size);
-  buf.set(makeBoxType("stco"), 4);
-  writeU32(buf, 12, offsets.length);
-  for (let i = 0; i < offsets.length; i++) writeU32(buf, 16 + i * 4, offsets[i]);
-  return buf;
+function buildCo64(offsets: number[]): Uint8Array {
+  // Always use co64 to handle large files safely
+  const payload = new Uint8Array(4 + offsets.length * 8);
+  writeU32(payload, 0, offsets.length);
+  for (let i = 0; i < offsets.length; i++) writeU64(payload, 4 + i * 8, offsets[i]);
+  return buildFullBox("co64", 0, 0, payload);
 }
 
 function buildStss(samples: number[]): Uint8Array {
-  const size = 8 + 8 + samples.length * 4;
-  const buf = new Uint8Array(size);
-  writeU32(buf, 0, size);
-  buf.set(makeBoxType("stss"), 4);
-  writeU32(buf, 12, samples.length);
-  for (let i = 0; i < samples.length; i++) writeU32(buf, 16 + i * 4, samples[i]);
-  return buf;
+  const payload = new Uint8Array(4 + samples.length * 4);
+  writeU32(payload, 0, samples.length);
+  for (let i = 0; i < samples.length; i++) writeU32(payload, 4 + i * 4, samples[i]);
+  return buildFullBox("stss", 0, 0, payload);
 }
 
-// Rebuild a container box by replacing specific children
+function buildSdtp(entries: Uint8Array): Uint8Array {
+  return buildFullBox("sdtp", 0, 0, entries);
+}
+
+// ---- Duration helpers ----
+
+function totalDurationFromStts(entries: number[][]): number {
+  return entries.reduce((sum, [count, delta]) => sum + count * delta, 0);
+}
+
+function getSampleCount(data: Uint8Array, stbl: Box): number {
+  const children = scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size);
+  const stszBox = children.find((b) => b.type === "stsz");
+  if (!stszBox) return 0;
+  return readU32(data, stszBox.start + stszBox.hdr + 8);
+}
+
+function getChunkCount(data: Uint8Array, stbl: Box): number {
+  const children = scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size);
+  const stcoBox = children.find((b) => b.type === "stco");
+  if (stcoBox) return readU32(data, stcoBox.start + stcoBox.hdr + 4);
+  const co64Box = children.find((b) => b.type === "co64");
+  if (co64Box) return readU32(data, co64Box.start + co64Box.hdr + 4);
+  return 0;
+}
+
+function getChunkOffsets(data: Uint8Array, stbl: Box): number[] {
+  const children = scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size);
+  const stcoBox = children.find((b) => b.type === "stco");
+  if (stcoBox) return parseStco(data, stcoBox);
+  const co64Box = children.find((b) => b.type === "co64");
+  if (co64Box) return parseCo64(data, co64Box);
+  return [];
+}
+
+// ---- Rebuild container with child replacements ----
+
 function rebuildContainer(
   data: Uint8Array,
   container: Box,
-  replacements: Map<string, Uint8Array>
+  replacements: Map<string, Uint8Array>,
+  removeTypes?: Set<string>
 ): Uint8Array {
   const children = scanBoxes(data, container.start + container.hdr, container.start + container.size);
   const parts: Uint8Array[] = [];
 
-  // Copy header bytes (version/flags if fullbox, or just box header)
-  const headerBytes = data.slice(container.start + 8, container.start + container.hdr);
-
   for (const child of children) {
+    if (removeTypes?.has(child.type)) continue;
     if (replacements.has(child.type)) {
       parts.push(replacements.get(child.type)!);
     } else if (CONTAINERS.has(child.type)) {
-      // Recurse into container children
-      const rebuilt = rebuildContainer(data, child, replacements);
-      parts.push(rebuilt);
+      parts.push(rebuildContainer(data, child, replacements, removeTypes));
     } else {
       parts.push(data.slice(child.start, child.start + child.size));
     }
   }
 
+  // Add any new boxes that weren't replacements of existing ones
+  // (e.g., adding ctts or sdtp that didn't exist in the first file)
+  for (const [type, boxData] of replacements) {
+    const exists = children.some((c) => c.type === type);
+    if (!exists && !CONTAINERS.has(type)) {
+      // Check if this is a stbl-level box we want to add
+      const stblTypes = new Set(["stts", "stsc", "stsz", "stco", "co64", "stss", "ctts", "sdtp"]);
+      if (stblTypes.has(type) && container.type === "stbl") {
+        parts.push(boxData);
+      }
+    }
+  }
+
   const contentSize = parts.reduce((s, p) => s + p.length, 0);
-  const totalSize = 8 + headerBytes.length + contentSize;
+  const totalSize = 8 + contentSize;
   const result = new Uint8Array(totalSize);
   writeU32(result, 0, totalSize);
   result.set(makeBoxType(container.type), 4);
-  result.set(headerBytes, 8);
-
-  let offset = 8 + headerBytes.length;
+  let offset = 8;
   for (const part of parts) {
     result.set(part, offset);
     offset += part.length;
@@ -229,232 +369,351 @@ function rebuildContainer(
   return result;
 }
 
-// Get total sample count from a track's stbl
-function getTotalSamples(data: Uint8Array, stbl: Box): number {
-  const stszBox = findBox(data, scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size), "stsz");
-  if (!stszBox) return 0;
-  const base = stszBox.start + stszBox.hdr;
-  return readU32(data, base + 8);
+// ---- Update duration in mdhd ----
+function updateMdhd(data: Uint8Array, box: Box, newDuration: number): Uint8Array {
+  const out = data.slice(box.start, box.start + box.size);
+  const base = box.hdr;
+  const version = out[base];
+  if (version === 0) {
+    writeU32(out, base + 16, newDuration);
+  } else {
+    writeU64(out, base + 24, newDuration);
+  }
+  return out;
 }
 
-// Get total chunk count from stco
-function getTotalChunks(data: Uint8Array, stbl: Box): number {
-  const stcoBox = findBox(data, scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size), "stco");
-  if (!stcoBox) return 0;
-  const base = stcoBox.start + stcoBox.hdr;
-  return readU32(data, base + 4);
+// ---- Update duration in tkhd ----
+function updateTkhd(data: Uint8Array, box: Box, newDuration: number): Uint8Array {
+  const out = data.slice(box.start, box.start + box.size);
+  const base = box.hdr;
+  const version = out[base];
+  if (version === 0) {
+    writeU32(out, base + 20, newDuration);
+  } else {
+    writeU64(out, base + 28, newDuration);
+  }
+  return out;
+}
+
+// ---- Update duration in mvhd ----
+function updateMvhd(data: Uint8Array, box: Box, newDuration: number): Uint8Array {
+  const out = data.slice(box.start, box.start + box.size);
+  const base = box.hdr;
+  const version = out[base];
+  if (version === 0) {
+    writeU32(out, base + 16, newDuration);
+  } else {
+    writeU64(out, base + 24, newDuration);
+  }
+  return out;
+}
+
+// ---- Get codec info from stsd for validation ----
+function getCodecFourCC(data: Uint8Array, stbl: Box): string | null {
+  const children = scanBoxes(data, stbl.start + stbl.hdr, stbl.start + stbl.size);
+  const stsd = children.find((b) => b.type === "stsd");
+  if (!stsd) return null;
+  const base = stsd.start + stsd.hdr + 8; // skip version/flags + entry count
+  if (base + 4 > stsd.start + stsd.size) return null;
+  // Read first sample entry size then fourcc
+  return boxType(data, base + 4);
+}
+
+// ===== MAIN CONCATENATION =====
+
+interface ParsedFile {
+  data: Uint8Array;
+  boxes: Box[];
+  moov: Box;
+  mdat: Box | null;
+  trakBoxes: Box[];
+}
+
+function parseFile(data: Uint8Array): ParsedFile {
+  const boxes = scanBoxes(data, 0, data.length);
+  const moov = boxes.find((b) => b.type === "moov");
+  if (!moov) throw new Error("No moov box found");
+  const mdat = boxes.find((b) => b.type === "mdat") || null;
+  const moovChildren = scanBoxes(data, moov.start + moov.hdr, moov.start + moov.size);
+  const trakBoxes = moovChildren.filter((b) => b.type === "trak");
+  return { data, boxes, moov, mdat, trakBoxes };
+}
+
+function getStbl(data: Uint8Array, trak: Box): Box | null {
+  const trakChildren = scanBoxes(data, trak.start + trak.hdr, trak.start + trak.size);
+  return findBox(data, trakChildren, "mdia", "minf", "stbl");
+}
+
+function getMdia(data: Uint8Array, trak: Box): Box | null {
+  const trakChildren = scanBoxes(data, trak.start + trak.hdr, trak.start + trak.size);
+  return trakChildren.find((b) => b.type === "mdia") || null;
 }
 
 function concatenateMP4(files: Uint8Array[]): Uint8Array {
-  if (files.length <= 1) return files[0];
+  if (files.length === 0) throw new Error("No files to concatenate");
+  if (files.length === 1) return files[0];
 
-  const allParsed = files.map((f) => ({ data: f, boxes: scanBoxes(f, 0, f.length) }));
+  const parsed = files.map(parseFile);
+  const first = parsed[0];
 
-  // Extract ftyp from first file
-  const ftypBox = allParsed[0].boxes.find((b) => b.type === "ftyp");
-  const ftypData = ftypBox
-    ? allParsed[0].data.slice(ftypBox.start, ftypBox.start + ftypBox.size)
-    : new Uint8Array(0);
-
-  // Combine mdat content from all files
-  const mdatContents: Uint8Array[] = [];
-  const mdatOffsets: number[] = []; // Start offset of each file's mdat content in the combined mdat
-  let mdatPos = 0;
-  for (const p of allParsed) {
-    const mdat = p.boxes.find((b) => b.type === "mdat");
-    if (mdat) {
-      mdatOffsets.push(mdatPos);
-      const content = p.data.slice(mdat.start + mdat.hdr, mdat.start + mdat.size);
-      mdatContents.push(content);
-      mdatPos += content.length;
-    } else {
-      mdatOffsets.push(mdatPos);
+  // Validate: all files must have the same number of tracks
+  const trackCount = first.trakBoxes.length;
+  for (let f = 1; f < parsed.length; f++) {
+    if (parsed[f].trakBoxes.length !== trackCount) {
+      throw new Error(`Track count mismatch: file 0 has ${trackCount}, file ${f} has ${parsed[f].trakBoxes.length}`);
     }
   }
 
-  // We'll place: ftyp + moov + mdat
-  // So mdat starts at: ftypData.length + moovSize
-  // We need moov size first, so build moov, then calculate
+  // Validate codecs match across files
+  for (let t = 0; t < trackCount; t++) {
+    const firstStbl = getStbl(first.data, first.trakBoxes[t]);
+    if (!firstStbl) continue;
+    const firstCodec = getCodecFourCC(first.data, firstStbl);
+    for (let f = 1; f < parsed.length; f++) {
+      const stbl = getStbl(parsed[f].data, parsed[f].trakBoxes[t]);
+      if (!stbl) continue;
+      const codec = getCodecFourCC(parsed[f].data, stbl);
+      if (firstCodec && codec && firstCodec !== codec) {
+        throw new Error(`Codec mismatch in track ${t}: ${firstCodec} vs ${codec}`);
+      }
+    }
+  }
 
-  // Get first file's moov and track structure
-  const firstData = allParsed[0].data;
-  const firstBoxes = allParsed[0].boxes;
-  const moovBox = firstBoxes.find((b) => b.type === "moov")!;
-  const moovChildren = scanBoxes(firstData, moovBox.start + moovBox.hdr, moovBox.start + moovBox.size);
-  const trakBoxes = moovChildren.filter((b) => b.type === "trak");
+  // Extract ftyp from first file
+  const ftypBox = first.boxes.find((b) => b.type === "ftyp");
+  const ftypData = ftypBox ? first.data.slice(ftypBox.start, ftypBox.start + ftypBox.size) : new Uint8Array(0);
 
-  // For each track, merge sample tables from all files
-  const trackReplacements: Map<string, Uint8Array>[] = trakBoxes.map(() => new Map());
+  // Combine mdat content from all files
+  const mdatContents: Uint8Array[] = [];
+  const mdatOffsets: number[] = []; // cumulative offset of each file's mdat content
+  let mdatPos = 0;
+  for (const p of parsed) {
+    mdatOffsets.push(mdatPos);
+    if (p.mdat) {
+      const content = p.data.slice(p.mdat.start + p.mdat.hdr, p.mdat.start + p.mdat.size);
+      mdatContents.push(content);
+      mdatPos += content.length;
+    }
+  }
 
-  for (let t = 0; t < trakBoxes.length; t++) {
-    const trak = trakBoxes[t];
-    const stbl = findBox(
-      firstData,
-      scanBoxes(firstData, trak.start + trak.hdr, trak.start + trak.size),
-      "mdia",
-      "minf",
-      "stbl"
-    );
-    if (!stbl) continue;
+  // For each track, merge sample tables across all files
+  const perTrackReplacements: Map<string, Uint8Array>[] = [];
+  const perTrackDurations: number[] = []; // in track timescale units
+  const perTrackTimescales: number[] = [];
 
-    const stblChildren = scanBoxes(firstData, stbl.start + stbl.hdr, stbl.start + stbl.size);
-
-    // Merge stts
+  for (let t = 0; t < trackCount; t++) {
     let mergedStts: number[][] = [];
-    // Merge stsz
-    let mergedSampleSize = 0;
+    let mergedCtts: number[][] = [];
+    let hasCtts = false;
+    let cttsVersion = 0;
+    let mergedSampleSize = -1; // -1 = unset
     let mergedSizes: number[] = [];
-    let firstFile = true;
-    // Merge stsc
     let mergedStsc: number[][] = [];
-    // Merge stco
-    let mergedStco: number[] = [];
-    // Merge stss
+    let mergedStco: number[] = []; // relative to combined mdat start
     let mergedStss: number[] = [];
     let hasStss = false;
+    let mergedSdtp = new Uint8Array(0);
+    let hasSdtp = false;
 
     let cumulativeSamples = 0;
     let cumulativeChunks = 0;
+    let timescale = 0;
 
-    for (let f = 0; f < allParsed.length; f++) {
-      const fData = allParsed[f].data;
-      const fBoxes = allParsed[f].boxes;
-      const fMoov = fBoxes.find((b) => b.type === "moov");
-      if (!fMoov) continue;
+    for (let f = 0; f < parsed.length; f++) {
+      const p = parsed[f];
+      if (t >= p.trakBoxes.length) continue;
+      const stbl = getStbl(p.data, p.trakBoxes[t]);
+      if (!stbl) continue;
+      const children = scanBoxes(p.data, stbl.start + stbl.hdr, stbl.start + stbl.size);
 
-      const fMoovChildren = scanBoxes(fData, fMoov.start + fMoov.hdr, fMoov.start + fMoov.size);
-      const fTraks = fMoovChildren.filter((b) => b.type === "trak");
-      if (t >= fTraks.length) continue;
-
-      const fTrak = fTraks[t];
-      const fStbl = findBox(
-        fData,
-        scanBoxes(fData, fTrak.start + fTrak.hdr, fTrak.start + fTrak.size),
-        "mdia",
-        "minf",
-        "stbl"
-      );
-      if (!fStbl) continue;
-      const fStblChildren = scanBoxes(fData, fStbl.start + fStbl.hdr, fStbl.start + fStbl.size);
-
-      // stts
-      const sttsBox = fStblChildren.find((b) => b.type === "stts");
-      if (sttsBox) mergedStts = mergedStts.concat(parseStts(fData, sttsBox));
-
-      // stsz
-      const stszBox = fStblChildren.find((b) => b.type === "stsz");
-      if (stszBox) {
-        const parsed = parseStsz(fData, stszBox);
-        if (firstFile) {
-          mergedSampleSize = parsed.sampleSize;
-          mergedSizes = parsed.sizes;
-        } else {
-          if (parsed.sampleSize !== mergedSampleSize) {
-            // Different sample sizes — fall back to per-sample
-            if (mergedSampleSize !== 0 && mergedSizes.length === 0) {
-              // Expand first file's constant size
-              const prevCount = cumulativeSamples;
-              mergedSizes = new Array(prevCount).fill(mergedSampleSize);
-              mergedSampleSize = 0;
-            }
-            mergedSizes = mergedSizes.concat(parsed.sizes.length > 0 ? parsed.sizes : []);
-          } else {
-            mergedSizes = mergedSizes.concat(parsed.sizes);
+      // Get timescale from mdhd
+      if (f === 0) {
+        const mdia = getMdia(p.data, p.trakBoxes[t]);
+        if (mdia) {
+          const mdiaChildren = scanBoxes(p.data, mdia.start + mdia.hdr, mdia.start + mdia.size);
+          const mdhdBox = mdiaChildren.find((b) => b.type === "mdhd");
+          if (mdhdBox) {
+            const mdhd = parseMdhd(p.data, mdhdBox);
+            timescale = mdhd.timescale;
           }
         }
       }
 
-      // stsc
-      const stscBox = fStblChildren.find((b) => b.type === "stsc");
+      const fileSampleCount = getSampleCount(p.data, stbl);
+      const fileChunkCount = getChunkCount(p.data, stbl);
+
+      // stts
+      const sttsBox = children.find((b) => b.type === "stts");
+      if (sttsBox) mergedStts.push(...parseStts(p.data, sttsBox));
+
+      // ctts
+      const cttsBox = children.find((b) => b.type === "ctts");
+      if (cttsBox) {
+        hasCtts = true;
+        const parsed = parseCtts(p.data, cttsBox);
+        cttsVersion = Math.max(cttsVersion, parsed.version);
+        mergedCtts.push(...parsed.entries);
+      } else if (hasCtts && fileSampleCount > 0) {
+        // If previous files had ctts but this one doesn't, add zero offsets
+        mergedCtts.push([fileSampleCount, 0]);
+      }
+
+      // stsz
+      const stszBox = children.find((b) => b.type === "stsz");
+      if (stszBox) {
+        const parsed = parseStsz(p.data, stszBox);
+        if (mergedSampleSize === -1) {
+          // First file
+          mergedSampleSize = parsed.sampleSize;
+          mergedSizes = [...parsed.sizes];
+        } else if (parsed.sampleSize !== mergedSampleSize || mergedSampleSize === 0) {
+          // Different sizes or already variable — need per-sample
+          if (mergedSampleSize !== 0 && mergedSizes.length === 0) {
+            // Expand previous constant size to individual entries
+            mergedSizes = new Array(cumulativeSamples).fill(mergedSampleSize);
+          }
+          mergedSampleSize = 0;
+          if (parsed.sampleSize !== 0 && parsed.sizes.length === 0) {
+            mergedSizes.push(...new Array(parsed.count).fill(parsed.sampleSize));
+          } else {
+            mergedSizes.push(...parsed.sizes);
+          }
+        } else {
+          // Same constant sample size, just extend count
+          mergedSizes.push(...parsed.sizes);
+        }
+      }
+
+      // stsc — adjust firstChunk by cumulative chunk count
+      const stscBox = children.find((b) => b.type === "stsc");
       if (stscBox) {
-        const entries = parseStsc(fData, stscBox);
+        const entries = parseStsc(p.data, stscBox);
         for (const e of entries) {
           mergedStsc.push([e[0] + cumulativeChunks, e[1], e[2]]);
         }
       }
 
-      // stco — these will need offset adjustment later
-      const stcoBox = fStblChildren.find((b) => b.type === "stco");
-      if (stcoBox) {
-        const offsets = parseStco(fData, stcoBox);
-        // Find this file's mdat position in the original file
-        const fMdat = fBoxes.find((b) => b.type === "mdat");
-        const origMdatStart = fMdat ? fMdat.start + fMdat.hdr : 0;
-        // Offsets are relative to file start, pointing into mdat
-        // We need to adjust them to point into the combined mdat
-        for (const off of offsets) {
-          const relativeInMdat = off - origMdatStart;
-          // Will be adjusted after we know final moov size
-          mergedStco.push(relativeInMdat + mdatOffsets[f]);
-        }
+      // stco/co64 — convert to relative-to-mdat offsets
+      const origMdatStart = p.mdat ? p.mdat.start + p.mdat.hdr : 0;
+      const chunkOffsets = getChunkOffsets(p.data, stbl);
+      for (const off of chunkOffsets) {
+        mergedStco.push((off - origMdatStart) + mdatOffsets[f]);
       }
 
       // stss
-      const stssBox = fStblChildren.find((b) => b.type === "stss");
+      const stssBox = children.find((b) => b.type === "stss");
       if (stssBox) {
         hasStss = true;
-        const samples = parseStss(fData, stssBox);
+        const samples = parseStss(p.data, stssBox);
         for (const s of samples) mergedStss.push(s + cumulativeSamples);
       }
 
-      // Count samples and chunks for offset adjustments
-      cumulativeSamples += getTotalSamples(fData, fStbl);
-      cumulativeChunks += getTotalChunks(fData, fStbl);
-      firstFile = false;
+      // sdtp
+      const sdtpBox = children.find((b) => b.type === "sdtp");
+      if (sdtpBox) {
+        hasSdtp = true;
+        const entries = parseSdtp(p.data, sdtpBox, fileSampleCount);
+        const combined = new Uint8Array(mergedSdtp.length + entries.length);
+        combined.set(mergedSdtp);
+        combined.set(entries, mergedSdtp.length);
+        mergedSdtp = combined;
+      }
+
+      cumulativeSamples += fileSampleCount;
+      cumulativeChunks += fileChunkCount;
+    }
+
+    // Compact stts: merge adjacent entries with same delta
+    const compactedStts: number[][] = [];
+    for (const [count, delta] of mergedStts) {
+      if (compactedStts.length > 0 && compactedStts[compactedStts.length - 1][1] === delta) {
+        compactedStts[compactedStts.length - 1][0] += count;
+      } else {
+        compactedStts.push([count, delta]);
+      }
     }
 
     // Build replacement boxes
     const replacements = new Map<string, Uint8Array>();
-    replacements.set("stts", buildStts(mergedStts));
-    replacements.set("stsz", buildStsz(mergedSampleSize, mergedSizes));
+    replacements.set("stts", buildStts(compactedStts));
+    if (hasCtts) replacements.set("ctts", buildCtts(cttsVersion, mergedCtts));
+    replacements.set("stsz", buildStsz(
+      mergedSampleSize > 0 ? mergedSampleSize : 0,
+      mergedSampleSize > 0 ? new Array(cumulativeSamples) : mergedSizes
+    ));
     replacements.set("stsc", buildStsc(mergedStsc));
-    replacements.set("stco", buildStco(mergedStco)); // offsets relative to mdat start, adjusted below
+    replacements.set("co64", buildCo64(mergedStco)); // always use co64 for safety
     if (hasStss) replacements.set("stss", buildStss(mergedStss));
+    if (hasSdtp) replacements.set("sdtp", buildSdtp(mergedSdtp));
 
-    trackReplacements[t] = replacements;
+    perTrackReplacements.push(replacements);
+    perTrackDurations.push(totalDurationFromStts(compactedStts));
+    perTrackTimescales.push(timescale);
   }
 
-  // Build the new moov by replacing stbl contents in each trak
-  // First, build each trak's stbl with merged tables
-  const globalReplacements = new Map<string, Uint8Array>();
-
-  // We need to rebuild moov with updated traks
-  // Strategy: rebuild moov container recursively, replacing stbl children
-  // Combine all track replacements into a single pass
-
-  // Build moov with replacements
-  // Since rebuildContainer works recursively, we need to pass replacements that match stbl children
-  // We'll do this by first rebuilding each stbl, then each trak, then moov
-
+  // Build new traks with merged stbl + updated durations
   const rebuiltTraks: Uint8Array[] = [];
-  for (let t = 0; t < trakBoxes.length; t++) {
-    const replacements = trackReplacements[t];
-    if (replacements.size === 0) {
-      rebuiltTraks.push(firstData.slice(trakBoxes[t].start, trakBoxes[t].start + trakBoxes[t].size));
-      continue;
+  for (let t = 0; t < trackCount; t++) {
+    const trak = first.trakBoxes[t];
+    const trakChildren = scanBoxes(first.data, trak.start + trak.hdr, trak.start + trak.size);
+    const replacements = new Map(perTrackReplacements[t]);
+
+    // Update mdhd duration
+    const mdia = trakChildren.find((b) => b.type === "mdia");
+    if (mdia) {
+      const mdiaChildren = scanBoxes(first.data, mdia.start + mdia.hdr, mdia.start + mdia.size);
+      const mdhdBox = mdiaChildren.find((b) => b.type === "mdhd");
+      if (mdhdBox) {
+        replacements.set("mdhd", updateMdhd(first.data, mdhdBox, perTrackDurations[t]));
+      }
     }
 
-    // Find stbl and rebuild it
-    const trak = trakBoxes[t];
-    const trakChildren = scanBoxes(firstData, trak.start + trak.hdr, trak.start + trak.size);
-    const mdia = trakChildren.find((b) => b.type === "mdia");
-    if (!mdia) {
-      rebuiltTraks.push(firstData.slice(trak.start, trak.start + trak.size));
-      continue;
+    // Update tkhd duration (convert to movie timescale)
+    const tkhdBox = trakChildren.find((b) => b.type === "tkhd");
+    if (tkhdBox) {
+      const moovChildren = scanBoxes(first.data, first.moov.start + first.moov.hdr, first.moov.start + first.moov.size);
+      const mvhdBox = moovChildren.find((b) => b.type === "mvhd");
+      if (mvhdBox) {
+        const mvhd = parseMvhd(first.data, mvhdBox);
+        const trackDurInMovieTimescale = perTrackTimescales[t] > 0
+          ? Math.round(perTrackDurations[t] * mvhd.timescale / perTrackTimescales[t])
+          : perTrackDurations[t];
+        replacements.set("tkhd", updateTkhd(first.data, tkhdBox, trackDurInMovieTimescale));
+      }
     }
-    // Rebuild stbl inside mdia > minf > stbl
-    const rebuiltTrak = rebuildContainer(firstData, trak, replacements);
-    rebuiltTraks.push(rebuiltTrak);
+
+    // Remove stco (replaced by co64)
+    const removeTypes = new Set(["stco"]);
+    const rebuilt = rebuildContainer(first.data, trak, replacements, removeTypes);
+    rebuiltTraks.push(rebuilt);
   }
 
-  // Rebuild moov with new traks
+  // Rebuild moov with new traks and updated mvhd duration
+  const moovChildren = scanBoxes(first.data, first.moov.start + first.moov.hdr, first.moov.start + first.moov.size);
   const moovParts: Uint8Array[] = [];
   let trakIndex = 0;
+
+  // Calculate max duration across tracks for mvhd
+  const mvhdBox = moovChildren.find((b) => b.type === "mvhd");
+  let mvhdTimescale = 1000;
+  if (mvhdBox) {
+    mvhdTimescale = parseMvhd(first.data, mvhdBox).timescale;
+  }
+  let maxMovieDuration = 0;
+  for (let t = 0; t < trackCount; t++) {
+    const dur = perTrackTimescales[t] > 0
+      ? Math.round(perTrackDurations[t] * mvhdTimescale / perTrackTimescales[t])
+      : perTrackDurations[t];
+    maxMovieDuration = Math.max(maxMovieDuration, dur);
+  }
+
   for (const child of moovChildren) {
     if (child.type === "trak") {
       moovParts.push(rebuiltTraks[trakIndex++]);
+    } else if (child.type === "mvhd" && mvhdBox) {
+      moovParts.push(updateMvhd(first.data, mvhdBox, maxMovieDuration));
     } else {
-      moovParts.push(firstData.slice(child.start, child.start + child.size));
+      moovParts.push(first.data.slice(child.start, child.start + child.size));
     }
   }
 
@@ -469,36 +728,28 @@ function concatenateMP4(files: Uint8Array[]): Uint8Array {
     moovOffset += part.length;
   }
 
-  // Now we know the layout: ftyp + moov + mdat
+  // Layout: ftyp + moov + mdat
   const mdatContentSize = mdatContents.reduce((s, c) => s + c.length, 0);
   const mdatTotalSize = 8 + mdatContentSize;
   const mdatStartInFile = ftypData.length + moovSize;
 
-  // Adjust stco offsets in the moov — they currently point relative to combined mdat start
-  // Need to add mdatStartInFile + 8 (mdat header) to each
-  // Walk through moov to find all stco boxes and adjust
-  const moovBoxesFinal = scanBoxes(newMoov, 8, newMoov.length);
-  for (const trak of moovBoxesFinal.filter((b) => b.type === "trak")) {
-    const stcoBox = findBox(
-      newMoov,
-      scanBoxes(newMoov, trak.start + trak.hdr, trak.start + trak.size),
-      "mdia",
-      "minf",
-      "stbl",
-      "stco"
-    );
-    if (stcoBox) {
-      const base = stcoBox.start + stcoBox.hdr;
+  // Adjust co64 offsets: add mdatStartInFile + 8 (mdat header)
+  const finalMoovBoxes = scanBoxes(newMoov, 8, newMoov.length);
+  for (const trak of finalMoovBoxes.filter((b) => b.type === "trak")) {
+    const trakChildren = scanBoxes(newMoov, trak.start + trak.hdr, trak.start + trak.size);
+    const co64Box = findBox(newMoov, trakChildren, "mdia", "minf", "stbl", "co64");
+    if (co64Box) {
+      const base = co64Box.start + co64Box.hdr;
       const count = readU32(newMoov, base + 4);
       for (let i = 0; i < count; i++) {
-        const pos = base + 8 + i * 4;
-        const currentVal = readU32(newMoov, pos);
-        writeU32(newMoov, pos, currentVal + mdatStartInFile + 8);
+        const pos = base + 8 + i * 8;
+        const currentVal = readU64(newMoov, pos);
+        writeU64(newMoov, pos, currentVal + mdatStartInFile + 8);
       }
     }
   }
 
-  // Build mdat
+  // Build mdat header
   const mdatHeader = new Uint8Array(8);
   writeU32(mdatHeader, 0, mdatTotalSize);
   mdatHeader.set(makeBoxType("mdat"), 4);
@@ -507,12 +758,9 @@ function concatenateMP4(files: Uint8Array[]): Uint8Array {
   const totalSize = ftypData.length + moovSize + mdatTotalSize;
   const output = new Uint8Array(totalSize);
   let pos = 0;
-  output.set(ftypData, pos);
-  pos += ftypData.length;
-  output.set(newMoov, pos);
-  pos += moovSize;
-  output.set(mdatHeader, pos);
-  pos += 8;
+  output.set(ftypData, pos); pos += ftypData.length;
+  output.set(newMoov, pos); pos += moovSize;
+  output.set(mdatHeader, pos); pos += 8;
   for (const content of mdatContents) {
     output.set(content, pos);
     pos += content.length;
@@ -599,7 +847,7 @@ Deno.serve(async (req) => {
         if (completedClips.length === 0) {
           await log("warn", "No completed clips — skipping stitch.");
         } else {
-          // Download all clips concurrently (batch of 3)
+          // Download all clips (batch of 3 for memory management)
           const clipBuffers: Uint8Array[] = [];
           for (let i = 0; i < completedClips.length; i += 3) {
             const batch = completedClips.slice(i, i + 3);
@@ -609,10 +857,12 @@ Deno.serve(async (req) => {
                   .from("project-assets")
                   .getPublicUrl(clip.supabase_path);
                 const resp = await withRetry(() => fetch(urlData.publicUrl));
+                if (!resp.ok) throw new Error(`Failed to download clip: ${resp.status}`);
                 return new Uint8Array(await resp.arrayBuffer());
               })
             );
             clipBuffers.push(...buffers);
+            await log("debug", `Downloaded batch ${Math.floor(i / 3) + 1}/${Math.ceil(completedClips.length / 3)}`);
           }
 
           let finalVideo: Uint8Array;
@@ -620,12 +870,12 @@ Deno.serve(async (req) => {
             finalVideo = clipBuffers[0];
             await log("info", "Single clip — using directly as final video.");
           } else {
-            await log("info", `Concatenating ${clipBuffers.length} clips via MP4 box-level merge...`);
+            await log("info", `Concatenating ${clipBuffers.length} clips via MP4 remuxer...`);
             try {
               finalVideo = concatenateMP4(clipBuffers);
-              await log("info", `MP4 concatenation succeeded. Output: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+              await log("info", `MP4 remux succeeded. Output: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
             } catch (concatErr) {
-              await log("warn", `MP4 concatenation failed: ${concatErr.message} — using first clip as fallback.`);
+              await log("warn", `MP4 remux failed: ${concatErr.message} — using first clip as fallback.`);
               finalVideo = clipBuffers[0];
             }
           }
@@ -644,6 +894,7 @@ Deno.serve(async (req) => {
                 scene_count: completedClips.length,
                 source_clips: completedClips.map((c: any) => c.supabase_path),
                 size_bytes: finalVideo.length,
+                concat_method: clipBuffers.length > 1 ? "mp4_remux" : "single_clip",
               },
             });
             await log("info", "Final video uploaded successfully.");
@@ -658,12 +909,11 @@ Deno.serve(async (req) => {
       await updateRun({ current_step: "metadata", progress_pct: 75 });
     }
 
-    // ===== STEP 5: THUMBNAIL =====
+    // ===== STEP 5: THUMBNAIL & METADATA =====
     if (run.current_step === "metadata" || run.current_step === "stitch") {
-      // Generate thumbnail from the first scene's keyframe or AI
       await log("info", "Step 5/7: Generating thumbnail & metadata...");
 
-      // Thumbnail: use the first keyframe as thumbnail
+      // Thumbnail from first keyframe
       try {
         const { data: keyframeAssets } = await supabase
           .from("assets")
@@ -698,7 +948,7 @@ Deno.serve(async (req) => {
         await log("warn", `Thumbnail generation failed: ${err.message}`);
       }
 
-      // Metadata: AI-generated title, description, hashtags
+      // AI metadata generation
       try {
         const { data: scenes } = await supabase
           .from("scenes")
@@ -782,7 +1032,6 @@ Deno.serve(async (req) => {
       await log("warn", "Upload-Post API key not configured — skipping publish.");
     } else {
       try {
-        // Get final video or first clip
         const { data: finalAssets } = await supabase
           .from("assets")
           .select("supabase_path")
@@ -810,7 +1059,6 @@ Deno.serve(async (req) => {
           const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(videoPath);
           const videoUrl = urlData.publicUrl;
 
-          // Get freshly generated metadata
           const { data: freshRun } = await supabase
             .from("runs")
             .select("generated_metadata")
@@ -823,7 +1071,6 @@ Deno.serve(async (req) => {
           const hashtagStr = hashtags.map((h: string) => `#${h}`).join(" ");
           const fullDescription = description + (hashtagStr ? `\n\n${hashtagStr}` : "");
 
-          // Platform settings
           const platforms = project.publish_platforms as Record<string, boolean>;
           const enabledPlatforms = Object.entries(platforms)
             .filter(([_, enabled]) => enabled)
@@ -854,7 +1101,6 @@ Deno.serve(async (req) => {
               formData.append("platform[]", platform);
             }
 
-            // Platform-specific settings
             for (const platform of enabledPlatforms) {
               const defaults = publishDefaults[platform] || {};
               for (const [key, value] of Object.entries(defaults)) {
