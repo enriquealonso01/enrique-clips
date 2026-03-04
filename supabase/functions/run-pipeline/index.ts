@@ -427,7 +427,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
       );
       const now = Math.floor(Date.now() / 1000);
       const header = { alg: "HS256", typ: "JWT" };
-      const payload = { iss: KLING_ACCESS_KEY, exp: now + 1800, iat: now };
+      const payload = { iss: KLING_ACCESS_KEY, exp: now + 1800, iat: now, nbf: now };
 
       const b64url = (data: Uint8Array | string) => {
         const str = typeof data === "string" ? data : String.fromCharCode(...data);
