@@ -502,8 +502,9 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
               sound: soundSupported && project.kling_sound ? "on" : "off",
             };
 
-            // Add end frame if we have a different end keyframe
-            if (endImageUrl && endImageUrl !== startImageUrl) {
+            // Add end frame only in pro mode (std mode doesn't support image_tail for most models)
+            const klingMode = project.kling_mode || "pro";
+            if (klingMode === "pro" && endImageUrl && endImageUrl !== startImageUrl) {
               klingBody.image_tail = endImageUrl;
             }
 
