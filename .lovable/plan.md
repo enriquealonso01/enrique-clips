@@ -1,78 +1,76 @@
 
-Goal: fix why final output is missing selected music/overlays even though logs show those steps ran.
 
-What I found (from code + latest run data)
-1) The stitch remux is failing for selected-music runs
-- In `supabase/functions/finalize-video/index.ts`, `concatenateMP4(..., { videoOnly: true })` filters tracks to video-only, but later rebuilds `moov` by iterating original `trak` boxes from file 1.
-- That creates an out-of-bounds access (`rebuiltTraks[trakIndex++]` becomes `undefined`) and then `.length` is read during `moov` assembly.
-- This matches your exact log: `MP4 remux failed: Cannot read properties of undefined (reading 'length') — using first clip as fallback.`
+## Analysis: Why overlays and music keep disappearing
 
-2) Music is added before overlays, but overlay rendering likely strips audio
-- Current order is: concat → mux music → apply overlays via fal compose.
-- Your run logs show size dropping from `2.9MB` after music mux to `1.3MB` after overlay step, which strongly indicates the overlay output is video-only (audio removed).
-- So even when music mux succeeds, overlay stage can remove it.
+The root cause is clear from the logs: **fal.ai's `ffmpeg-api/compose` endpoint is unreliable for this use case**. Every run shows the same pattern:
 
-3) Why overlays may also appear “missing”
-- Because remux failure falls back to only the first clip.
-- Overlay timing uses full expected duration (`scene_count * clip_duration`), so overlays can become mistimed or visually less obvious on fallback output.
+1. Primary compose (video + overlay SVGs + audio) → fails with "Compose completed without video URL"
+2. Overlay-only fallback → also fails the same way
+3. Music-only merge fallback → sometimes works, sometimes doesn't
+4. Local mux fallback → may succeed for audio but overlays are already lost
 
-Implementation plan
-1) Fix the MP4 remux crash in `concatenateMP4`
-- File: `supabase/functions/finalize-video/index.ts`
-- Change moov rebuild logic to use only the selected track list (video-only filtered set) when constructing `trak` children.
-- Do not iterate original `moov` trak sequence blindly when filtered tracks are in use.
-- Add defensive guard: if a trak replacement is missing, throw a descriptive error before any `.length` access.
+The SVG-as-video-track approach is fundamentally fragile because fal.ai's compose endpoint treats SVGs inconsistently -- sometimes cropping them, sometimes failing to process them entirely. We have been patching the same brittle pipeline for multiple iterations.
 
-2) Reorder pipeline operations so final output keeps music
-- File: `supabase/functions/finalize-video/index.ts`
-- New order:
-  - concatenate clips (video-first stitch)
-  - apply overlays
-  - mux selected MP3 as the last media mutation
-- This ensures that even if overlay compose returns video-only output, selected track is added afterward and preserved in final asset.
+## Alternative approaches (ranked by reliability)
 
-3) Handle single-clip + selected-track case correctly
-- File: `supabase/functions/finalize-video/index.ts`
-- Today `concatenateMP4` returns early for 1 file, so video-only filtering is skipped.
-- Add explicit “strip to video track first” path (or equivalent) before final music mux when `selected_track_id` exists and clip count is 1.
-- Prevents original generator audio from competing with selected track.
+### Option A: Two sequential fal.ai calls instead of one compose (Recommended)
 
-4) Strengthen observability to verify correctness
-- File: `supabase/functions/finalize-video/index.ts`
-- Add structured logs:
-  - post-concat track mode (`videoOnly=true/false`)
-  - post-overlay size
-  - post-mux size
-  - explicit “music mux applied as final step”
-- Keep existing idempotency behavior unchanged.
+Instead of cramming everything into one compose call, use two separate, well-understood fal.ai endpoints sequentially:
 
-5) Validation pass after deploy
-- Trigger one new run and verify logs in this order:
-  - `MP4 remux succeeded...` (no fallback warning)
-  - `Applying ... overlay(s)...`
-  - `Overlays applied...`
-  - `Adding music track...`
-  - `Music track muxed. Final size: ...`
-  - `Final video uploaded successfully.`
-- Confirm run has one `final_video` asset and playback contains:
-  - selected background music
-  - visible overlay text at configured time window.
+1. **Step 1 -- Burn overlay via `fal-ai/ffmpeg-api` (raw ffmpeg command)**: Use a direct ffmpeg filter command (`overlay` filter with a PNG input) instead of the compose endpoint. Render text overlays as **PNG images** (not SVG -- better compatibility) using a canvas-like approach, upload them, then run a single ffmpeg command: `ffmpeg -i video.mp4 -i overlay.png -filter_complex "[0:v][1:v]overlay=0:0:enable='between(t,start,end)'" output.mp4`
 
-Technical details (for implementation)
-```text
-Primary bug location:
-- finalize-video/index.ts
-- concatenateMP4(): moov rebuild section uses first-file moov child traversal
-  while rebuiltTraks length reflects filtered track set (video-only mode).
-- This creates undefined trak replacement and crashes on .length.
+2. **Step 2 -- Mux audio via `fal-ai/ffmpeg-api/merge-audio-video`**: This endpoint has worked before. Use it as the final step after overlays are burned in.
 
-Behavioral fix:
-- Build moov trak list from filtered track set, not original child count.
-- Move muxMP3IntoMP4() call to AFTER overlay compose result assignment.
+**Why this is better**: Each step does one thing. If overlay burning fails, we still get video+audio. If audio mux fails, we still get video+overlay. No single-point-of-failure compose call.
+
+### Option B: Use fal.ai `ffmpeg-api` with raw command string
+
+Instead of the higher-level `compose` endpoint, use the lower-level fal.ai ffmpeg endpoint that accepts raw ffmpeg command strings. This gives full control over filter chains:
+
+```
+ffmpeg -i input.mp4 -i overlay.png -i music.mp3 \
+  -filter_complex "[0:v][1:v]overlay=0:0:enable='between(t,2,8)'" \
+  -map "[v]" -map 2:a -shortest output.mp4
 ```
 
-Scope and risk
-- No database schema or policy changes required.
-- No frontend schema changes required.
-- Changes are isolated to `supabase/functions/finalize-video/index.ts`.
-- Expected user-visible result: final videos include both selected music and overlays reliably.
+This handles overlay + audio in one call but with explicit ffmpeg syntax rather than the abstracted `compose` API.
+
+### Option C: Local-only processing (no fal.ai for post-production)
+
+Do everything in the edge function using the existing local MP4 muxer:
+- **Overlays**: Skip burning into video entirely. Instead, store overlay metadata and render them **client-side** using an HTML5 `<video>` element with absolutely-positioned DOM overlays on top during playback. For publishing, use a simple ffmpeg drawtext command via fal.ai as a single call.
+- **Audio**: Already have `muxMP3IntoMP4` working locally.
+
+**Tradeoff**: Overlays won't be in the raw MP4 file for social media publishing, but would be visible in-app. A single ffmpeg call for publishing is simpler than the current multi-fallback chain.
+
+## Recommended plan: Option A (two sequential calls)
+
+### Changes in `supabase/functions/finalize-video/index.ts`:
+
+1. **Replace SVG overlay rendering with PNG rendering**
+   - Generate overlay as a PNG using an offscreen canvas approach (or a simpler SVG-to-PNG via fal.ai's image processing)
+   - Upload the PNG to storage
+
+2. **Replace the unified compose call with two sequential fal.ai calls**
+   - Call 1: `fal-ai/ffmpeg-api` with raw command to overlay PNG onto video using ffmpeg's `overlay` filter
+   - Call 2: `fal-ai/ffmpeg-api/merge-audio-video` to add the music track
+   - Each call is polled independently with the existing robust polling logic
+
+3. **Simplify fallback logic**
+   - If overlay call fails → continue with base video (log warning)
+   - If audio mux call fails → fall back to local `muxMP3IntoMP4` (already working)
+   - Remove the complex nested try/catch fallback chain
+
+4. **Keep the hard audio guarantee**
+   - The `hasAudioTrack` check + local mux fallback stays as the final safety net
+
+### What gets removed:
+- The `runFalCompose` function (no longer needed)
+- The SVG rendering code (replaced with PNG)
+- The triple-nested fallback chain
+
+### Risk:
+- Low -- each fal.ai call is simple and well-understood
+- Audio has a proven local fallback
+- Overlay failure is graceful (video still publishes)
+
