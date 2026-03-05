@@ -1,36 +1,78 @@
 
+Goal: fix why final output is missing selected music/overlays even though logs show those steps ran.
 
-## Diagnosis: Edge Function Wall-Clock Timeout
+What I found (from code + latest run data)
+1) The stitch remux is failing for selected-music runs
+- In `supabase/functions/finalize-video/index.ts`, `concatenateMP4(..., { videoOnly: true })` filters tracks to video-only, but later rebuilds `moov` by iterating original `trak` boxes from file 1.
+- That creates an out-of-bounds access (`rebuiltTraks[trakIndex++]` becomes `undefined`) and then `.length` is read during `moov` assembly.
+- This matches your exact log: `MP4 remux failed: Cannot read properties of undefined (reading 'length') — using first clip as fallback.`
 
-The run got stuck generating keyframe K6 because the edge function hit its **wall-clock timeout** (~150 seconds). The keyframe step started at 15:06:00 and reached K6 at 15:09:05 (3+ minutes). Each keyframe takes ~30-40 seconds via the AI gateway, and with 9 scenes, the total sequential time (~5-6 minutes) far exceeds the edge function limit.
+2) Music is added before overlays, but overlay rendering likely strips audio
+- Current order is: concat → mux music → apply overlays via fal compose.
+- Your run logs show size dropping from `2.9MB` after music mux to `1.3MB` after overlay step, which strongly indicates the overlay output is video-only (audio removed).
+- So even when music mux succeeds, overlay stage can remove it.
 
-K1 through K5 were saved successfully. K6 generation started but the function was killed before it could complete, leaving scenes 6-9 with `pending` status and no error logged.
+3) Why overlays may also appear “missing”
+- Because remux failure falls back to only the first clip.
+- Overlay timing uses full expected duration (`scene_count * clip_duration`), so overlays can become mistimed or visually less obvious on fallback output.
 
-## Root Cause
+Implementation plan
+1) Fix the MP4 remux crash in `concatenateMP4`
+- File: `supabase/functions/finalize-video/index.ts`
+- Change moov rebuild logic to use only the selected track list (video-only filtered set) when constructing `trak` children.
+- Do not iterate original `moov` trak sequence blindly when filtered tracks are in use.
+- Add defensive guard: if a trak replacement is missing, throw a descriptive error before any `.length` access.
 
-The keyframe loop processes **all** pending scenes in a single function invocation. There is no mid-step self-chaining or time-budget check.
+2) Reorder pipeline operations so final output keeps music
+- File: `supabase/functions/finalize-video/index.ts`
+- New order:
+  - concatenate clips (video-first stitch)
+  - apply overlays
+  - mux selected MP3 as the last media mutation
+- This ensures that even if overlay compose returns video-only output, selected track is added afterward and preserved in final asset.
 
-## Plan
+3) Handle single-clip + selected-track case correctly
+- File: `supabase/functions/finalize-video/index.ts`
+- Today `concatenateMP4` returns early for 1 file, so video-only filtering is skipped.
+- Add explicit “strip to video track first” path (or equivalent) before final music mux when `selected_track_id` exists and clip count is 1.
+- Prevents original generator audio from competing with selected track.
 
-### 1. Add a time-budget guard to the keyframe loop
+4) Strengthen observability to verify correctness
+- File: `supabase/functions/finalize-video/index.ts`
+- Add structured logs:
+  - post-concat track mode (`videoOnly=true/false`)
+  - post-overlay size
+  - post-mux size
+  - explicit “music mux applied as final step”
+- Keep existing idempotency behavior unchanged.
 
-Inside the `for (const scene of pendingScenes)` loop in `run-pipeline/index.ts`, add a check at the top of each iteration:
+5) Validation pass after deploy
+- Trigger one new run and verify logs in this order:
+  - `MP4 remux succeeded...` (no fallback warning)
+  - `Applying ... overlay(s)...`
+  - `Overlays applied...`
+  - `Adding music track...`
+  - `Music track muxed. Final size: ...`
+  - `Final video uploaded successfully.`
+- Confirm run has one `final_video` asset and playback contains:
+  - selected background music
+  - visible overlay text at configured time window.
 
-- Track `const startTime = Date.now()` before the loop
-- Before each keyframe generation, check if `Date.now() - startTime > 100_000` (100 seconds used, leaving ~50s buffer)
-- If the budget is exceeded, log "Time budget reached, re-chaining for remaining keyframes", call `chainNextStep()`, and return early
-- The next invocation will pick up where it left off thanks to the existing resumability logic (it checks `doneSceneIds`)
+Technical details (for implementation)
+```text
+Primary bug location:
+- finalize-video/index.ts
+- concatenateMP4(): moov rebuild section uses first-file moov child traversal
+  while rebuiltTraks length reflects filtered track set (video-only mode).
+- This creates undefined trak replacement and crashes on .length.
 
-### 2. Apply the same pattern to the kling/pika/vidu submission loop
+Behavioral fix:
+- Build moov trak list from filtered track set, not original child count.
+- Move muxMP3IntoMP4() call to AFTER overlay compose result assignment.
+```
 
-The video submission step also iterates over multiple scenes. Add the same time-budget guard there to prevent the same issue when submitting many clips.
-
-### Changes
-
-**File: `supabase/functions/run-pipeline/index.ts`**
-- Add `const stepStartTime = Date.now();` before the keyframe loop (around line 581)
-- Add a time check at the top of the loop body (after line 582): if elapsed > 100s, log + chain + return
-- Add the same pattern in the kling step loop
-
-This is a small, surgical fix. No database changes needed. The existing resumability logic already handles re-entry correctly.
-
+Scope and risk
+- No database schema or policy changes required.
+- No frontend schema changes required.
+- Changes are isolated to `supabase/functions/finalize-video/index.ts`.
+- Expected user-visible result: final videos include both selected music and overlays reliably.
