@@ -238,21 +238,93 @@ Deno.serve(async (req) => {
       await updateRun({ progress_pct: 5 });
     }
 
-    // ===== STEP 1: PLAN =====
-    await log("info", "Step 1/7: Generating scene plan...");
+    // ===== STEP 1: PLAN + STYLE BIBLE =====
+    await log("info", "Step 1/7: Generating style bible and scene plan...");
+
+    // Global negative prompt template injected into every Kling call
+    const KLING_NEGATIVE_TEMPLATE = "flicker, jitter, warping, morphing face, melting, extra limbs, extra fingers, text, watermark, logo, low-res, heavy noise, blurry, duplicate, deformed";
+    const fullNegativePrompt = project.negative_prompt
+      ? `${KLING_NEGATIVE_TEMPLATE}, ${project.negative_prompt}`
+      : KLING_NEGATIVE_TEMPLATE;
+
+    let styleBible: Record<string, any> = {};
+
     try {
+      // --- 1a: Generate Style Bible ---
+      const styleBibleResult = await callAI(
+        [
+          {
+            role: "system",
+            content: `You are a visual consistency director. Given a series concept, produce a structured "Style Bible" that will be appended to every image and video prompt to maintain perfect consistency across all scenes.`,
+          },
+          {
+            role: "user",
+            content: `Series concept: ${project.series_prompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${project.series_rules ? `Rules: ${project.series_rules}` : ""}\n${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}\n\nCreate a detailed style bible.`,
+          },
+        ],
+        [
+          {
+            type: "function",
+            function: {
+              name: "create_style_bible",
+              description: "Output a structured style bible for visual consistency",
+              parameters: {
+                type: "object",
+                properties: {
+                  character_identity: { type: "string", description: "Detailed description of main character/subject: appearance, age, build, skin tone, hair, distinguishing features" },
+                  outfit_description: { type: "string", description: "Exact clothing/outfit description with colors and materials" },
+                  environment_layout: { type: "string", description: "Setting, background elements, spatial layout" },
+                  lighting_palette: { type: "string", description: "Lighting style, color palette, time of day, mood" },
+                  camera_constraints: { type: "string", description: "Default camera distance, angle, lens style" },
+                  do_not_change: { type: "array", items: { type: "string" }, description: "List of elements that must remain identical across all scenes" },
+                  art_style: { type: "string", description: "Overall art/rendering style (photorealistic, anime, 3D render, etc.)" },
+                },
+                required: ["character_identity", "outfit_description", "environment_layout", "lighting_palette", "camera_constraints", "do_not_change", "art_style"],
+                additionalProperties: false,
+              },
+            },
+          },
+        ],
+        { type: "function", function: { name: "create_style_bible" } }
+      );
+
+      const sbToolCall = styleBibleResult.choices?.[0]?.message?.tool_calls?.[0];
+      if (sbToolCall) {
+        styleBible = JSON.parse(sbToolCall.function.arguments);
+        await log("info", "Style Bible generated", styleBible);
+      }
+
+      // --- 1b: Generate Scene Plan (with style bible context & constrained prompts) ---
+      const styleBibleText = Object.entries(styleBible)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+        .join("\n");
+
       const planResult = await callAI(
         [
           {
             role: "system",
-            content: `You are a creative director for short-form video content. Generate a scene-by-scene plan for a video series.
+            content: `You are a creative director for short-form video content. Generate a scene-by-scene plan.
 The series has ${project.scene_count} scenes, each ${project.clip_duration_sec} seconds long, in ${project.aspect_ratio} aspect ratio.
 ${project.series_rules ? `Rules: ${project.series_rules}` : ""}
-${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
+${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}
+
+=== STYLE BIBLE (must be followed for ALL scenes) ===
+${styleBibleText || "No style bible available."}
+
+=== KEYFRAME PROMPT RULES ===
+- Each end_keyframe_prompt must include composition anchors: camera distance (medium shot, close-up, etc.), subject position (centered, rule-of-thirds), horizon line, and room/environment layout.
+- Maintain identical character appearance, outfit, and art style as defined in the style bible.
+- Reference specific elements from the "do_not_change" list.
+
+=== KLING MOTION PROMPT RULES ===
+- Each kling_prompt must describe EXACTLY ONE camera move + ONE subject action. No multi-action prompts.
+- Use consistent motion language: "slow dolly in", "gentle pan left", "subtle head turn", "soft parallax", "steady zoom out", "slight camera push".
+- Keep motion gentle and controlled to minimize warping and jitter.
+- Never describe cuts, transitions, or scene changes within a single prompt.`,
           },
           {
             role: "user",
-            content: `Create a ${project.scene_count}-scene plan for this series: ${project.series_prompt || "A visually stunning short video"}`,
+            content: `Create a ${project.scene_count}-scene plan for: ${project.series_prompt || "A visually stunning short video"}`,
           },
         ],
         [
@@ -272,8 +344,8 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
                         scene_index: { type: "number" },
                         scene_title: { type: "string" },
                         scene_description: { type: "string", description: "Visual description of what happens" },
-                        end_keyframe_prompt: { type: "string", description: "Detailed image generation prompt for the end keyframe" },
-                        kling_prompt: { type: "string", description: "Motion prompt for video generation describing how the scene moves/animates" },
+                        end_keyframe_prompt: { type: "string", description: "Detailed image prompt for the END frame of this clip. Must include composition anchors and style bible elements." },
+                        kling_prompt: { type: "string", description: "Single camera move + single subject action. Keep motion gentle." },
                       },
                       required: ["scene_index", "scene_title", "scene_description", "end_keyframe_prompt", "kling_prompt"],
                       additionalProperties: false,
@@ -307,8 +379,13 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
         });
       }
 
-      await updateRun({ current_step: "keyframes", progress_pct: 15 });
-      await log("info", "Scene plan saved to database");
+      // Store style bible in run metadata for downstream use
+      await updateRun({
+        current_step: "keyframes",
+        progress_pct: 15,
+        generated_metadata: { style_bible: styleBible },
+      });
+      await log("info", "Scene plan and style bible saved");
     } catch (err) {
       await log("error", `Plan step failed: ${err.message}`);
       await updateRun({ status: "failed", error_message: `Plan failed: ${err.message}`, finished_at: new Date().toISOString() });
@@ -321,8 +398,15 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
       return json({ status: "halted" });
     }
 
-    // ===== STEP 2: KEYFRAMES =====
-    await log("info", "Step 2/7: Generating keyframe images...");
+    // ===== STEP 2: KEYFRAMES (Sequential Chaining: K(i-1) → Ki) =====
+    // K0 = initial seed image. For each scene i, generate Ki using K(i-1) as visual reference.
+    // Clip i will use K(i-1) as start frame and Ki as end frame.
+    await log("info", "Step 2/7: Generating chained keyframe images...");
+
+    const styleBibleTextForKeyframes = Object.entries(styleBible)
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+      .join("; ");
+
     try {
       const { data: scenes } = await supabase
         .from("scenes")
@@ -330,7 +414,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
         .eq("run_id", runId)
         .order("scene_index");
 
-      // Fetch initial image for this run to use as visual reference
+      // K0 = initial image (generated in Step 0). Get its URL as starting chain reference.
       const { data: initialAssets } = await supabase
         .from("assets")
         .select("supabase_path")
@@ -338,12 +422,12 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
         .eq("type", "initial_image")
         .limit(1);
 
-      let initialImageUrl: string | null = null;
+      let prevKeyframeUrl: string | null = null;
       if (initialAssets && initialAssets.length > 0) {
         const { data: urlData } = supabase.storage
           .from("project-assets")
           .getPublicUrl(initialAssets[0].supabase_path);
-        initialImageUrl = urlData.publicUrl;
+        prevKeyframeUrl = urlData.publicUrl;
       }
 
       if (scenes) {
@@ -355,21 +439,30 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             return json({ status: "halted" });
           }
 
-          await log("info", `Generating keyframe for scene ${scene.scene_index}: ${scene.scene_title}`);
+          await log("info", `Generating end keyframe K${i + 1} for scene ${scene.scene_index}: ${scene.scene_title}`);
 
           try {
-            // Build message with optional initial image reference for consistency
-            const userContent: any[] = [
-              {
-                type: "text",
-                text: `Generate a high-quality ${project.aspect_ratio} image for this scene. Keep visual style consistent with the reference image. Scene: ${scene.end_keyframe_prompt}. Style: cinematic, high detail, vibrant colors.`,
-              },
-            ];
+            const promptText = `Generate a high-quality ${project.aspect_ratio} image for this scene's END frame. This is keyframe K${i + 1} of ${scenes.length}.
 
-            if (initialImageUrl) {
+=== STYLE BIBLE (follow exactly) ===
+${styleBibleTextForKeyframes || "Cinematic, high detail, vibrant colors."}
+
+=== SCENE ===
+${scene.end_keyframe_prompt}
+
+=== RULES ===
+- Maintain IDENTICAL character appearance, outfit, and art style as the reference image.
+- Keep the same lighting/palette direction.
+- Match the composition anchors specified in the scene description.
+- Do NOT add text, watermarks, or logos.`;
+
+            const userContent: any[] = [{ type: "text", text: promptText }];
+
+            // Chain: use K(i-1) as visual reference for consistency
+            if (prevKeyframeUrl) {
               userContent.push({
                 type: "image_url",
-                image_url: { url: initialImageUrl },
+                image_url: { url: prevKeyframeUrl },
               });
             }
 
@@ -389,9 +482,21 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             );
 
             if (assetId) {
-              await log("info", `Keyframe saved for scene ${scene.scene_index}`);
+              await log("info", `Keyframe K${i + 1} saved for scene ${scene.scene_index}`);
+              // Update chain reference: next scene uses this keyframe
+              const { data: newAsset } = await supabase
+                .from("assets")
+                .select("supabase_path")
+                .eq("id", assetId)
+                .single();
+              if (newAsset) {
+                const { data: urlData } = supabase.storage
+                  .from("project-assets")
+                  .getPublicUrl(newAsset.supabase_path);
+                prevKeyframeUrl = urlData.publicUrl;
+              }
             } else {
-              await log("warn", `No image data for scene ${scene.scene_index}`);
+              await log("warn", `No image data for keyframe K${i + 1} — keeping previous keyframe as chain reference`);
             }
             await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           } catch (sceneErr) {
@@ -405,7 +510,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
       }
 
       await updateRun({ current_step: "kling", progress_pct: 40 });
-      await log("info", "Keyframe generation complete");
+      await log("info", "Chained keyframe generation complete");
     } catch (err) {
       await log("error", `Keyframes step failed: ${err.message}`);
       await updateRun({ status: "failed", error_message: `Keyframes failed: ${err.message}`, finished_at: new Date().toISOString() });
@@ -506,7 +611,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
               model_name: project.kling_model_name || "kling-v1",
               image: startImageUrl || "",
               prompt: scene.kling_prompt || "",
-              negative_prompt: project.negative_prompt || "",
+              negative_prompt: fullNegativePrompt,
               duration: klingDuration,
               mode: project.kling_mode || "pro",
               sound: soundSupported && project.kling_sound ? "on" : "off",
