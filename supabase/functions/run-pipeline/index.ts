@@ -649,17 +649,238 @@ ${scene.end_keyframe_prompt}
     }
 
     // ═══════════════════════════════════════════════════════
-    // STEP: kling — submit video generation tasks
+    // STEP: kling — submit video generation tasks (Kling or Pika)
     // ═══════════════════════════════════════════════════════
     if (step === "kling") {
-      await log("info", "Step 3: Video generation (Kling)...");
-
-      const KLING_ACCESS_KEY = Deno.env.get("KLING_ACCESS_KEY");
-      const KLING_SECRET_KEY = Deno.env.get("KLING_SECRET_KEY");
-      const KLING_API_BASE = "https://api-singapore.klingai.com";
+      const videoGenerator = (project as any).video_generator || "kling";
+      await log("info", `Step 3: Video generation (${videoGenerator})...`);
 
       const metadata = (run.generated_metadata as any) || {};
       const negPrompt = metadata.full_negative_prompt || fullNegativePrompt;
+
+      const { data: scenes } = await supabase
+        .from("scenes")
+        .select("*")
+        .eq("run_id", runId)
+        .order("scene_index");
+
+      if (!scenes || scenes.length === 0) {
+        await updateRun({ current_step: "stitch", progress_pct: 70 });
+        chainNextStep();
+        return json({ status: "no_scenes" });
+      }
+
+      // Check which scenes already have clip assets (resumability)
+      const { data: existingClips } = await supabase
+        .from("assets")
+        .select("scene_id")
+        .eq("run_id", runId)
+        .eq("type", "clip");
+      const clippedSceneIds = new Set((existingClips || []).map(a => a.scene_id));
+      const pendingScenes = scenes.filter(s => !clippedSceneIds.has(s.id));
+
+      // ── Gather keyframe URLs (shared by both generators) ──
+      const sceneKeyframes: Record<number, string> = {};
+      for (const scene of scenes) {
+        const { data: kfAssets } = await supabase
+          .from("assets")
+          .select("supabase_path")
+          .eq("run_id", runId)
+          .eq("scene_id", scene.id)
+          .eq("type", "keyframe")
+          .limit(1);
+        if (kfAssets && kfAssets.length > 0) {
+          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(kfAssets[0].supabase_path);
+          sceneKeyframes[scene.scene_index] = urlData.publicUrl;
+        }
+      }
+
+      // Get initial image URL
+      let runInitialImageUrl: string | null = null;
+      const { data: initAssets } = await supabase
+        .from("assets")
+        .select("supabase_path")
+        .eq("run_id", runId)
+        .eq("type", "initial_image")
+        .limit(1);
+      if (initAssets && initAssets.length > 0) {
+        const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(initAssets[0].supabase_path);
+        runInitialImageUrl = urlData.publicUrl;
+      }
+
+      // ══════════════════════════════════════════════════════
+      // PIKA 2.2 PIKAFRAMES PATH
+      // ══════════════════════════════════════════════════════
+      if (videoGenerator === "pika") {
+        const FAL_KEY = Deno.env.get("FAL_KEY");
+        if (!FAL_KEY) {
+          await log("error", "FAL_KEY not configured — cannot use Pika");
+          await updateRun({ status: "failed", error_message: "FAL_KEY not configured" });
+          return json({ error: "FAL_KEY not configured" }, 500);
+        }
+
+        const pikaResolution = (project as any).pika_resolution || "1080p";
+
+        // Build ordered keyframe image URLs: initial → scene1 end → scene2 end → ...
+        const imageUrls: string[] = [];
+        if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
+        for (const scene of scenes) {
+          if (sceneKeyframes[scene.scene_index]) {
+            imageUrls.push(sceneKeyframes[scene.scene_index]);
+          }
+        }
+
+        if (imageUrls.length < 2) {
+          await log("error", "Pika needs at least 2 keyframe images");
+          await updateRun({ status: "failed", error_message: "Not enough keyframes for Pika" });
+          return json({ error: "Not enough keyframes" }, 500);
+        }
+
+        // Pika supports max 5 images, 25s total. Batch if needed.
+        const MAX_PIKA_IMAGES = 5;
+        const batches: string[][] = [];
+        for (let i = 0; i < imageUrls.length; i += MAX_PIKA_IMAGES - 1) {
+          const batch = imageUrls.slice(i, i + MAX_PIKA_IMAGES);
+          if (batch.length < 2 && batches.length > 0) {
+            // Overlap: add last image from previous batch as first
+            batch.unshift(imageUrls[i - 1]);
+          }
+          if (batch.length >= 2) batches.push(batch);
+        }
+
+        await log("info", `Pika: submitting ${batches.length} batch(es) with ${imageUrls.length} total images`);
+
+        const pikaRequestIds: string[] = [];
+
+        for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+          const batch = batches[batchIdx];
+          
+          // Build per-transition prompts from scene kling_prompts
+          const transitions: Array<{ duration: number; prompt?: string }> = [];
+          for (let t = 0; t < batch.length - 1; t++) {
+            const sceneForTransition = scenes[batchIdx * (MAX_PIKA_IMAGES - 1) + t];
+            transitions.push({
+              duration: Math.min(project.clip_duration_sec || 5, 10),
+              prompt: sceneForTransition?.kling_prompt || undefined,
+            });
+          }
+
+          const pikaBody: Record<string, any> = {
+            image_urls: batch,
+            prompt: project.series_prompt || "smooth cinematic transition",
+            negative_prompt: negPrompt,
+            resolution: pikaResolution,
+          };
+          if (transitions.length > 0) pikaBody.transitions = transitions;
+
+          await log("debug", `Pika batch ${batchIdx + 1} request`, pikaBody);
+
+          // Submit to fal.ai queue
+          const submitResp = await fetch("https://queue.fal.run/fal-ai/pika/v2.2/pikaframes", {
+            method: "POST",
+            headers: {
+              "Authorization": `Key ${FAL_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(pikaBody),
+          });
+
+          if (!submitResp.ok) {
+            const errText = await submitResp.text();
+            await log("error", `Pika submit failed: ${submitResp.status} ${errText}`);
+            continue;
+          }
+
+          const submitResult = await submitResp.json();
+          const requestId = submitResult.request_id;
+          if (!requestId) {
+            await log("error", "No request_id from Pika submit", submitResult);
+            continue;
+          }
+
+          pikaRequestIds.push(requestId);
+          await log("info", `Pika batch ${batchIdx + 1} submitted: ${requestId}`);
+
+          // Store a placeholder clip asset with the request ID
+          await supabase.from("assets").insert({
+            supabase_path: `pending-pika/${runId}/batch-${batchIdx}`,
+            type: "clip" as any,
+            run_id: runId,
+            scene_id: scenes[Math.min(batchIdx * (MAX_PIKA_IMAGES - 1), scenes.length - 1)].id,
+            metadata: { pika_request_id: requestId, batch_index: batchIdx, status: "submitted" },
+          });
+        }
+
+        // Poll fal.ai for results
+        const POLL_INTERVAL_MS = 10000;
+        const MAX_POLLS = 60; // 10 minutes
+        for (let poll = 0; poll < MAX_POLLS; poll++) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          const currentStatus = await checkRunStatus();
+          if (currentStatus !== "running") return json({ status: "halted" });
+
+          let allDone = true;
+          for (const reqId of pikaRequestIds) {
+            const statusResp = await fetch(`https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}/status`, {
+              headers: { "Authorization": `Key ${FAL_KEY}` },
+            });
+            if (!statusResp.ok) { allDone = false; continue; }
+            const statusData = await statusResp.json();
+
+            if (statusData.status === "COMPLETED") {
+              // Fetch result
+              const resultResp = await fetch(`https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}`, {
+                headers: { "Authorization": `Key ${FAL_KEY}` },
+              });
+              if (resultResp.ok) {
+                const resultData = await resultResp.json();
+                const videoUrl = resultData.video?.url;
+                if (videoUrl) {
+                  // Download and upload to storage
+                  const videoResp = await fetch(videoUrl);
+                  if (videoResp.ok) {
+                    const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
+                    const storagePath = `${project.id}/clips/${runId}/pika-${reqId}.mp4`;
+                    await supabase.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
+
+                    // Update the placeholder asset
+                    await supabase.from("assets")
+                      .update({ supabase_path: storagePath, metadata: { pika_request_id: reqId, status: "completed" } })
+                      .match({ run_id: runId, type: "clip" })
+                      .filter("metadata->>pika_request_id", "eq", reqId);
+
+                    await log("info", `Pika video downloaded and stored: ${reqId}`);
+                  }
+                }
+              }
+            } else if (statusData.status === "FAILED") {
+              await log("error", `Pika request ${reqId} failed`, statusData);
+            } else {
+              allDone = false;
+            }
+          }
+
+          if (allDone) {
+            await log("info", "All Pika tasks completed.");
+            await updateRun({ current_step: "stitch", progress_pct: 70 });
+            chainNextStep();
+            return json({ status: "pika_complete", run_id: runId });
+          }
+
+          await updateRun({ progress_pct: 40 + Math.round(30 * (poll / MAX_POLLS)) });
+        }
+
+        await log("warn", "Pika polling timed out after 10 minutes");
+        await updateRun({ status: "failed", error_message: "Pika polling timed out" });
+        return json({ status: "pika_timeout" });
+      }
+
+      // ══════════════════════════════════════════════════════
+      // KLING PATH (original)
+      // ══════════════════════════════════════════════════════
+      const KLING_ACCESS_KEY = Deno.env.get("KLING_ACCESS_KEY");
+      const KLING_SECRET_KEY = Deno.env.get("KLING_SECRET_KEY");
+      const KLING_API_BASE = "https://api-singapore.klingai.com";
 
       async function getKlingToken(): Promise<string> {
         const encoder = new TextEncoder();
@@ -688,60 +909,9 @@ ${scene.end_keyframe_prompt}
         return json({ status: "kling_skipped" });
       }
 
-      const { data: scenes } = await supabase
-        .from("scenes")
-        .select("*")
-        .eq("run_id", runId)
-        .order("scene_index");
-
-      if (!scenes || scenes.length === 0) {
-        await updateRun({ current_step: "stitch", progress_pct: 70 });
-        chainNextStep();
-        return json({ status: "no_scenes" });
-      }
-
-      // Check which scenes already have clip assets (resumability)
-      const { data: existingClips } = await supabase
-        .from("assets")
-        .select("scene_id")
-        .eq("run_id", runId)
-        .eq("type", "clip");
-      const clippedSceneIds = new Set((existingClips || []).map(a => a.scene_id));
-      const pendingScenes = scenes.filter(s => !clippedSceneIds.has(s.id));
-
       if (pendingScenes.length === 0) {
         await log("info", "All Kling tasks already submitted. Starting polling.");
-        // Skip to poll
       } else {
-        // Gather keyframe URLs
-        const sceneKeyframes: Record<number, string> = {};
-        for (const scene of scenes) {
-          const { data: kfAssets } = await supabase
-            .from("assets")
-            .select("supabase_path")
-            .eq("run_id", runId)
-            .eq("scene_id", scene.id)
-            .eq("type", "keyframe")
-            .limit(1);
-          if (kfAssets && kfAssets.length > 0) {
-            const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(kfAssets[0].supabase_path);
-            sceneKeyframes[scene.scene_index] = urlData.publicUrl;
-          }
-        }
-
-        // Get initial image URL
-        let runInitialImageUrl: string | null = null;
-        const { data: initAssets } = await supabase
-          .from("assets")
-          .select("supabase_path")
-          .eq("run_id", runId)
-          .eq("type", "initial_image")
-          .limit(1);
-        if (initAssets && initAssets.length > 0) {
-          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(initAssets[0].supabase_path);
-          runInitialImageUrl = urlData.publicUrl;
-        }
-
         const soundSupported = project.kling_model_name?.startsWith("kling-v2-6");
         const klingDuration = (project.clip_duration_sec || 10) >= 10 ? "10" : "5";
 
@@ -760,7 +930,6 @@ ${scene.end_keyframe_prompt}
 
           // Build behavior-aware prompt
           const behavior = scene.scene_behavior || "cinematic_action";
-          const motionRules = getMotionRulesForBehavior(behavior);
           const densityLabel = scene.activity_density || "medium";
           const enrichedPrompt = scene.kling_prompt
             ? `[${behavior}/${densityLabel}] ${scene.kling_prompt}`
