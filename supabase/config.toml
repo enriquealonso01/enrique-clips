@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.run-pipeline]
 verify_jwt = false
+
+[functions.poll-pika]
+verify_jwt = false
