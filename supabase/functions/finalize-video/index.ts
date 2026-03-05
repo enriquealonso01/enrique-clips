@@ -1690,7 +1690,7 @@ Deno.serve(async (req) => {
                         ffmpeg_command: ffmpegCmd,
                         input_files: inputFiles,
                         output_files: { out_1: "output.mp4" },
-                        max_command_run_seconds: 300,
+                        max_command_run_seconds: 60,
                         vcpu_count: 8,
                       }),
                     })
