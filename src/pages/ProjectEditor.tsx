@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
+import { TrackSelector } from "@/components/TrackSelector";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
@@ -317,6 +318,12 @@ export default function ProjectEditor() {
               </CardContent>
             </Card>
           )}
+
+          {/* Background Music */}
+          <TrackSelector
+            selectedTrackId={(form as any).selected_track_id || null}
+            onSelect={(id) => update("selected_track_id" as any, id)}
+          />
 
           {/* Vidu Settings */}
           {((form as any).video_generator || "kling") === "vidu" && (
