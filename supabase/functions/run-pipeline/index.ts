@@ -410,11 +410,18 @@ Each scene must also specify activity_density (low, medium, high):
 - medium: moderate activity, 2-4 elements
 - high: busy scene, many simultaneous activities (construction, crowds, machinery)
 
+=== GLOBAL START STATE ===
+The world begins COMPLETELY UNTOUCHED. Scene 1 must show ONLY the natural landscape.
+There are NO buildings, NO excavation, NO construction materials, NO workers, NO vehicles, NO machinery, NO tools, NO human structures.
+Only the natural environment exists at the start. Human elements may ONLY appear if the series prompt explicitly introduces them in a later scene.
+
 === TEMPORAL CONTINUITY ===
+- Scene 1 must preserve the untouched natural start state unless the series prompt says otherwise.
 - Each scene must logically follow the previous one.
 - Objects, characters, and structures cannot appear if they were not introduced in a prior scene.
 - If something is being built, it must progress incrementally across scenes — no sudden jumps.
-- Environmental conditions (time of day, weather) should transition smoothly.`,
+- Environmental conditions (time of day, weather) should transition smoothly.
+- The first sign of human activity (if any) should emerge gradually, not appear fully formed.`,
           },
           {
             role: "user",
