@@ -196,19 +196,33 @@ export default function ProjectEditor() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Model</Label>
-                <Select value={form.kling_model_name || "kling-v1"} onValueChange={(v) => update("kling_model_name", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="kling-v1">Kling V1</SelectItem>
-                    <SelectItem value="kling-v1-5">Kling V1.5</SelectItem>
-                    <SelectItem value="kling-v1-6">Kling V1.6</SelectItem>
-                    <SelectItem value="kling-v2-master">Kling V2 Master</SelectItem>
-                    <SelectItem value="kling-v2-1">Kling V2.1</SelectItem>
-                    <SelectItem value="kling-v2-1-master">Kling V2.1 Master</SelectItem>
-                    <SelectItem value="kling-v2-5-turbo">Kling V2.5 Turbo</SelectItem>
-                    <SelectItem value="kling-v2-6">Kling V2.6</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-2">
+                  <Select
+                    value={["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"].includes(form.kling_model_name || "") ? form.kling_model_name : "__custom__"}
+                    onValueChange={(v) => { if (v !== "__custom__") update("kling_model_name", v); else update("kling_model_name", ""); }}
+                  >
+                    <SelectTrigger className="flex-1"><SelectValue placeholder="Select or type custom" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="kling-v1">Kling V1</SelectItem>
+                      <SelectItem value="kling-v1-5">Kling V1.5</SelectItem>
+                      <SelectItem value="kling-v1-6">Kling V1.6</SelectItem>
+                      <SelectItem value="kling-v2-master">Kling V2 Master</SelectItem>
+                      <SelectItem value="kling-v2-1">Kling V2.1</SelectItem>
+                      <SelectItem value="kling-v2-1-master">Kling V2.1 Master</SelectItem>
+                      <SelectItem value="kling-v2-5-turbo">Kling V2.5 Turbo</SelectItem>
+                      <SelectItem value="kling-v2-6">Kling V2.6</SelectItem>
+                      <SelectItem value="__custom__">Custom...</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {!["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"].includes(form.kling_model_name || "kling-v1") && (
+                  <Input
+                    value={form.kling_model_name || ""}
+                    onChange={(e) => update("kling_model_name", e.target.value)}
+                    placeholder="Enter custom model name, e.g. kling-v3-pro"
+                    className="mt-1"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label>Mode</Label>
