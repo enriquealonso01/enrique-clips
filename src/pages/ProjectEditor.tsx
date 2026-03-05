@@ -129,9 +129,9 @@ export default function ProjectEditor() {
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="series">Series</TabsTrigger>
-          <TabsTrigger value="kling">Kling</TabsTrigger>
+          <TabsTrigger value="video">Video Gen</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="api">API</TabsTrigger>
@@ -194,69 +194,116 @@ export default function ProjectEditor() {
           </Card>
         </TabsContent>
 
-        {/* Kling Tab */}
-        <TabsContent value="kling" className="space-y-4 mt-4">
+        {/* Video Generator Tab */}
+        <TabsContent value="video" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Kling Configuration</CardTitle>
-              <CardDescription>Image-to-video generation settings</CardDescription>
+              <CardTitle>Video Generator</CardTitle>
+              <CardDescription>Choose which AI video model to use</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Model</Label>
-                <div className="flex gap-2">
-                  <Select
-                    value={customKlingModel ? "__custom__" : (form.kling_model_name || "kling-v1")}
-                    onValueChange={(v) => {
-                      if (v === "__custom__") {
-                        setCustomKlingModel(true);
-                        update("kling_model_name", "");
-                      } else {
-                        setCustomKlingModel(false);
-                        update("kling_model_name", v);
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="flex-1"><SelectValue placeholder="Select or type custom" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="kling-v1">Kling V1</SelectItem>
-                      <SelectItem value="kling-v1-5">Kling V1.5</SelectItem>
-                      <SelectItem value="kling-v1-6">Kling V1.6</SelectItem>
-                      <SelectItem value="kling-v2-master">Kling V2 Master</SelectItem>
-                      <SelectItem value="kling-v2-1">Kling V2.1</SelectItem>
-                      <SelectItem value="kling-v2-1-master">Kling V2.1 Master</SelectItem>
-                      <SelectItem value="kling-v2-5-turbo">Kling V2.5 Turbo</SelectItem>
-                      <SelectItem value="kling-v2-6">Kling V2.6</SelectItem>
-                      <SelectItem value="__custom__">Custom...</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {customKlingModel && (
-                  <Input
-                    value={form.kling_model_name || ""}
-                    onChange={(e) => update("kling_model_name", e.target.value)}
-                    placeholder="Enter custom model name, e.g. kling-v3-pro"
-                    className="mt-1"
-                    autoFocus
-                  />
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>Mode</Label>
-                <Select value={form.kling_mode || "pro"} onValueChange={(v) => update("kling_mode", v)}>
+                <Label>Generator</Label>
+                <Select value={(form as any).video_generator || "kling"} onValueChange={(v) => update("video_generator" as any, v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pro">Pro</SelectItem>
-                    <SelectItem value="std">Standard</SelectItem>
+                    <SelectItem value="kling">Kling AI</SelectItem>
+                    <SelectItem value="pika">Pika 2.2 Pikaframes (via fal.ai)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-3">
-                <Switch checked={form.kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
-                <Label>Enable Sound</Label>
-              </div>
             </CardContent>
           </Card>
+
+          {/* Kling Settings */}
+          {((form as any).video_generator || "kling") === "kling" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Kling Configuration</CardTitle>
+                <CardDescription>Image-to-video generation settings</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Model</Label>
+                  <div className="flex gap-2">
+                    <Select
+                      value={customKlingModel ? "__custom__" : (form.kling_model_name || "kling-v1")}
+                      onValueChange={(v) => {
+                        if (v === "__custom__") {
+                          setCustomKlingModel(true);
+                          update("kling_model_name", "");
+                        } else {
+                          setCustomKlingModel(false);
+                          update("kling_model_name", v);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="flex-1"><SelectValue placeholder="Select or type custom" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="kling-v1">Kling V1</SelectItem>
+                        <SelectItem value="kling-v1-5">Kling V1.5</SelectItem>
+                        <SelectItem value="kling-v1-6">Kling V1.6</SelectItem>
+                        <SelectItem value="kling-v2-master">Kling V2 Master</SelectItem>
+                        <SelectItem value="kling-v2-1">Kling V2.1</SelectItem>
+                        <SelectItem value="kling-v2-1-master">Kling V2.1 Master</SelectItem>
+                        <SelectItem value="kling-v2-5-turbo">Kling V2.5 Turbo</SelectItem>
+                        <SelectItem value="kling-v2-6">Kling V2.6</SelectItem>
+                        <SelectItem value="__custom__">Custom...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {customKlingModel && (
+                    <Input
+                      value={form.kling_model_name || ""}
+                      onChange={(e) => update("kling_model_name", e.target.value)}
+                      placeholder="Enter custom model name, e.g. kling-v3-pro"
+                      className="mt-1"
+                      autoFocus
+                    />
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Mode</Label>
+                  <Select value={form.kling_mode || "pro"} onValueChange={(v) => update("kling_mode", v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pro">Pro</SelectItem>
+                      <SelectItem value="std">Standard</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch checked={form.kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
+                  <Label>Enable Sound</Label>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pika Settings */}
+          {((form as any).video_generator || "kling") === "pika" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Pika 2.2 Pikaframes</CardTitle>
+                <CardDescription>Keyframe-to-video transitions via fal.ai</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Resolution</Label>
+                  <Select value={(form as any).pika_resolution || "1080p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="720p">720p</SelectItem>
+                      <SelectItem value="1080p">1080p</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Pika Pikaframes generates smooth transitions between consecutive keyframe images. Each transition is up to 5s, max 25s total.
+                </p>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* Publish Tab */}
