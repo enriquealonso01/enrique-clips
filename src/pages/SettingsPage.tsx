@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Save, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
+import { TrackUploader } from "@/components/TrackUploader";
 
 export default function SettingsPage() {
   const [keys, setKeys] = useState({
@@ -24,6 +25,8 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground">Global API key configuration</p>
       </div>
+
+      <TrackUploader />
 
       <Card>
         <CardHeader>

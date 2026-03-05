@@ -89,6 +89,22 @@ function scanBoxes(data: Uint8Array, from: number, to: number): Box[] {
 
 const CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "dinf", "edts", "udta"]);
 
+// ---- Track type detection ----
+function getHandlerType(data: Uint8Array, trak: Box): string | null {
+  const trakChildren = scanBoxes(data, trak.start + trak.hdr, trak.start + trak.size);
+  const mdia = trakChildren.find((b) => b.type === "mdia");
+  if (!mdia) return null;
+  const mdiaChildren = scanBoxes(data, mdia.start + mdia.hdr, mdia.start + mdia.size);
+  const hdlr = mdiaChildren.find((b) => b.type === "hdlr");
+  if (!hdlr) return null;
+  // handler_type is at offset 8 after fullbox header (version+flags=4, pre_defined=4)
+  return boxType(data, hdlr.start + hdlr.hdr + 8);
+}
+
+function isVideoTrack(data: Uint8Array, trak: Box): boolean {
+  return getHandlerType(data, trak) === "vide";
+}
+
 function findBox(data: Uint8Array, boxes: Box[], ...path: string[]): Box | null {
   let current = boxes;
   for (let i = 0; i < path.length; i++) {
@@ -449,12 +465,20 @@ function getMdia(data: Uint8Array, trak: Box): Box | null {
   return trakChildren.find((b) => b.type === "mdia") || null;
 }
 
-function concatenateMP4(files: Uint8Array[]): Uint8Array {
+function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Uint8Array {
   if (files.length === 0) throw new Error("No files to concatenate");
   if (files.length === 1) return files[0];
 
   const parsed = files.map(parseFile);
   const first = parsed[0];
+  const videoOnly = opts?.videoOnly ?? false;
+
+  // Filter to video-only tracks if requested
+  if (videoOnly) {
+    for (const p of parsed) {
+      p.trakBoxes = p.trakBoxes.filter((trak) => isVideoTrack(p.data, trak));
+    }
+  }
 
   // Validate: all files must have the same number of tracks
   const trackCount = first.trakBoxes.length;
@@ -772,6 +796,340 @@ function concatenateMP4(files: Uint8Array[]): Uint8Array {
   return output;
 }
 
+// ===== MP3 FRAME PARSER & AUDIO MUXER =====
+
+const MP3_BITRATES_V1_L3 = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0];
+const MP3_SAMPLERATES_V1 = [44100, 48000, 32000];
+
+interface MP3FrameInfo { offset: number; size: number; sampleRate: number; channels: number; bitrate: number; }
+
+function parseMP3Frames(data: Uint8Array): MP3FrameInfo[] {
+  const frames: MP3FrameInfo[] = [];
+  let pos = 0;
+  // Skip ID3v2 tag if present
+  if (data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) {
+    const tagSize = ((data[6] & 0x7f) << 21) | ((data[7] & 0x7f) << 14) | ((data[8] & 0x7f) << 7) | (data[9] & 0x7f);
+    pos = 10 + tagSize;
+  }
+  while (pos + 4 <= data.length) {
+    // Sync word: 0xFFE0 (11 bits)
+    if (data[pos] !== 0xFF || (data[pos+1] & 0xE0) !== 0xE0) { pos++; continue; }
+    const b1 = data[pos+1], b2 = data[pos+2];
+    const version = (b1 >> 3) & 3; // 3=MPEG1
+    const layer = (b1 >> 1) & 3;   // 1=Layer III
+    if (version !== 3 || layer !== 1) { pos++; continue; } // Only MPEG1 Layer III
+    const bitrateIdx = (b2 >> 4) & 0xF;
+    const srIdx = (b2 >> 2) & 3;
+    const padding = (b2 >> 1) & 1;
+    if (bitrateIdx === 0 || bitrateIdx === 15 || srIdx === 3) { pos++; continue; }
+    const bitrate = MP3_BITRATES_V1_L3[bitrateIdx] * 1000;
+    const sampleRate = MP3_SAMPLERATES_V1[srIdx];
+    const channels = ((data[pos+3] >> 6) & 3) === 3 ? 1 : 2;
+    const frameSize = Math.floor(144 * bitrate / sampleRate) + padding;
+    if (pos + frameSize > data.length) break;
+    frames.push({ offset: pos, size: frameSize, sampleRate, channels, bitrate });
+    pos += frameSize;
+  }
+  return frames;
+}
+
+function buildEsdsBox(sampleRate: number, channels: number): Uint8Array {
+  // ES_Descriptor for MP3 (objectTypeIndication = 0x6B = MPEG-1 Audio)
+  const esds = new Uint8Array([
+    0x00, 0x00, 0x00, 0x00, // version + flags
+    // ES_Descriptor tag=3, length
+    0x03, 0x19,
+    0x00, 0x01, // ES_ID = 1
+    0x00,       // streamDependence=0, URL=0, OCR=0, priority=0
+    // DecoderConfigDescriptor tag=4, length
+    0x04, 0x11,
+    0x6B,       // objectTypeIndication = 0x6B (MPEG-1 Audio)
+    0x15,       // streamType=5 (audio), upstream=0, reserved=1 => 0x15
+    0x00, 0x00, 0x00, // bufferSizeDB
+    0x00, 0x00, 0x00, 0x00, // maxBitrate (will be filled)
+    0x00, 0x00, 0x00, 0x00, // avgBitrate (will be filled)
+    // DecoderSpecificInfo tag=5, length=0
+    0x05, 0x00,
+    // SLConfigDescriptor tag=6, length=1
+    0x06, 0x01,
+    0x02, // predefined=2
+  ]);
+  const size = esds.length + 8;
+  const box = new Uint8Array(size);
+  writeU32(box, 0, size);
+  box.set(makeBoxType("esds"), 4);
+  box.set(esds, 8);
+  return box;
+}
+
+function buildAudioSampleEntry(sampleRate: number, channels: number): Uint8Array {
+  // mp4a sample entry: 6 bytes reserved + 2 data_ref_index + 8 reserved + 2 channels + 2 sampleSize + 4 reserved + 4 sampleRate(fixed16.16) + esds
+  const esds = buildEsdsBox(sampleRate, channels);
+  const entrySize = 8 + 6 + 2 + 8 + 2 + 2 + 4 + 4 + esds.length;
+  const entry = new Uint8Array(entrySize);
+  writeU32(entry, 0, entrySize);
+  entry.set(makeBoxType("mp4a"), 4);
+  // 6 bytes reserved (zeros) at offset 8
+  writeU16(entry, 14, 1); // data_reference_index = 1
+  // 8 bytes reserved at offset 16
+  writeU16(entry, 24, channels);
+  writeU16(entry, 26, 16); // sampleSize = 16 bits
+  // 4 bytes reserved at offset 28
+  writeU32(entry, 32, sampleRate << 16); // fixed-point 16.16
+  entry.set(esds, 36);
+  return entry;
+}
+
+function buildStsdAudio(sampleRate: number, channels: number): Uint8Array {
+  const sampleEntry = buildAudioSampleEntry(sampleRate, channels);
+  const payloadSize = 4 + sampleEntry.length; // entry_count + entry
+  const payload = new Uint8Array(payloadSize);
+  writeU32(payload, 0, 1); // entry_count = 1
+  payload.set(sampleEntry, 4);
+  return buildFullBox("stsd", 0, 0, payload);
+}
+
+function buildSmhd(): Uint8Array {
+  // Sound media header: version(1) + flags(3) + balance(2) + reserved(2) = 8 bytes payload
+  return buildFullBox("smhd", 0, 0, new Uint8Array(4));
+}
+
+function buildDinf(): Uint8Array {
+  // dinf > dref with one url entry
+  const urlBox = buildFullBox("url ", 0, 1, new Uint8Array(0)); // self-contained flag
+  const drefPayload = new Uint8Array(4 + urlBox.length);
+  writeU32(drefPayload, 0, 1); // entry_count
+  drefPayload.set(urlBox, 4);
+  const dref = buildFullBox("dref", 0, 0, drefPayload);
+  
+  const dinfSize = 8 + dref.length;
+  const dinf = new Uint8Array(dinfSize);
+  writeU32(dinf, 0, dinfSize);
+  dinf.set(makeBoxType("dinf"), 4);
+  dinf.set(dref, 8);
+  return dinf;
+}
+
+function buildHdlrAudio(): Uint8Array {
+  // hdlr: version+flags(4) + pre_defined(4) + handler_type(4) + reserved(12) + name
+  const name = new TextEncoder().encode("SoundHandler\0");
+  const payload = new Uint8Array(4 + 4 + 12 + name.length);
+  payload.set(makeBoxType("soun"), 4); // handler_type
+  payload.set(name, 20);
+  return buildFullBox("hdlr", 0, 0, payload);
+}
+
+function muxMP3IntoMP4(videoMP4: Uint8Array, mp3Data: Uint8Array, videoDurationSec: number): Uint8Array {
+  const frames = parseMP3Frames(mp3Data);
+  if (frames.length === 0) throw new Error("No valid MP3 frames found");
+  
+  const sampleRate = frames[0].sampleRate;
+  const channels = frames[0].channels;
+  const samplesPerFrame = 1152; // MPEG-1 Layer III
+  
+  // Trim MP3 to match video duration
+  const maxFrames = Math.ceil(videoDurationSec * sampleRate / samplesPerFrame);
+  const usedFrames = frames.slice(0, maxFrames);
+  
+  // Collect audio data
+  let audioDataSize = 0;
+  const frameSizes: number[] = [];
+  for (const f of usedFrames) {
+    frameSizes.push(f.size);
+    audioDataSize += f.size;
+  }
+  const audioData = new Uint8Array(audioDataSize);
+  let writePos = 0;
+  for (const f of usedFrames) {
+    audioData.set(mp3Data.slice(f.offset, f.offset + f.size), writePos);
+    writePos += f.size;
+  }
+  
+  // Parse existing video MP4
+  const parsed = parseFile(videoMP4);
+  const moovChildren = scanBoxes(parsed.data, parsed.moov.start + parsed.moov.hdr, parsed.moov.start + parsed.moov.size);
+  
+  // Get movie timescale from mvhd
+  const mvhdBox = moovChildren.find((b) => b.type === "mvhd");
+  const mvhdInfo = mvhdBox ? parseMvhd(parsed.data, mvhdBox) : { timescale: 1000, version: 0, duration: 0 };
+  const movieTimescale = mvhdInfo.timescale;
+  
+  // Audio duration in audio timescale
+  const audioDuration = usedFrames.length * samplesPerFrame;
+  // Audio duration in movie timescale
+  const audioDurMovie = Math.round(audioDuration * movieTimescale / sampleRate);
+  
+  // Build audio stbl
+  const stsd = buildStsdAudio(sampleRate, channels);
+  const stts = buildStts([[usedFrames.length, samplesPerFrame]]);
+  const stsz = buildStsz(0, frameSizes);
+  // One chunk containing all samples
+  const stsc = buildStsc([[1, usedFrames.length, 1]]);
+  // co64 offset will be fixed up later
+  const co64 = buildCo64([0]); // placeholder
+  
+  // Build stbl
+  const stblParts = [stsd, stts, stsz, stsc, co64];
+  const stblContentSize = stblParts.reduce((s, p) => s + p.length, 0);
+  const stbl = new Uint8Array(8 + stblContentSize);
+  writeU32(stbl, 0, 8 + stblContentSize);
+  stbl.set(makeBoxType("stbl"), 4);
+  let sOff = 8;
+  for (const p of stblParts) { stbl.set(p, sOff); sOff += p.length; }
+  
+  // Build minf
+  const smhd = buildSmhd();
+  const dinf = buildDinf();
+  const minfParts = [smhd, dinf, stbl];
+  const minfSize = 8 + minfParts.reduce((s, p) => s + p.length, 0);
+  const minf = new Uint8Array(minfSize);
+  writeU32(minf, 0, minfSize);
+  minf.set(makeBoxType("minf"), 4);
+  let mOff = 8;
+  for (const p of minfParts) { minf.set(p, mOff); mOff += p.length; }
+  
+  // Build mdhd (audio timescale = sampleRate)
+  const mdhdPayload = new Uint8Array(24); // version 0
+  // creation_time=0, modification_time=0 (8 bytes)
+  writeU32(mdhdPayload, 8, sampleRate); // timescale
+  writeU32(mdhdPayload, 12, audioDuration); // duration
+  const mdhd = buildFullBox("mdhd", 0, 0, mdhdPayload);
+  
+  // Build hdlr
+  const hdlr = buildHdlrAudio();
+  
+  // Build mdia
+  const mdiaParts = [mdhd, hdlr, minf];
+  const mdiaSize = 8 + mdiaParts.reduce((s, p) => s + p.length, 0);
+  const mdia = new Uint8Array(mdiaSize);
+  writeU32(mdia, 0, mdiaSize);
+  mdia.set(makeBoxType("mdia"), 4);
+  let dOff = 8;
+  for (const p of mdiaParts) { mdia.set(p, dOff); dOff += p.length; }
+  
+  // Build tkhd
+  const tkhdPayload = new Uint8Array(80); // version 0, 84 bytes total but fullbox adds 4
+  // flags = 3 (track enabled + in movie)
+  writeU32(tkhdPayload, 0, 2); // track_ID = 2 (assuming video is 1)
+  // duration at offset 16 (after creation_time(4), modification_time(4), track_ID(4), reserved(4))
+  writeU32(tkhdPayload, 16, audioDurMovie);
+  // volume at offset 36 = 0x0100 (1.0)
+  writeU16(tkhdPayload, 36, 0x0100);
+  // unity matrix at offset 40
+  writeU32(tkhdPayload, 40, 0x00010000);
+  writeU32(tkhdPayload, 56, 0x00010000);
+  writeU32(tkhdPayload, 72, 0x40000000);
+  const tkhd = buildFullBox("tkhd", 0, 3, tkhdPayload);
+  
+  // Build audio trak
+  const trakParts = [tkhd, mdia];
+  const trakSize = 8 + trakParts.reduce((s, p) => s + p.length, 0);
+  const audioTrak = new Uint8Array(trakSize);
+  writeU32(audioTrak, 0, trakSize);
+  audioTrak.set(makeBoxType("trak"), 4);
+  let tOff = 8;
+  for (const p of trakParts) { audioTrak.set(p, tOff); tOff += p.length; }
+  
+  // Now rebuild: ftyp + moov(existing children + audioTrak) + mdat(existing + audioData)
+  const ftypBox = parsed.boxes.find((b) => b.type === "ftyp");
+  const ftypData = ftypBox ? parsed.data.slice(ftypBox.start, ftypBox.start + ftypBox.size) : new Uint8Array(0);
+  
+  // Get existing mdat
+  const existingMdat = parsed.mdat;
+  const existingMdatContent = existingMdat 
+    ? parsed.data.slice(existingMdat.start + existingMdat.hdr, existingMdat.start + existingMdat.size)
+    : new Uint8Array(0);
+  
+  // Rebuild moov: copy all existing children + add audio trak
+  const newMoovParts: Uint8Array[] = [];
+  for (const child of moovChildren) {
+    newMoovParts.push(parsed.data.slice(child.start, child.start + child.size));
+  }
+  newMoovParts.push(audioTrak);
+  
+  const newMoovContentSize = newMoovParts.reduce((s, p) => s + p.length, 0);
+  const newMoovSize = 8 + newMoovContentSize;
+  const newMoov = new Uint8Array(newMoovSize);
+  writeU32(newMoov, 0, newMoovSize);
+  newMoov.set(makeBoxType("moov"), 4);
+  let moovOff = 8;
+  for (const part of newMoovParts) { newMoov.set(part, moovOff); moovOff += part.length; }
+  
+  // New mdat = existing content + audio data
+  const newMdatContentSize = existingMdatContent.length + audioData.length;
+  const newMdatSize = 8 + newMdatContentSize;
+  const mdatStartInFile = ftypData.length + newMoovSize;
+  
+  // Fix up audio co64: audio data starts at mdatStartInFile + 8 + existingMdatContent.length
+  const audioMdatOffset = mdatStartInFile + 8 + existingMdatContent.length;
+  
+  // Find the audio trak's co64 in newMoov and fix it
+  const newMoovBoxes = scanBoxes(newMoov, 8, newMoov.length);
+  const traks = newMoovBoxes.filter((b) => b.type === "trak");
+  const lastTrak = traks[traks.length - 1]; // our audio trak
+  if (lastTrak) {
+    const trakCh = scanBoxes(newMoov, lastTrak.start + lastTrak.hdr, lastTrak.start + lastTrak.size);
+    const audioCo64 = findBox(newMoov, trakCh, "mdia", "minf", "stbl", "co64");
+    if (audioCo64) {
+      const base = audioCo64.start + audioCo64.hdr;
+      writeU64(newMoov, base + 8, audioMdatOffset);
+    }
+  }
+  
+  // Also fix existing video track co64 offsets (they reference old positions)
+  for (let i = 0; i < traks.length - 1; i++) {
+    const trak = traks[i];
+    const trakCh = scanBoxes(newMoov, trak.start + trak.hdr, trak.start + trak.size);
+    const co64Box = findBox(newMoov, trakCh, "mdia", "minf", "stbl", "co64");
+    if (co64Box) {
+      const base = co64Box.start + co64Box.hdr;
+      const count = readU32(newMoov, base + 4);
+      // Existing offsets are absolute from old file layout; we need to rebase them
+      // Old layout: ftyp + moov(oldSize) + mdat
+      // New layout: ftyp + moov(newSize) + mdat
+      const oldMoovSize = parsed.moov.size;
+      const oldMdatStart = ftypData.length + oldMoovSize;
+      const newMdatStart = mdatStartInFile;
+      const delta = newMdatStart - oldMdatStart;
+      for (let j = 0; j < count; j++) {
+        const pos = base + 8 + j * 8;
+        const current = readU64(newMoov, pos);
+        writeU64(newMoov, pos, current + delta);
+      }
+    }
+    // Also check stco
+    const stcoBox = findBox(newMoov, trakCh, "mdia", "minf", "stbl", "stco");
+    if (stcoBox) {
+      const base = stcoBox.start + stcoBox.hdr;
+      const count = readU32(newMoov, base + 4);
+      const oldMoovSize = parsed.moov.size;
+      const oldMdatStart = ftypData.length + oldMoovSize;
+      const newMdatStart = mdatStartInFile;
+      const delta = newMdatStart - oldMdatStart;
+      for (let j = 0; j < count; j++) {
+        const pos = base + 8 + j * 4;
+        const current = readU32(newMoov, pos);
+        writeU32(newMoov, pos, (current + delta) >>> 0);
+      }
+    }
+  }
+  
+  // Build final file
+  const totalSize = ftypData.length + newMoovSize + newMdatSize;
+  const output = new Uint8Array(totalSize);
+  let outPos = 0;
+  output.set(ftypData, outPos); outPos += ftypData.length;
+  output.set(newMoov, outPos); outPos += newMoovSize;
+  // mdat header
+  writeU32(output, outPos, newMdatSize);
+  output.set(makeBoxType("mdat"), outPos + 4);
+  outPos += 8;
+  output.set(existingMdatContent, outPos); outPos += existingMdatContent.length;
+  output.set(audioData, outPos);
+  
+  return output;
+}
+
 // ===== RETRY HELPER =====
 
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, delayMs = 1000): Promise<T> {
@@ -894,6 +1252,8 @@ Deno.serve(async (req) => {
             await log("debug", `Downloaded batch ${Math.floor(i / 3) + 1}/${Math.ceil(completedClips.length / 3)}`);
           }
 
+          const hasSelectedTrack = !!(project as any).selected_track_id;
+          
           let finalVideo: Uint8Array;
           if (clipBuffers.length === 1) {
             finalVideo = clipBuffers[0];
@@ -901,11 +1261,40 @@ Deno.serve(async (req) => {
           } else {
             await log("info", `Concatenating ${clipBuffers.length} clips via MP4 remuxer...`);
             try {
-              finalVideo = concatenateMP4(clipBuffers);
-              await log("info", `MP4 remux succeeded. Output: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+              finalVideo = concatenateMP4(clipBuffers, { videoOnly: hasSelectedTrack });
+              await log("info", `MP4 remux succeeded${hasSelectedTrack ? " (video-only)" : ""}. Output: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
             } catch (concatErr) {
               await log("warn", `MP4 remux failed: ${concatErr.message} — using first clip as fallback.`);
               finalVideo = clipBuffers[0];
+            }
+          }
+
+          // If a music track is selected, download MP3 and mux it into the video
+          if (hasSelectedTrack) {
+            try {
+              const { data: track } = await supabase
+                .from("tracks")
+                .select("supabase_path, title")
+                .eq("id", (project as any).selected_track_id)
+                .single();
+              
+              if (track) {
+                await log("info", `Adding music track: ${track.title}`);
+                const { data: trackUrl } = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path);
+                const mp3Resp = await withRetry(() => fetch(trackUrl.publicUrl));
+                if (mp3Resp.ok) {
+                  const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
+                  const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
+                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
+                  await log("info", `Music track muxed. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                } else {
+                  await log("warn", "Failed to download music track — continuing without music.");
+                }
+              } else {
+                await log("warn", "Selected track not found — continuing without music.");
+              }
+            } catch (muxErr) {
+              await log("warn", `Music mux failed: ${muxErr.message} — continuing without music.`);
             }
           }
 
@@ -924,6 +1313,7 @@ Deno.serve(async (req) => {
                 source_clips: completedClips.map((c: any) => c.supabase_path),
                 size_bytes: finalVideo.length,
                 concat_method: clipBuffers.length > 1 ? "mp4_remux" : "single_clip",
+                music_track: hasSelectedTrack ? (project as any).selected_track_id : null,
               },
             });
             await log("info", "Final video uploaded successfully.");

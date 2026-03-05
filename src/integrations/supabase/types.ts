@@ -84,6 +84,7 @@ export type Database = {
           publish_defaults: Json
           publish_platforms: Json
           scene_count: number
+          selected_track_id: string | null
           series_prompt: string | null
           series_rules: string | null
           timezone: string
@@ -115,6 +116,7 @@ export type Database = {
           publish_defaults?: Json
           publish_platforms?: Json
           scene_count?: number
+          selected_track_id?: string | null
           series_prompt?: string | null
           series_rules?: string | null
           timezone?: string
@@ -146,6 +148,7 @@ export type Database = {
           publish_defaults?: Json
           publish_platforms?: Json
           scene_count?: number
+          selected_track_id?: string | null
           series_prompt?: string | null
           series_rules?: string | null
           timezone?: string
@@ -162,6 +165,13 @@ export type Database = {
             columns: ["initial_asset_id"]
             isOneToOne: false
             referencedRelation: "assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_selected_track_id_fkey"
+            columns: ["selected_track_id"]
+            isOneToOne: false
+            referencedRelation: "tracks"
             referencedColumns: ["id"]
           },
         ]
@@ -344,6 +354,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      tracks: {
+        Row: {
+          created_at: string
+          duration_sec: number | null
+          filename: string
+          id: string
+          supabase_path: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          duration_sec?: number | null
+          filename: string
+          id?: string
+          supabase_path: string
+          title: string
+        }
+        Update: {
+          created_at?: string
+          duration_sec?: number | null
+          filename?: string
+          id?: string
+          supabase_path?: string
+          title?: string
+        }
+        Relationships: []
       }
     }
     Views: {
