@@ -1196,6 +1196,50 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, delayMs = 1000
 
 // ===== FAL.AI COMPOSE HELPER =====
 
+function tryParseJson(raw: string): any {
+  const cleaned = raw.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const jsonStart = cleaned.search(/[\{\[]/);
+  const jsonEnd = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+  if (jsonStart === -1 || jsonEnd === -1) {
+    throw new Error("No JSON found in response");
+  }
+  return JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
+}
+
+function extractFalVideoUrl(payload: any, depth = 0): string | null {
+  if (!payload || depth > 6) return null;
+
+  if (typeof payload === "string") {
+    if (payload.startsWith("http") && payload.includes(".mp4")) return payload;
+    return null;
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = extractFalVideoUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof payload === "object") {
+    const direct = payload.video_url || payload.videoUrl || payload.url || payload.video?.url;
+    if (typeof direct === "string" && direct.startsWith("http") && direct.includes(".mp4")) {
+      return direct;
+    }
+
+    for (const [k, v] of Object.entries(payload)) {
+      if (typeof v === "string" && v.startsWith("http") && v.includes(".mp4") && k.toLowerCase().includes("video")) {
+        return v;
+      }
+      const found = extractFalVideoUrl(v, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
 async function runFalCompose(
   falKey: string,
   tracks: any[],
@@ -1220,25 +1264,18 @@ async function runFalCompose(
 
   let falResult: any;
   try {
-    let cleaned = falRespText.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-    const jsonStart = cleaned.search(/[\{\[]/);
-    const jsonEnd = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
-    if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON found");
-    cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
-    falResult = JSON.parse(cleaned);
+    falResult = tryParseJson(falRespText);
   } catch (parseErr) {
     throw new Error(`Failed to parse fal.ai response: ${(parseErr as Error).message}`);
   }
 
-  // Direct result
-  if (falResult.video_url || falResult.video?.url) {
-    const directUrl = falResult.video_url || falResult.video?.url;
+  const directUrl = extractFalVideoUrl(falResult);
+  if (directUrl) {
     const directResp = await fetch(directUrl);
     if (!directResp.ok) throw new Error(`Failed downloading composed video: ${directResp.status}`);
     return new Uint8Array(await directResp.arrayBuffer());
   }
 
-  // Queue-based polling
   if (!falResult.request_id) {
     throw new Error("Compose response missing request_id and video URL.");
   }
@@ -1252,9 +1289,20 @@ async function runFalCompose(
     const statusText = await statusResp.text();
     let statusData: any;
     try {
-      statusData = JSON.parse(statusText);
+      statusData = tryParseJson(statusText);
     } catch {
       throw new Error(`Bad compose status response: ${statusText.substring(0, 200)}`);
+    }
+
+    if (statusData.status === "FAILED") {
+      throw new Error(`Compose failed: ${JSON.stringify(statusData)}`);
+    }
+
+    const statusVideoUrl = extractFalVideoUrl(statusData);
+    if (statusVideoUrl) {
+      const overlaidResp = await fetch(statusVideoUrl);
+      if (!overlaidResp.ok) throw new Error(`Failed downloading composed video: ${overlaidResp.status}`);
+      return new Uint8Array(await overlaidResp.arrayBuffer());
     }
 
     if (statusData.status === "COMPLETED") {
@@ -1262,19 +1310,15 @@ async function runFalCompose(
       const resultText = await resultResp.text();
       let resultData: any;
       try {
-        resultData = JSON.parse(resultText);
+        resultData = tryParseJson(resultText);
       } catch {
         throw new Error(`Bad compose result response: ${resultText.substring(0, 200)}`);
       }
-      const resultUrl = resultData.video_url || resultData.video?.url;
+      const resultUrl = extractFalVideoUrl(resultData);
       if (!resultUrl) throw new Error("Compose completed without video URL.");
       const overlaidResp = await fetch(resultUrl);
       if (!overlaidResp.ok) throw new Error(`Failed downloading composed video: ${overlaidResp.status}`);
       return new Uint8Array(await overlaidResp.arrayBuffer());
-    }
-
-    if (statusData.status === "FAILED") {
-      throw new Error(`Compose failed: ${JSON.stringify(statusData)}`);
     }
   }
 
@@ -1592,11 +1636,33 @@ Deno.serve(async (req) => {
                   await log("info", `Compose succeeded. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
                 }
               } catch (composeErr) {
-                await log("warn", `Compose failed: ${(composeErr as Error).message} — falling back to separate steps.`);
-                
-                // Fallback: try just music mux if compose failed
+                await log("warn", `Compose failed: ${(composeErr as Error).message} — trying deterministic fallback (overlays first, music last).`);
+
+                // Fallback step 1: apply overlays without audio, so visuals are preserved.
+                let fallbackVideo = finalVideo;
+                if (hasOverlays) {
+                  try {
+                    const overlayOnlyTracks = tracks.filter((t) => t.type !== "audio");
+                    const overlayOnlyResult = await runFalCompose(FAL_KEY, overlayOnlyTracks, log);
+                    if (overlayOnlyResult) {
+                      fallbackVideo = overlayOnlyResult;
+                      await log("info", `Overlay-only fallback succeeded. Size: ${(fallbackVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                    }
+                  } catch (overlayFallbackErr) {
+                    await log("warn", `Overlay-only fallback failed: ${(overlayFallbackErr as Error).message}`);
+                  }
+                }
+
+                // Fallback step 2: always mux selected music as final mutation.
                 if (hasSelectedTrack && selectedTrackUrl) {
                   try {
+                    const fallbackMuxPath = `${project.id}/final/${runId}/fallback-pre-mux-${Date.now()}.mp4`;
+                    await supabase.storage
+                      .from("project-assets")
+                      .upload(fallbackMuxPath, fallbackVideo, { contentType: "video/mp4", upsert: true });
+                    tempOverlayPaths.push(fallbackMuxPath);
+                    const { data: fallbackMuxUrl } = supabase.storage.from("project-assets").getPublicUrl(fallbackMuxPath);
+
                     const mergeResp = await withRetry(() =>
                       fetch("https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video", {
                         method: "POST",
@@ -1605,7 +1671,7 @@ Deno.serve(async (req) => {
                           "Content-Type": "application/json",
                         },
                         body: JSON.stringify({
-                          video_url: tempUrl.publicUrl,
+                          video_url: fallbackMuxUrl.publicUrl,
                           audio_url: selectedTrackUrl,
                           use_shortest: true,
                         }),
@@ -1613,8 +1679,8 @@ Deno.serve(async (req) => {
                     );
                     const mergeText = await mergeResp.text();
                     if (mergeResp.ok) {
-                      let mergeResult: any = JSON.parse(mergeText);
-                      let mergedVideoUrl = mergeResult.video_url || mergeResult.video?.url;
+                      const mergeResult: any = tryParseJson(mergeText);
+                      let mergedVideoUrl = extractFalVideoUrl(mergeResult);
                       if (!mergedVideoUrl && mergeResult.request_id) {
                         const pollUrl = mergeResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}/status`;
                         const respUrl = mergeResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}`;
@@ -1623,9 +1689,14 @@ Deno.serve(async (req) => {
                           const sResp = await fetch(pollUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
                           const sData = await sResp.json();
                           if (sData.status === "COMPLETED") {
+                            const immediateUrl = extractFalVideoUrl(sData);
+                            if (immediateUrl) {
+                              mergedVideoUrl = immediateUrl;
+                              break;
+                            }
                             const rResp = await fetch(respUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
                             const rData = await rResp.json();
-                            mergedVideoUrl = rData.video_url || rData.video?.url;
+                            mergedVideoUrl = extractFalVideoUrl(rData);
                             break;
                           }
                           if (sData.status === "FAILED") throw new Error("Merge failed");
@@ -1635,13 +1706,19 @@ Deno.serve(async (req) => {
                         const mResp = await fetch(mergedVideoUrl);
                         if (mResp.ok) {
                           finalVideo = new Uint8Array(await mResp.arrayBuffer());
-                          await log("info", `Fallback music mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                          await log("info", `Deterministic fallback mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
                         }
+                      } else {
+                        finalVideo = fallbackVideo;
+                        await log("warn", "Merge fallback completed without video URL — keeping overlay-only result.");
                       }
                     }
                   } catch (fallbackErr) {
-                    await log("error", `Fallback music mux also failed: ${(fallbackErr as Error).message}`);
+                    finalVideo = fallbackVideo;
+                    await log("error", `Fallback music mux failed: ${(fallbackErr as Error).message} — keeping overlay-only result.`);
                   }
+                } else {
+                  finalVideo = fallbackVideo;
                 }
               }
 
