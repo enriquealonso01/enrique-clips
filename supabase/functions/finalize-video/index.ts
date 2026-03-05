@@ -1206,33 +1206,64 @@ function tryParseJson(raw: string): any {
   return JSON.parse(cleaned.substring(jsonStart, jsonEnd + 1));
 }
 
-function extractFalVideoUrl(payload: any, depth = 0): string | null {
-  if (!payload || depth > 6) return null;
+function extractFalVideoUrl(payload: any, depth = 0, parentKey = ""): string | null {
+  if (!payload || depth > 8) return null;
+
+  const lowerParentKey = parentKey.toLowerCase();
+  const keyHintsVideo =
+    lowerParentKey.includes("video") ||
+    lowerParentKey.includes("output") ||
+    lowerParentKey.includes("result") ||
+    lowerParentKey.includes("file") ||
+    lowerParentKey.includes("media") ||
+    lowerParentKey.includes("url");
 
   if (typeof payload === "string") {
-    if (payload.startsWith("http") && payload.includes(".mp4")) return payload;
+    if (!payload.startsWith("http")) return null;
+    const lower = payload.toLowerCase();
+    if (
+      lower.includes(".mp4") ||
+      lower.includes(".mov") ||
+      lower.includes(".webm") ||
+      lower.includes(".m3u8") ||
+      keyHintsVideo
+    ) {
+      return payload;
+    }
     return null;
   }
 
   if (Array.isArray(payload)) {
     for (const item of payload) {
-      const found = extractFalVideoUrl(item, depth + 1);
+      const found = extractFalVideoUrl(item, depth + 1, parentKey);
       if (found) return found;
     }
     return null;
   }
 
   if (typeof payload === "object") {
+    const mime = String(payload.content_type || payload.mime_type || payload.type || "").toLowerCase();
+    if (mime.startsWith("video/") && typeof payload.url === "string" && payload.url.startsWith("http")) {
+      return payload.url;
+    }
+
     const direct = payload.video_url || payload.videoUrl || payload.url || payload.video?.url;
-    if (typeof direct === "string" && direct.startsWith("http") && direct.includes(".mp4")) {
-      return direct;
+    if (typeof direct === "string" && direct.startsWith("http")) {
+      const lowerDirect = direct.toLowerCase();
+      if (
+        lowerDirect.includes(".mp4") ||
+        lowerDirect.includes(".mov") ||
+        lowerDirect.includes(".webm") ||
+        lowerDirect.includes(".m3u8") ||
+        keyHintsVideo ||
+        mime.startsWith("video/")
+      ) {
+        return direct;
+      }
     }
 
     for (const [k, v] of Object.entries(payload)) {
-      if (typeof v === "string" && v.startsWith("http") && v.includes(".mp4") && k.toLowerCase().includes("video")) {
-        return v;
-      }
-      const found = extractFalVideoUrl(v, depth + 1);
+      const found = extractFalVideoUrl(v, depth + 1, k);
       if (found) return found;
     }
   }
@@ -1306,15 +1337,26 @@ async function runFalCompose(
     }
 
     if (statusData.status === "COMPLETED") {
-      const resultResp = await fetch(pollResponseUrl, { headers: { Authorization: `Key ${falKey}` } });
-      const resultText = await resultResp.text();
-      let resultData: any;
-      try {
-        resultData = tryParseJson(resultText);
-      } catch {
-        throw new Error(`Bad compose result response: ${resultText.substring(0, 200)}`);
+      let resultUrl: string | null = extractFalVideoUrl(statusData);
+
+      // Some queue responses mark COMPLETED before response_url payload is hydrated.
+      // Retry a few times before failing hard.
+      for (let attempt = 0; attempt < 8 && !resultUrl; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 1200));
+        const resultResp = await fetch(pollResponseUrl, { headers: { Authorization: `Key ${falKey}` } });
+        const resultText = await resultResp.text();
+        let resultData: any;
+        try {
+          resultData = tryParseJson(resultText);
+        } catch {
+          throw new Error(`Bad compose result response: ${resultText.substring(0, 200)}`);
+        }
+        resultUrl = extractFalVideoUrl(resultData);
+        if (!resultUrl && attempt === 0) {
+          await log("warn", `Compose completed but response payload had no video URL yet; retrying. Preview: ${resultText.substring(0, 240)}`);
+        }
       }
-      const resultUrl = extractFalVideoUrl(resultData);
+
       if (!resultUrl) throw new Error("Compose completed without video URL.");
       const overlaidResp = await fetch(resultUrl);
       if (!overlaidResp.ok) throw new Error(`Failed downloading composed video: ${overlaidResp.status}`);
