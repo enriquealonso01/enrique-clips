@@ -12,7 +12,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
 import { ArrowLeft, Play, Pause, Square } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 
 const STEPS = ["plan", "keyframes", "kling", "stitch", "metadata", "publish", "done"] as const;
@@ -22,6 +22,7 @@ export default function RunMonitor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [logFilter, setLogFilter] = useState<string>("all");
+  const finalizeInvokedRef = useRef<string | null>(null);
 
   const { data: run } = useQuery({
     queryKey: ["run", runId],
@@ -85,6 +86,26 @@ export default function RunMonitor() {
     const interval = setInterval(pollPika, 20000);
     return () => clearInterval(interval);
   }, [isPikaPolling, runId, queryClient]);
+
+  // Fallback: invoke finalize-video once when step reaches stitch/metadata/publish
+  const needsFinalize = run?.status === "running" && 
+    ["stitch", "metadata", "publish"].includes(run?.current_step);
+  useEffect(() => {
+    if (!needsFinalize || !runId || finalizeInvokedRef.current === runId) return;
+    finalizeInvokedRef.current = runId;
+    const invoke = async () => {
+      try {
+        console.log("Client fallback: invoking finalize-video for", runId);
+        await supabase.functions.invoke("finalize-video", { body: { run_id: runId } });
+        queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      } catch (err) {
+        console.error("Finalize-video fallback failed:", err);
+      }
+    };
+    // Delay 5s to give server-side chain a chance first
+    const timer = setTimeout(invoke, 5000);
+    return () => clearTimeout(timer);
+  }, [needsFinalize, runId, queryClient]);
 
 
   const { data: scenes } = useQuery({
