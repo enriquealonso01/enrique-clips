@@ -1430,19 +1430,22 @@ Deno.serve(async (req) => {
                       
                       // If queued, poll for result
                       if (falResult.request_id) {
+                        // Use URLs from fal.ai response, fallback to constructed ones
+                        const pollStatusUrl = falResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}/status`;
+                        const pollResponseUrl = falResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}`;
                         let resultUrl: string | null = null;
                         for (let poll = 0; poll < 60; poll++) {
                           await new Promise(r => setTimeout(r, 5000));
                           const statusResp = await fetch(
-                            `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}/status`,
+                            pollStatusUrl,
                             { headers: { Authorization: `Key ${FAL_KEY}` } }
                           );
                           const statusText = await statusResp.text();
                           let statusData: any;
-                          try { statusData = JSON.parse(statusText); } catch { throw new Error(`Bad status response: ${statusText.substring(0, 200)}`); }
+                          try { statusData = JSON.parse(statusText); } catch { throw new Error(`Bad status response: ${statusResp.status}: ${statusResp.statusText}`); }
                           if (statusData.status === "COMPLETED") {
                             const resultResp = await fetch(
-                              `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}`,
+                              pollResponseUrl,
                               { headers: { Authorization: `Key ${FAL_KEY}` } }
                             );
                             const resultText = await resultResp.text();
