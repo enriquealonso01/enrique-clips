@@ -1515,26 +1515,92 @@ Deno.serve(async (req) => {
             await log("warn", `Overlay step failed: ${(overlayErr as Error).message} — continuing without overlays.`);
           }
 
-          // ── Step B: Mux music track using native MP4 muxer (always, not via compose) ──
-          // The native muxMP3IntoMP4 correctly trims audio to video duration,
-          // preventing the "video freezes on last frame while audio plays" issue.
-          if (hasSelectedTrack) {
+          // ── Step B: Mux music track via fal.ai merge-audio-video ──
+          // Uses FFmpeg server-side for reliable audio muxing with proper codec handling.
+          // The -shortest flag ensures audio is trimmed to video length.
+          const FAL_KEY_MUX = Deno.env.get("FAL_KEY");
+          if (hasSelectedTrack && FAL_KEY_MUX) {
             try {
-              await log("info", `Adding music track: ${selectedTrack?.title || "selected track"}`);
-              const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
-              if (!mp3Resp.ok) throw new Error(`Failed to download music track: ${mp3Resp.status}`);
+              await log("info", `Adding music track via FFmpeg: ${selectedTrack?.title || "selected track"}`);
+              
+              // Upload current finalVideo to storage so fal.ai can access it
+              const preMuxPath = `${project.id}/final/${runId}/pre-mux-${Date.now()}.mp4`;
+              await supabase.storage
+                .from("project-assets")
+                .upload(preMuxPath, finalVideo, { contentType: "video/mp4", upsert: true });
+              const { data: preMuxUrl } = supabase.storage.from("project-assets").getPublicUrl(preMuxPath);
 
-              const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
-              const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
-              finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
-              await log("info", `Music track muxed. Audio trimmed to ${videoDuration}s. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+              // Use fal.ai merge-audio-video endpoint
+              const mergeResp = await withRetry(() =>
+                fetch("https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video", {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Key ${FAL_KEY_MUX}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    video_url: preMuxUrl.publicUrl,
+                    audio_url: selectedTrackUrl,
+                    use_shortest: true,
+                  }),
+                })
+              );
+
+              const mergeText = await mergeResp.text();
+              await log("info", `fal.ai merge-audio-video response status=${mergeResp.status}, preview: ${mergeText.substring(0, 300)}`);
+              
+              if (!mergeResp.ok) {
+                throw new Error(`Merge failed (${mergeResp.status}): ${mergeText.substring(0, 500)}`);
+              }
+
+              let mergeResult: any;
+              try {
+                mergeResult = JSON.parse(mergeText);
+              } catch {
+                throw new Error(`Failed to parse merge response: ${mergeText.substring(0, 200)}`);
+              }
+
+              // Handle direct result or queue-based polling
+              let mergedVideoUrl = mergeResult.video_url || mergeResult.video?.url;
+
+              if (!mergedVideoUrl && mergeResult.request_id) {
+                const pollStatusUrl = mergeResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}/status`;
+                const pollResponseUrl = mergeResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}`;
+
+                for (let poll = 0; poll < 30; poll++) {
+                  await new Promise((r) => setTimeout(r, 2000));
+                  const statusResp = await fetch(pollStatusUrl, { headers: { Authorization: `Key ${FAL_KEY_MUX}` } });
+                  const statusData = await statusResp.json();
+
+                  if (statusData.status === "COMPLETED") {
+                    const resultResp = await fetch(pollResponseUrl, { headers: { Authorization: `Key ${FAL_KEY_MUX}` } });
+                    const resultData = await resultResp.json();
+                    mergedVideoUrl = resultData.video_url || resultData.video?.url;
+                    break;
+                  }
+                  if (statusData.status === "FAILED") {
+                    throw new Error(`Merge failed: ${JSON.stringify(statusData)}`);
+                  }
+                }
+              }
+
+              if (!mergedVideoUrl) {
+                throw new Error("Merge completed without video URL or timed out.");
+              }
+
+              const mergedResp = await fetch(mergedVideoUrl);
+              if (!mergedResp.ok) throw new Error(`Failed to download merged video: ${mergedResp.status}`);
+              finalVideo = new Uint8Array(await mergedResp.arrayBuffer());
+              await log("info", `Music track muxed via FFmpeg. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+
+              // Cleanup temp file
+              await supabase.storage.from("project-assets").remove([preMuxPath]);
             } catch (muxErr) {
+              await log("error", `Music mux failed: ${(muxErr as Error).message}`);
               throw new Error(`Music mux failed: ${(muxErr as Error).message}`);
             }
-          }
-
-          if (hasSelectedTrack && !hasAudioTrack(finalVideo)) {
-            throw new Error("Final output has no audio track after mixing.");
+          } else if (hasSelectedTrack && !FAL_KEY_MUX) {
+            await log("warn", "FAL_KEY not set — skipping music mux.");
           }
 
           const finalPath = `${project.id}/final/${runId}/final-video-${Date.now()}.mp4`;
