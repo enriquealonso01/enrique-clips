@@ -876,6 +876,7 @@ ${scene.end_keyframe_prompt}
               prompt: pair.prompt,
               duration: 5,
               resolution: falResolution,
+              aspect_ratio: project.aspect_ratio || "9:16",
               audio: enableAudio,
             };
 
@@ -930,6 +931,7 @@ ${scene.end_keyframe_prompt}
               prompt: item.prompt,
               negative_prompt: negPrompt,
               resolution: falResolution,
+              aspect_ratio: project.aspect_ratio || "9:16",
               duration: "5",
             };
 
@@ -988,6 +990,7 @@ ${scene.end_keyframe_prompt}
               image_urls: [pair.start, pair.end],
               prompt: pair.prompt, negative_prompt: negPrompt,
               resolution: falResolution,
+              aspect_ratio: project.aspect_ratio || "9:16",
               transitions: [{ duration: 5, prompt: pair.prompt }],
             };
 
@@ -1241,7 +1244,21 @@ ${scene.end_keyframe_prompt}
       return json({ status: "kling_polling_timeout", run_id: runId });
     }
 
-    // Steps stitch/metadata/publish/done are handled by finalize-video
+    // Steps stitch/metadata/publish/done are handled by finalize-video — chain to it
+    if (["stitch", "metadata", "publish"].includes(step)) {
+      await log("info", `Step "${step}" handled by finalize-video. Chaining...`);
+      const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/finalize-video`;
+      fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ run_id: runId }),
+      }).catch((e) => console.error("Chain to finalize-video error:", e));
+      return json({ status: "chained_to_finalize", step });
+    }
+
     return json({ status: "step_not_handled_here", step });
 
   } catch (err) {
