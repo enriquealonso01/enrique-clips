@@ -1350,7 +1350,7 @@ Deno.serve(async (req) => {
                 const textOverlays = overlays.filter((o: any) => o.overlay_type === "text" && o.content_text);
                 const imageOverlays = overlays.filter((o: any) => o.overlay_type === "image" && o.image_path);
 
-                // Build drawtext filters
+                // Build drawtext filters with improved typography
                 const drawFilters: string[] = [];
                 for (const ov of textOverlays) {
                   const startSec = Math.round((ov.start_pct / 100) * videoDurationSec);
@@ -1358,12 +1358,13 @@ Deno.serve(async (req) => {
                   const pos = getFFmpegPosition(ov.position, ov.font_size || 48);
                   const escapedText = (ov.content_text || "").replace(/'/g, "'\\''").replace(/:/g, "\\:");
                   
-                  // Build a background box + text
                   const bgColor = ov.bg_color || "black@0.5";
                   const fontColor = (ov.font_color || "#FFFFFF").replace("#", "0x");
+                  const fontSize = ov.font_size || 48;
                   
+                  // Use a clean sans-serif font with shadow for depth and rounded box padding
                   drawFilters.push(
-                    `drawtext=text='${escapedText}':fontsize=${ov.font_size || 48}:fontcolor=${fontColor}:${pos}:box=1:boxcolor=${bgColor}:boxborderw=10:enable='between(t,${startSec},${endSec})'`
+                    `drawtext=text='${escapedText}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=${fontSize}:fontcolor=${fontColor}:${pos}:box=1:boxcolor=${bgColor}:boxborderw=14:shadowcolor=black@0.6:shadowx=2:shadowy=2:enable='between(t,${startSec},${endSec})'`
                   );
                 }
 
