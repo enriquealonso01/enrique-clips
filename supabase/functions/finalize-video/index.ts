@@ -1576,7 +1576,7 @@ Deno.serve(async (req) => {
               tempCleanupPaths.push(tempVideoPath);
               const { data: tempVideoUrl } = supabase.storage.from("project-assets").getPublicUrl(tempVideoPath);
 
-              // Build input_files map and ffmpeg command
+              // Build input_files map for Rendi
               const inputFiles: Record<string, string> = {
                 in_video: tempVideoUrl.publicUrl,
               };
@@ -1595,9 +1595,14 @@ Deno.serve(async (req) => {
                 inputFiles["in_audio"] = selectedTrackUrl;
               }
 
+              // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
+              const sortedInputKeys = Object.keys(inputFiles).sort();
+              const getInputIndex = (key: string): number => sortedInputKeys.indexOf(key);
+              const videoInputIdx = getInputIndex("in_video");
+
               // Build FFmpeg filter_complex
               const filterParts: string[] = [];
-              let currentVideoLabel = "0:v";
+              let currentVideoLabel = `${videoInputIdx}:v`;
               let filterIdx = 0;
 
               // Image overlays: chain overlay filters
@@ -1605,14 +1610,14 @@ Deno.serve(async (req) => {
                 const imgOv = imageOverlays[i];
                 const startSec = (imgOv.start_pct / 100) * videoDurationSec;
                 const endSec = (imgOv.end_pct / 100) * videoDurationSec;
-                const inputIdx = i + 1; // 0 is video, 1+ are image inputs
+                const imageInputIdx = getInputIndex(`in_img${i}`);
                 const outLabel = `v${filterIdx}`;
 
                 // Position mapping for image overlays
                 const pos = getFFmpegOverlayPosition(imgOv.position);
 
                 filterParts.push(
-                  `[${currentVideoLabel}][${inputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
@@ -1652,23 +1657,22 @@ Deno.serve(async (req) => {
 
               // Build the full FFmpeg command
               let ffmpegCmd: string;
-              const inputArgs = Object.keys(inputFiles)
-                .sort()
+              const inputArgs = sortedInputKeys
                 .map((k) => `-i {{${k}}}`)
                 .join(" ");
 
               if (filterParts.length > 0) {
                 const filterComplex = filterParts.join(";");
                 if (hasSelectedTrack && selectedTrackUrl) {
-                  const audioInputIdx = Object.keys(inputFiles).sort().indexOf("in_audio");
+                  const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -c:v libx264 -preset fast -crf 23 -an -movflags +faststart {{out_1}}`;
                 }
               } else if (hasSelectedTrack && selectedTrackUrl) {
                 // No overlays, just audio merge
-                const audioInputIdx = Object.keys(inputFiles).sort().indexOf("in_audio");
-                ffmpegCmd = `${inputArgs} -map 0:v -map ${audioInputIdx}:a -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                const audioInputIdx = getInputIndex("in_audio");
+                ffmpegCmd = `${inputArgs} -map ${videoInputIdx}:v -map ${audioInputIdx}:a -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
               } else {
                 // Nothing to do
                 ffmpegCmd = "";
