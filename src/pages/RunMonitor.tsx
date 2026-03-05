@@ -235,10 +235,10 @@ export default function RunMonitor() {
               <TableRow>
                 <TableHead className="w-16">#</TableHead>
                 <TableHead>Title</TableHead>
+                <TableHead>Behavior</TableHead>
+                <TableHead>Density</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Start Keyframe</TableHead>
-                <TableHead>End Keyframe</TableHead>
-                <TableHead>Clip</TableHead>
+                <TableHead>Kling Prompt</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -246,10 +246,20 @@ export default function RunMonitor() {
                 <TableRow key={scene.id}>
                   <TableCell>{scene.scene_index}</TableCell>
                   <TableCell>{scene.scene_title || "—"}</TableCell>
+                  <TableCell>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                      {(scene as any).scene_behavior || "—"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs text-muted-foreground">
+                      {(scene as any).activity_density || "—"}
+                    </span>
+                  </TableCell>
                   <TableCell><StatusBadge status={scene.status} /></TableCell>
-                  <TableCell className="text-muted-foreground text-xs">—</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">—</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">—</TableCell>
+                  <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={scene.kling_prompt || ""}>
+                    {scene.kling_prompt || "—"}
+                  </TableCell>
                 </TableRow>
               )) : (
                 <TableRow>

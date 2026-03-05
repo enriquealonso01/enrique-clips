@@ -11,6 +11,52 @@ const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 // Global negative prompt injected into every Kling call
 const KLING_NEGATIVE_TEMPLATE = "flicker, jitter, warping, morphing face, melting, extra limbs, extra fingers, text, watermark, logo, low-res, heavy noise, blurry, duplicate, deformed";
 
+// ── Behavior-Based Motion Grammar ──────────────────────────
+const MOTION_GRAMMAR: Record<string, { camera: string; action: string; density_hint: string }> = {
+  environment_idle: {
+    camera: "slow pan OR static wide shot — no complex moves",
+    action: "natural ambient movement only (wind, water, clouds, light shifts)",
+    density_hint: "Scene should feel calm and spacious with minimal subject activity.",
+  },
+  cinematic_action: {
+    camera: "ONE cinematic move: dolly / orbit / tracking shot — smooth and controlled",
+    action: "ONE clear, dramatic subject action",
+    density_hint: "Focus on a single subject performing one decisive action.",
+  },
+  timelapse_build: {
+    camera: "fixed tripod OR very slow push-in — the camera barely moves",
+    action: "continuous parallel activity: multiple workers, machines, or processes happening simultaneously",
+    density_hint: "Scene should feel busy with overlapping activities suggesting the passage of time.",
+  },
+  conversation: {
+    camera: "shot/reverse-shot framing OR slow push-in — stable and intimate",
+    action: "subtle character movement: gestures, head turns, expressions",
+    density_hint: "Scene should feel personal and focused on character interaction.",
+  },
+  exploration: {
+    camera: "forward tracking shot following the subject — steady and continuous",
+    action: "character walking, observing, discovering — continuous forward movement",
+    density_hint: "Scene should convey forward momentum and curiosity.",
+  },
+  reveal: {
+    camera: "slow cinematic move: dolly through, crane up, or pull back to reveal scale",
+    action: "environment activation: lights turning on, doors opening, fog clearing",
+    density_hint: "Scene should build to a moment of awe or payoff.",
+  },
+};
+
+function getMotionGrammarBlock(): string {
+  return Object.entries(MOTION_GRAMMAR)
+    .map(([behavior, rules]) =>
+      `### ${behavior}\n- Camera: ${rules.camera}\n- Action: ${rules.action}\n- Density: ${rules.density_hint}`
+    )
+    .join("\n\n");
+}
+
+function getMotionRulesForBehavior(behavior: string): { camera: string; action: string; density_hint: string } {
+  return MOTION_GRAMMAR[behavior] || MOTION_GRAMMAR["cinematic_action"];
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -341,10 +387,34 @@ ${styleBibleText || "No style bible available."}
 - Each end_keyframe_prompt must include composition anchors: camera distance, subject position, horizon line, and environment layout.
 - Maintain identical character appearance, outfit, and art style as defined in the style bible.
 
-=== KLING MOTION PROMPT RULES ===
-- Each kling_prompt must describe EXACTLY ONE camera move + ONE subject action.
-- Use consistent motion language: "slow dolly in", "gentle pan left", "subtle head turn", "soft parallax".
-- Keep motion gentle and controlled. Never describe cuts or transitions.`,
+=== SCENE BEHAVIOR SYSTEM ===
+Each scene MUST be assigned a scene_behavior from: environment_idle, cinematic_action, timelapse_build, conversation, exploration, reveal.
+The behavior determines the motion grammar for camera and subject action in the kling_prompt.
+
+BEHAVIOR ASSIGNMENT RULES:
+- If the scene involves construction, city growth, farming, manufacturing, or building processes → timelapse_build
+- If the scene is an opening landscape, establishing shot, or calm environment → environment_idle
+- If the scene involves character dialogue or interaction → conversation
+- If the scene involves travel, walking through spaces, or discovery → exploration
+- If the scene is a final payoff, big reveal, or dramatic unveiling → reveal
+- For dramatic character moments, action sequences, or story beats → cinematic_action
+
+=== MOTION GRAMMAR PER BEHAVIOR ===
+The kling_prompt MUST follow the motion rules for its assigned behavior:
+
+${getMotionGrammarBlock()}
+
+=== ACTIVITY DENSITY ===
+Each scene must also specify activity_density (low, medium, high):
+- low: calm, minimal movement, 1-2 elements in motion
+- medium: moderate activity, 2-4 elements
+- high: busy scene, many simultaneous activities (construction, crowds, machinery)
+
+=== TEMPORAL CONTINUITY ===
+- Each scene must logically follow the previous one.
+- Objects, characters, and structures cannot appear if they were not introduced in a prior scene.
+- If something is being built, it must progress incrementally across scenes — no sudden jumps.
+- Environmental conditions (time of day, weather) should transition smoothly.`,
           },
           {
             role: "user",
@@ -356,7 +426,7 @@ ${styleBibleText || "No style bible available."}
             type: "function",
             function: {
               name: "create_scene_plan",
-              description: "Create a structured scene-by-scene plan",
+              description: "Create a structured scene-by-scene plan with behavior-based motion grammar",
               parameters: {
                 type: "object",
                 properties: {
@@ -368,10 +438,12 @@ ${styleBibleText || "No style bible available."}
                         scene_index: { type: "number" },
                         scene_title: { type: "string" },
                         scene_description: { type: "string" },
+                        scene_behavior: { type: "string", enum: ["environment_idle", "cinematic_action", "timelapse_build", "conversation", "exploration", "reveal"] },
+                        activity_density: { type: "string", enum: ["low", "medium", "high"] },
                         end_keyframe_prompt: { type: "string" },
                         kling_prompt: { type: "string" },
                       },
-                      required: ["scene_index", "scene_title", "scene_description", "end_keyframe_prompt", "kling_prompt"],
+                      required: ["scene_index", "scene_title", "scene_description", "scene_behavior", "activity_density", "end_keyframe_prompt", "kling_prompt"],
                       additionalProperties: false,
                     },
                   },
@@ -397,6 +469,8 @@ ${styleBibleText || "No style bible available."}
           scene_index: scene.scene_index,
           scene_title: scene.scene_title,
           scene_description: scene.scene_description,
+          scene_behavior: scene.scene_behavior || "cinematic_action",
+          activity_density: scene.activity_density || "medium",
           end_keyframe_prompt: scene.end_keyframe_prompt,
           kling_prompt: scene.kling_prompt,
           status: "pending" as const,
@@ -684,10 +758,18 @@ ${scene.end_keyframe_prompt}
             : (sceneKeyframes[scenes[myPos - 1].scene_index] || runInitialImageUrl);
           const endImageUrl = sceneKeyframes[sceneIdx];
 
+          // Build behavior-aware prompt
+          const behavior = scene.scene_behavior || "cinematic_action";
+          const motionRules = getMotionRulesForBehavior(behavior);
+          const densityLabel = scene.activity_density || "medium";
+          const enrichedPrompt = scene.kling_prompt
+            ? `[${behavior}/${densityLabel}] ${scene.kling_prompt}`
+            : "";
+
           const klingBody: Record<string, any> = {
             model_name: project.kling_model_name || "kling-v1",
             image: startImageUrl || "",
-            prompt: scene.kling_prompt || "",
+            prompt: enrichedPrompt,
             negative_prompt: negPrompt,
             duration: klingDuration,
             mode: project.kling_mode || "pro",

@@ -282,33 +282,45 @@ export type Database = {
       }
       scenes: {
         Row: {
+          activity_density:
+            | Database["public"]["Enums"]["activity_density"]
+            | null
           created_at: string
           end_keyframe_prompt: string | null
           id: string
           kling_prompt: string | null
           run_id: string
+          scene_behavior: Database["public"]["Enums"]["scene_behavior"] | null
           scene_description: string | null
           scene_index: number
           scene_title: string | null
           status: Database["public"]["Enums"]["scene_status"]
         }
         Insert: {
+          activity_density?:
+            | Database["public"]["Enums"]["activity_density"]
+            | null
           created_at?: string
           end_keyframe_prompt?: string | null
           id?: string
           kling_prompt?: string | null
           run_id: string
+          scene_behavior?: Database["public"]["Enums"]["scene_behavior"] | null
           scene_description?: string | null
           scene_index: number
           scene_title?: string | null
           status?: Database["public"]["Enums"]["scene_status"]
         }
         Update: {
+          activity_density?:
+            | Database["public"]["Enums"]["activity_density"]
+            | null
           created_at?: string
           end_keyframe_prompt?: string | null
           id?: string
           kling_prompt?: string | null
           run_id?: string
+          scene_behavior?: Database["public"]["Enums"]["scene_behavior"] | null
           scene_description?: string | null
           scene_index?: number
           scene_title?: string | null
@@ -332,6 +344,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      activity_density: "low" | "medium" | "high"
       asset_type:
         | "initial_image"
         | "keyframe"
@@ -362,6 +375,13 @@ export type Database = {
         | "metadata"
         | "publish"
         | "done"
+      scene_behavior:
+        | "environment_idle"
+        | "cinematic_action"
+        | "timelapse_build"
+        | "conversation"
+        | "exploration"
+        | "reveal"
       scene_status:
         | "pending"
         | "keyframes_ready"
@@ -495,6 +515,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      activity_density: ["low", "medium", "high"],
       asset_type: [
         "initial_image",
         "keyframe",
@@ -528,6 +549,14 @@ export const Constants = {
         "metadata",
         "publish",
         "done",
+      ],
+      scene_behavior: [
+        "environment_idle",
+        "cinematic_action",
+        "timelapse_build",
+        "conversation",
+        "exploration",
+        "reveal",
       ],
       scene_status: [
         "pending",
