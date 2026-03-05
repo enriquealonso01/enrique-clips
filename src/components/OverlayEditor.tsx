@@ -274,7 +274,7 @@ export function OverlayEditor({ projectId }: OverlayEditorProps) {
                           <Label className="text-xs">Overlay Image</Label>
                           <Input
                             type="file"
-                            accept="image/png,image/svg+xml,image/webp"
+                            accept="image/png,image/svg+xml,image/webp,image/x-icon,image/vnd.microsoft.icon"
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (file) handleImageUpload(ov.id, file);
