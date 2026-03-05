@@ -781,15 +781,15 @@ ${scene.end_keyframe_prompt}
             });
           }
 
-          const pikaBody: Record<string, any> = {
+          const pikaInput: Record<string, any> = {
             image_urls: batch,
             prompt: project.series_prompt || "smooth cinematic transition",
             negative_prompt: negPrompt,
             resolution: pikaResolution,
           };
-          if (transitions.length > 0) pikaBody.transitions = transitions;
+          if (transitions.length > 0) pikaInput.transitions = transitions;
 
-          await log("debug", `Pika batch ${batchIdx + 1} request`, pikaBody);
+          await log("debug", `Pika batch ${batchIdx + 1} request`, pikaInput);
 
           // Submit to fal.ai queue
           const submitResp = await fetch("https://queue.fal.run/fal-ai/pika/v2.2/pikaframes", {
@@ -798,16 +798,22 @@ ${scene.end_keyframe_prompt}
               "Authorization": `Key ${FAL_KEY}`,
               "Content-Type": "application/json",
             },
-            body: JSON.stringify(pikaBody),
+            body: JSON.stringify(pikaInput),
           });
 
+          const submitText = await submitResp.text();
+          await log("debug", `Pika submit response ${submitResp.status}: ${submitText}`);
+
           if (!submitResp.ok) {
-            const errText = await submitResp.text();
-            await log("error", `Pika submit failed: ${submitResp.status} ${errText}`);
+            await log("error", `Pika submit failed: ${submitResp.status} ${submitText}`);
             continue;
           }
 
-          const submitResult = await submitResp.json();
+          let submitResult: any;
+          try { submitResult = JSON.parse(submitText); } catch { 
+            await log("error", `Pika submit response not JSON: ${submitText}`);
+            continue;
+          }
           const requestId = submitResult.request_id;
           if (!requestId) {
             await log("error", "No request_id from Pika submit", submitResult);
