@@ -1034,18 +1034,19 @@ function muxMP3IntoMP4(videoMP4: Uint8Array, mp3Data: Uint8Array, videoDurationS
   let dOff = 8;
   for (const p of mdiaParts) { mdia.set(p, dOff); dOff += p.length; }
   
-  // Build tkhd
-  const tkhdPayload = new Uint8Array(80); // version 0, 84 bytes total but fullbox adds 4
+  // Build tkhd (version 0 layout after version+flags):
+  // creation_time(4)[0] modification_time(4)[4] track_ID(4)[8] reserved(4)[12]
+  // duration(4)[16] reserved(8)[20] layer(2)[28] alt_group(2)[30]
+  // volume(2)[32] reserved(2)[34] matrix(36)[36..71] width(4)[72] height(4)[76]
+  const tkhdPayload = new Uint8Array(80);
   // flags = 3 (track enabled + in movie)
-  writeU32(tkhdPayload, 0, 2); // track_ID = 2 (assuming video is 1)
-  // duration at offset 16 (after creation_time(4), modification_time(4), track_ID(4), reserved(4))
-  writeU32(tkhdPayload, 16, audioDurMovie);
-  // volume at offset 36 = 0x0100 (1.0)
-  writeU16(tkhdPayload, 36, 0x0100);
-  // unity matrix at offset 40
-  writeU32(tkhdPayload, 40, 0x00010000);
-  writeU32(tkhdPayload, 56, 0x00010000);
-  writeU32(tkhdPayload, 72, 0x40000000);
+  writeU32(tkhdPayload, 8, 2); // track_ID = 2 (assuming video is 1)
+  writeU32(tkhdPayload, 16, audioDurMovie); // duration
+  writeU16(tkhdPayload, 32, 0x0100); // volume = 1.0
+  // unity matrix at offset 36
+  writeU32(tkhdPayload, 36, 0x00010000);  // matrix[0]
+  writeU32(tkhdPayload, 52, 0x00010000);  // matrix[4]
+  writeU32(tkhdPayload, 68, 0x40000000);  // matrix[8]
   const tkhd = buildFullBox("tkhd", 0, 3, tkhdPayload);
   
   // Build audio trak
