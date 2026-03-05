@@ -11,10 +11,11 @@ const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 // Map overlay position to FFmpeg drawtext x/y
 function getFFmpegPosition(position: string, fontSize: number): string {
   const pad = 20;
+  const topPad = 60;
   const map: Record<string, string> = {
-    top_left: `x=${pad}:y=${pad}`,
-    top_center: `x=(w-text_w)/2:y=${pad}`,
-    top_right: `x=w-text_w-${pad}:y=${pad}`,
+    top_left: `x=${pad}:y=${topPad}`,
+    top_center: `x=(w-text_w)/2:y=${topPad}`,
+    top_right: `x=w-text_w-${pad}:y=${topPad}`,
     center: `x=(w-text_w)/2:y=(h-text_h)/2`,
     bottom_left: `x=${pad}:y=h-text_h-${pad}`,
     bottom_center: `x=(w-text_w)/2:y=h-text_h-${pad}`,
@@ -26,10 +27,11 @@ function getFFmpegPosition(position: string, fontSize: number): string {
 // Map overlay position to FFmpeg overlay filter x:y expressions
 function getFFmpegOverlayPosition(position: string): string {
   const pad = 20;
+  const topPad = 60;
   const map: Record<string, string> = {
-    top_left: `x=${pad}:y=${pad}`,
-    top_center: `x=(main_w-overlay_w)/2:y=${pad}`,
-    top_right: `x=main_w-overlay_w-${pad}:y=${pad}`,
+    top_left: `x=${pad}:y=${topPad}`,
+    top_center: `x=(main_w-overlay_w)/2:y=${topPad}`,
+    top_right: `x=main_w-overlay_w-${pad}:y=${topPad}`,
     center: `x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2`,
     bottom_left: `x=${pad}:y=main_h-overlay_h-${pad}`,
     bottom_center: `x=(main_w-overlay_w)/2:y=main_h-overlay_h-${pad}`,
