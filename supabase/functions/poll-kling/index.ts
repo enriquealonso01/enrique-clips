@@ -223,6 +223,22 @@ Deno.serve(async (req) => {
     await log("info", "All Kling tasks complete. Advancing to stitch step.");
     await updateRun({ current_step: "stitch", progress_pct: 70 });
 
+    // Auto-invoke finalize-video server-side so pipeline continues without client
+    try {
+      const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/finalize-video`;
+      await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ run_id: runId }),
+      });
+      await log("info", "finalize-video invoked automatically.");
+    } catch (chainErr) {
+      await log("warn", `Auto-invoke finalize-video failed: ${chainErr.message} — client polling will retry.`);
+    }
+
     return json({ status: "kling_complete", run_id: runId });
   } catch (err) {
     await log("error", `Poll-kling failed: ${err.message}`);

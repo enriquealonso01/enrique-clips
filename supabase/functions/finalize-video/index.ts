@@ -849,16 +849,29 @@ Deno.serve(async (req) => {
     if (run.current_step === "stitch") {
       await log("info", "Step 4/7: Stitching video clips...");
       try {
+        // Fetch scenes in order, then match clips by scene_id to guarantee correct ordering
+        const { data: orderedScenes } = await supabase
+          .from("scenes")
+          .select("id, scene_index")
+          .eq("run_id", runId)
+          .order("scene_index", { ascending: true });
+
         const { data: clipAssets } = await supabase
           .from("assets")
-          .select("*, scenes!inner(scene_index)")
+          .select("*")
           .eq("run_id", runId)
-          .eq("type", "clip")
-          .order("scene_index", { referencedTable: "scenes", ascending: true });
+          .eq("type", "clip");
 
-        const completedClips = (clipAssets || []).filter(
-          (a: any) => (a.metadata as any)?.status === "completed"
-        );
+        // Build a map of scene_id -> clip, then order by scene_index
+        const clipBySceneId = new Map<string, any>();
+        for (const clip of (clipAssets || [])) {
+          if ((clip.metadata as any)?.status === "completed" && clip.scene_id) {
+            clipBySceneId.set(clip.scene_id, clip);
+          }
+        }
+        const completedClips = (orderedScenes || [])
+          .map((s: any) => clipBySceneId.get(s.id))
+          .filter(Boolean);
 
         if (completedClips.length === 0) {
           await log("warn", "No completed clips — skipping stitch.");
