@@ -403,9 +403,9 @@ export function OverlayEditor({ projectId }: OverlayEditorProps) {
 
 function getPositionStyles(position: string): React.CSSProperties {
   const map: Record<string, React.CSSProperties> = {
-    top_left: { top: 8, left: 8 },
-    top_center: { top: 8, left: "50%", transform: "translateX(-50%)" },
-    top_right: { top: 8, right: 8 },
+    top_left: { top: 24, left: 8 },
+    top_center: { top: 24, left: "50%", transform: "translateX(-50%)" },
+    top_right: { top: 24, right: 8 },
     center: { top: "50%", left: "50%", transform: "translate(-50%, -50%)" },
     bottom_left: { bottom: 8, left: 8 },
     bottom_center: { bottom: 8, left: "50%", transform: "translateX(-50%)" },
