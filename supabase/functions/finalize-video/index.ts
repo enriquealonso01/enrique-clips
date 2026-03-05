@@ -474,6 +474,15 @@ function getStbl(data: Uint8Array, trak: Box): Box | null {
   return findBox(data, trakChildren, "mdia", "minf", "stbl");
 }
 
+function hasAudioTrack(mp4Data: Uint8Array): boolean {
+  try {
+    const parsed = parseFile(mp4Data);
+    return parsed.trakBoxes.some((trak) => getHandlerType(parsed.data, trak) === "soun");
+  } catch {
+    return false;
+  }
+}
+
 function getMdia(data: Uint8Array, trak: Box): Box | null {
   const trakChildren = scanBoxes(data, trak.start + trak.hdr, trak.start + trak.size);
   return trakChildren.find((b) => b.type === "mdia") || null;
@@ -1331,7 +1340,24 @@ Deno.serve(async (req) => {
             }
           }
 
-          // ── Apply overlays via fal.ai FFmpeg API (BEFORE music mux) ──
+          // Resolve selected track once (used by compose and mux fallback)
+          let selectedTrack: { supabase_path: string; title: string } | null = null;
+          let selectedTrackUrl: string | null = null;
+          if (hasSelectedTrack) {
+            const { data: track } = await supabase
+              .from("tracks")
+              .select("supabase_path, title")
+              .eq("id", (project as any).selected_track_id)
+              .single();
+            if (!track) {
+              throw new Error("Selected track not found.");
+            }
+            selectedTrack = track;
+            selectedTrackUrl = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path).data.publicUrl;
+          }
+
+          // ── Apply overlays (and optionally audio) via fal.ai FFmpeg compose ──
+          let musicAppliedViaCompose = false;
           try {
             const { data: overlays } = await supabase
               .from("overlays")
@@ -1339,204 +1365,226 @@ Deno.serve(async (req) => {
               .eq("project_id", project.id)
               .order("sort_order");
 
-            if (overlays && overlays.length > 0) {
-              await log("info", `Applying ${overlays.length} overlay(s) via FFmpeg...`);
-              
-              const FAL_KEY = Deno.env.get("FAL_KEY");
+            const FAL_KEY = Deno.env.get("FAL_KEY");
+            const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
+            const textOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_text);
+            const imageOverlays = (overlays || []).filter((o: any) => o.overlay_type === "image" && o.image_path);
+            const overlaysRequested = textOverlays.length > 0 || imageOverlays.length > 0;
+            const needsCompose = overlaysRequested || (hasSelectedTrack && !!selectedTrackUrl);
+
+            if (needsCompose) {
               if (!FAL_KEY) {
-                await log("warn", "FAL_KEY not configured — skipping overlay rendering.");
-              } else {
-                // 1. Upload the current final video to get a URL for fal.ai
-                const tempOverlayPath = `${project.id}/final/${runId}/pre-overlay.mp4`;
-                await supabase.storage
-                  .from("project-assets")
-                  .upload(tempOverlayPath, finalVideo, { contentType: "video/mp4", upsert: true });
-                const { data: tempUrl } = supabase.storage.from("project-assets").getPublicUrl(tempOverlayPath);
+                throw new Error("FAL_KEY not configured.");
+              }
 
-                const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
+              await log(
+                "info",
+                overlaysRequested
+                  ? `Applying ${textOverlays.length + imageOverlays.length} overlay(s) via FFmpeg...`
+                  : "Applying final audio mix via FFmpeg..."
+              );
 
-                // 2. Build FFmpeg drawtext filter for text overlays
-                const textOverlays = overlays.filter((o: any) => o.overlay_type === "text" && o.content_text);
-                const imageOverlays = overlays.filter((o: any) => o.overlay_type === "image" && o.image_path);
+              const tempOverlayPath = `${project.id}/final/${runId}/pre-compose.mp4`;
+              const preComposeVideo = finalVideo;
+              await supabase.storage
+                .from("project-assets")
+                .upload(tempOverlayPath, preComposeVideo, { contentType: "video/mp4", upsert: true });
+              const { data: tempUrl } = supabase.storage.from("project-assets").getPublicUrl(tempOverlayPath);
 
-                // Build drawtext filters with improved typography
-                const drawFilters: string[] = [];
-                for (const ov of textOverlays) {
-                  const startSec = Math.round((ov.start_pct / 100) * videoDurationSec);
-                  const endSec = Math.round((ov.end_pct / 100) * videoDurationSec);
-                  const pos = getFFmpegPosition(ov.position, ov.font_size || 48);
-                  const escapedText = (ov.content_text || "").replace(/'/g, "'\\''").replace(/:/g, "\\:");
-                  
-                  const bgColor = ov.bg_color || "black@0.5";
-                  const fontColor = (ov.font_color || "#FFFFFF").replace("#", "0x");
-                  const fontSize = ov.font_size || 48;
-                  
-                  // Use a clean sans-serif font with shadow for depth and rounded box padding
-                  drawFilters.push(
-                    `drawtext=text='${escapedText}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=${fontSize}:fontcolor=${fontColor}:${pos}:box=1:boxcolor=${bgColor}:boxborderw=14:shadowcolor=black@0.6:shadowx=2:shadowy=2:enable='between(t,${startSec},${endSec})'`
-                  );
+              const drawFilters: string[] = [];
+              for (const ov of textOverlays) {
+                const startSec = Math.round((ov.start_pct / 100) * videoDurationSec);
+                const endSec = Math.round((ov.end_pct / 100) * videoDurationSec);
+                const pos = getFFmpegPosition(ov.position, ov.font_size || 48);
+                const escapedText = String(ov.content_text || "")
+                  .replace(/\\/g, "\\\\")
+                  .replace(/'/g, "\\'")
+                  .replace(/:/g, "\\:")
+                  .replace(/,/g, "\\,")
+                  .replace(/%/g, "\\%")
+                  .replace(/\n/g, "\\n");
+
+                const bgColor = ov.bg_color || "black@0.5";
+                const fontColor = (ov.font_color || "#FFFFFF").replace("#", "0x");
+                const fontSize = ov.font_size || 48;
+
+                drawFilters.push(
+                  `drawtext=text='${escapedText}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize=${fontSize}:fontcolor=${fontColor}:${pos}:box=1:boxcolor=${bgColor}:boxborderw=14:shadowcolor=black@0.6:shadowx=2:shadowy=2:enable='between(t\\,${startSec}\\,${endSec})'`
+                );
+              }
+
+              const runCompose = async (): Promise<Uint8Array | null> => {
+                const tracks: any[] = [
+                  {
+                    id: "main",
+                    type: "video",
+                    keyframes: [{ url: tempUrl.publicUrl, timestamp: 0, duration: videoDurationSec }],
+                  },
+                ];
+
+                if (selectedTrackUrl) {
+                  tracks.push({
+                    id: "music",
+                    type: "audio",
+                    keyframes: [{ url: selectedTrackUrl, timestamp: 0, duration: videoDurationSec }],
+                  });
                 }
 
-                if (drawFilters.length > 0 || imageOverlays.length > 0) {
-                  // Use fal.ai FFmpeg compose API
-                  const tracks: any[] = [
-                    {
-                      id: "main",
-                      type: "video",
-                      keyframes: [{ url: tempUrl.publicUrl, timestamp: 0, duration: videoDurationSec }],
+                for (const imgOv of imageOverlays) {
+                  const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
+                  const startSec = Math.round((imgOv.start_pct / 100) * videoDurationSec);
+                  const duration = Math.max(1, Math.round(((imgOv.end_pct - imgOv.start_pct) / 100) * videoDurationSec));
+                  tracks.push({
+                    id: `overlay_img_${imgOv.id.slice(0, 8)}`,
+                    type: "overlay",
+                    keyframes: [{
+                      url: imgUrl.publicUrl,
+                      timestamp: startSec,
+                      duration,
+                    }],
+                  });
+                }
+
+                const falResp = await withRetry(() =>
+                  fetch("https://queue.fal.run/fal-ai/ffmpeg-api/compose", {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Key ${FAL_KEY}`,
+                      "Content-Type": "application/json",
                     },
-                  ];
+                    body: JSON.stringify({
+                      tracks,
+                      ...(drawFilters.length > 0 ? { video_filters: drawFilters.join(",") } : {}),
+                    }),
+                  })
+                );
 
-                  // Add image overlay tracks
-                  for (const imgOv of imageOverlays) {
-                    const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
-                    const startSec = Math.round((imgOv.start_pct / 100) * videoDurationSec);
-                    const duration = Math.round(((imgOv.end_pct - imgOv.start_pct) / 100) * videoDurationSec);
-                    tracks.push({
-                      id: `overlay_img_${imgOv.id.slice(0, 8)}`,
-                      type: "overlay",
-                      keyframes: [{
-                        url: imgUrl.publicUrl,
-                        timestamp: startSec,
-                        duration: duration,
-                      }],
-                    });
+                const falRespText = await falResp.text();
+                await log("info", `fal.ai response status=${falResp.status}, body preview: ${falRespText.substring(0, 300)}`);
+                if (!falResp.ok) {
+                  throw new Error(`Compose failed (${falResp.status}): ${falRespText.substring(0, 500)}`);
+                }
+
+                let falResult: any;
+                try {
+                  let cleaned = falRespText.trim().replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+                  const jsonStart = cleaned.search(/[\{\[]/);
+                  const jsonEnd = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+                  if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON found in response");
+                  cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+                  falResult = JSON.parse(cleaned);
+                } catch (parseErr) {
+                  throw new Error(`Failed to parse fal.ai response: ${parseErr.message}`);
+                }
+
+                if (falResult.video_url || falResult.video?.url) {
+                  const directUrl = falResult.video_url || falResult.video?.url;
+                  const directResp = await fetch(directUrl);
+                  if (!directResp.ok) throw new Error(`Failed downloading composed video: ${directResp.status}`);
+                  return new Uint8Array(await directResp.arrayBuffer());
+                }
+
+                if (!falResult.request_id) {
+                  throw new Error("Compose response missing request_id and video URL.");
+                }
+
+                const pollStatusUrl = falResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}/status`;
+                const pollResponseUrl = falResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}`;
+
+                for (let poll = 0; poll < 30; poll++) {
+                  await new Promise((r) => setTimeout(r, 2000));
+                  const statusResp = await fetch(pollStatusUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
+                  const statusText = await statusResp.text();
+                  let statusData: any;
+                  try {
+                    statusData = JSON.parse(statusText);
+                  } catch {
+                    throw new Error(`Bad compose status response: ${statusText.substring(0, 200)}`);
                   }
 
-                  try {
-                    // Call fal.ai FFmpeg compose
-                    const falResp = await withRetry(() =>
-                      fetch("https://queue.fal.run/fal-ai/ffmpeg-api/compose", {
-                        method: "POST",
-                        headers: {
-                          Authorization: `Key ${FAL_KEY}`,
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          tracks,
-                          ...(drawFilters.length > 0 ? { video_filters: drawFilters.join(",") } : {}),
-                        }),
-                      })
-                    );
-
-                    const falRespText = await falResp.text();
-                    await log("info", `fal.ai response status=${falResp.status}, body preview: ${falRespText.substring(0, 300)}`);
-
-                    if (falResp.ok) {
-                      let falResult: any;
-                      try {
-                        // Strip markdown fences and find JSON
-                        let cleaned = falRespText.trim()
-                          .replace(/```json\s*/gi, "")
-                          .replace(/```\s*/g, "")
-                          .trim();
-                        const jsonStart = cleaned.search(/[\{\[]/);
-                        const jsonEnd = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
-                        if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON found in response");
-                        cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
-                        falResult = JSON.parse(cleaned);
-                      } catch (parseErr) {
-                        throw new Error(`Failed to parse fal.ai response: ${parseErr.message}. Raw: ${falRespText.substring(0, 200)}`);
-                      }
-                      
-                      // If queued, poll for result
-                      if (falResult.request_id) {
-                        // Use URLs from fal.ai response, fallback to constructed ones
-                        const pollStatusUrl = falResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}/status`;
-                        const pollResponseUrl = falResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/requests/${falResult.request_id}`;
-                        let resultUrl: string | null = null;
-                        for (let poll = 0; poll < 60; poll++) {
-                          await new Promise(r => setTimeout(r, 5000));
-                          const statusResp = await fetch(
-                            pollStatusUrl,
-                            { headers: { Authorization: `Key ${FAL_KEY}` } }
-                          );
-                          const statusText = await statusResp.text();
-                          let statusData: any;
-                          try { statusData = JSON.parse(statusText); } catch { throw new Error(`Bad status response: ${statusResp.status}: ${statusResp.statusText}`); }
-                          if (statusData.status === "COMPLETED") {
-                            const resultResp = await fetch(
-                              pollResponseUrl,
-                              { headers: { Authorization: `Key ${FAL_KEY}` } }
-                            );
-                            const resultText = await resultResp.text();
-                            let resultData: any;
-                            try { resultData = JSON.parse(resultText); } catch { throw new Error(`Bad result response: ${resultText.substring(0, 200)}`); }
-                            resultUrl = resultData.video_url || resultData.video?.url;
-                            break;
-                          } else if (statusData.status === "FAILED") {
-                            throw new Error("FFmpeg compose failed: " + JSON.stringify(statusData));
-                          }
-                        }
-
-                        if (resultUrl) {
-                          const overlaidResp = await fetch(resultUrl);
-                          if (overlaidResp.ok) {
-                            finalVideo = new Uint8Array(await overlaidResp.arrayBuffer());
-                            await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                          }
-                        } else {
-                          await log("warn", "FFmpeg compose timed out — continuing without overlays.");
-                        }
-                      } else if (falResult.video_url || falResult.video?.url) {
-                        const videoUrl = falResult.video_url || falResult.video?.url;
-                        const overlaidResp = await fetch(videoUrl);
-                        if (overlaidResp.ok) {
-                          finalVideo = new Uint8Array(await overlaidResp.arrayBuffer());
-                          await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                        }
-                      }
-                    } else {
-                      await log("warn", `fal.ai FFmpeg compose failed (${falResp.status}): ${falRespText.substring(0, 500)} — continuing without overlays.`);
+                  if (statusData.status === "COMPLETED") {
+                    const resultResp = await fetch(pollResponseUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
+                    const resultText = await resultResp.text();
+                    let resultData: any;
+                    try {
+                      resultData = JSON.parse(resultText);
+                    } catch {
+                      throw new Error(`Bad compose result response: ${resultText.substring(0, 200)}`);
                     }
-                  } catch (composeErr) {
-                    await log("warn", `Overlay compose failed: ${composeErr.message} — continuing without overlays.`);
+                    const resultUrl = resultData.video_url || resultData.video?.url;
+                    if (!resultUrl) throw new Error("Compose completed without video URL.");
+                    const overlaidResp = await fetch(resultUrl);
+                    if (!overlaidResp.ok) throw new Error(`Failed downloading composed video: ${overlaidResp.status}`);
+                    return new Uint8Array(await overlaidResp.arrayBuffer());
+                  }
+
+                  if (statusData.status === "FAILED") {
+                    throw new Error(`Compose failed: ${JSON.stringify(statusData)}`);
                   }
                 }
 
-                // Clean up temp file
-                await supabase.storage.from("project-assets").remove([tempOverlayPath]);
+                throw new Error("FFmpeg compose timed out");
+              };
+
+              let composedVideo: Uint8Array | null = null;
+              let composeError: Error | null = null;
+              for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                  composedVideo = await runCompose();
+                  break;
+                } catch (err) {
+                  composeError = err as Error;
+                  await log("warn", `Compose attempt ${attempt}/2 failed: ${composeError.message}`);
+                }
+              }
+
+              await supabase.storage.from("project-assets").remove([tempOverlayPath]);
+
+              if (!composedVideo) {
+                throw composeError || new Error("FFmpeg compose failed.");
+              }
+
+              finalVideo = composedVideo;
+              if (overlaysRequested) {
+                await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+              }
+              if (hasSelectedTrack) {
+                musicAppliedViaCompose = true;
+                await log("info", `Music track mixed via FFmpeg compose. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
               }
             }
           } catch (overlayErr) {
-            await log("warn", `Overlay step failed: ${overlayErr.message} — continuing without overlays.`);
+            throw new Error(`Overlay/audio compose failed: ${overlayErr.message}`);
           }
 
-          // ── Mux selected music track LAST (after overlays) so audio is preserved ──
-          if (hasSelectedTrack) {
+          // ── Fallback music mux (only if compose didn't already mix audio) ──
+          if (hasSelectedTrack && !musicAppliedViaCompose) {
             try {
-              const { data: track } = await supabase
-                .from("tracks")
-                .select("supabase_path, title")
-                .eq("id", (project as any).selected_track_id)
-                .single();
-              
-              if (track) {
-                await log("info", `Adding music track (final step): ${track.title}`);
-                const { data: trackUrl } = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path);
-                const mp3Resp = await withRetry(() => fetch(trackUrl.publicUrl));
-                if (mp3Resp.ok) {
-                  const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
-                  const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
-                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
-                  await log("info", `Music track muxed as final step. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                } else {
-                  await log("warn", "Failed to download music track — continuing without music.");
-                }
-              } else {
-                await log("warn", "Selected track not found — continuing without music.");
-              }
+              await log("info", `Adding music track (final step): ${selectedTrack?.title || "selected track"}`);
+              const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
+              if (!mp3Resp.ok) throw new Error(`Failed to download music track: ${mp3Resp.status}`);
+
+              const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
+              const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
+              finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
+              await log("info", `Music track muxed as final step. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
             } catch (muxErr) {
-              await log("warn", `Music mux failed: ${muxErr.message} — continuing without music.`);
+              throw new Error(`Music mux failed: ${muxErr.message}`);
             }
           }
 
-          const finalPath = `${project.id}/final/${runId}/final-video.mp4`;
+          if (hasSelectedTrack && !hasAudioTrack(finalVideo)) {
+            throw new Error("Final output has no audio track after mixing.");
+          }
+
+          const finalPath = `${project.id}/final/${runId}/final-video-${Date.now()}.mp4`;
           const { error: upErr } = await supabase.storage
             .from("project-assets")
-            .upload(finalPath, finalVideo, { contentType: "video/mp4", upsert: true });
+            .upload(finalPath, finalVideo, { contentType: "video/mp4", upsert: false });
 
           if (!upErr) {
+            await supabase.from("assets").delete().eq("run_id", runId).eq("type", "final_video");
+
             await supabase.from("assets").insert({
               supabase_path: finalPath,
               type: "final_video" as any,
@@ -1551,11 +1599,18 @@ Deno.serve(async (req) => {
             });
             await log("info", "Final video uploaded successfully.");
           } else {
-            await log("error", `Final video upload failed: ${upErr.message}`);
+            throw new Error(`Final video upload failed: ${upErr.message}`);
           }
         }
       } catch (err) {
-        await log("warn", `Stitch step failed: ${err.message} — continuing.`);
+        const stitchError = `Stitch step failed: ${err.message}`;
+        await log("error", stitchError);
+        await updateRun({
+          status: "failed",
+          error_message: stitchError,
+          finished_at: new Date().toISOString(),
+        });
+        return json({ error: stitchError }, 500);
       }
 
       await updateRun({ current_step: "metadata", progress_pct: 75 });
