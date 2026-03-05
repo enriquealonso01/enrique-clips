@@ -481,7 +481,10 @@ function getMdia(data: Uint8Array, trak: Box): Box | null {
 
 function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Uint8Array {
   if (files.length === 0) throw new Error("No files to concatenate");
-  if (files.length === 1) return files[0];
+  const videoOnly = opts?.videoOnly ?? false;
+
+  // For single file with videoOnly, strip non-video tracks
+  if (files.length === 1 && !videoOnly) return files[0];
 
   const parsed = files.map((f, idx) => {
     try {
@@ -491,7 +494,9 @@ function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Ui
     }
   });
   const first = parsed[0];
-  const videoOnly = opts?.videoOnly ?? false;
+
+  // Track the original trak boxes from file 0 before filtering (needed for moov rebuild)
+  const originalFirstTraks = [...first.trakBoxes];
 
   // Filter to video-only tracks if requested
   if (videoOnly) {
@@ -747,6 +752,9 @@ function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Ui
   const moovParts: Uint8Array[] = [];
   let trakIndex = 0;
 
+  // Build a set of original trak start positions that were kept (not filtered out)
+  const keptTrakStarts = new Set(first.trakBoxes.map(t => t.start));
+
   // Calculate max duration across tracks for mvhd
   const mvhdBox = moovChildren.find((b) => b.type === "mvhd");
   let mvhdTimescale = 1000;
@@ -763,7 +771,13 @@ function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Ui
 
   for (const child of moovChildren) {
     if (child.type === "trak") {
-      moovParts.push(rebuiltTraks[trakIndex++]);
+      if (keptTrakStarts.has(child.start)) {
+        // This trak was kept (not filtered) — use the rebuilt version
+        if (trakIndex < rebuiltTraks.length) {
+          moovParts.push(rebuiltTraks[trakIndex++]);
+        }
+      }
+      // else: this trak was filtered out (e.g. audio in videoOnly mode) — skip it
     } else if (child.type === "mvhd" && mvhdBox) {
       moovParts.push(updateMvhd(first.data, mvhdBox, maxMovieDuration));
     } else {
@@ -1280,8 +1294,19 @@ Deno.serve(async (req) => {
           
           let finalVideo: Uint8Array;
           if (clipBuffers.length === 1) {
-            finalVideo = clipBuffers[0];
-            await log("info", "Single clip — using directly as final video.");
+            // Single clip: if selected track exists, strip to video-only to remove generator audio
+            if (hasSelectedTrack) {
+              try {
+                finalVideo = concatenateMP4(clipBuffers, { videoOnly: true });
+                await log("info", "Single clip — stripped to video-only for music mux.");
+              } catch (stripErr) {
+                await log("warn", `Single clip strip failed: ${stripErr.message} — using original.`);
+                finalVideo = clipBuffers[0];
+              }
+            } else {
+              finalVideo = clipBuffers[0];
+              await log("info", "Single clip — using directly as final video.");
+            }
           } else {
             await log("info", `Concatenating ${clipBuffers.length} clips via MP4 remuxer...`);
             try {
@@ -1293,36 +1318,7 @@ Deno.serve(async (req) => {
             }
           }
 
-          // If a music track is selected, download MP3 and mux it into the video
-          if (hasSelectedTrack) {
-            try {
-              const { data: track } = await supabase
-                .from("tracks")
-                .select("supabase_path, title")
-                .eq("id", (project as any).selected_track_id)
-                .single();
-              
-              if (track) {
-                await log("info", `Adding music track: ${track.title}`);
-                const { data: trackUrl } = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path);
-                const mp3Resp = await withRetry(() => fetch(trackUrl.publicUrl));
-                if (mp3Resp.ok) {
-                  const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
-                  const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
-                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
-                  await log("info", `Music track muxed. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                } else {
-                  await log("warn", "Failed to download music track — continuing without music.");
-                }
-              } else {
-                await log("warn", "Selected track not found — continuing without music.");
-              }
-            } catch (muxErr) {
-              await log("warn", `Music mux failed: ${muxErr.message} — continuing without music.`);
-            }
-          }
-
-          // ── Apply overlays via fal.ai FFmpeg API ──
+          // ── Apply overlays via fal.ai FFmpeg API (BEFORE music mux) ──
           try {
             const { data: overlays } = await supabase
               .from("overlays")
@@ -1491,6 +1487,35 @@ Deno.serve(async (req) => {
             }
           } catch (overlayErr) {
             await log("warn", `Overlay step failed: ${overlayErr.message} — continuing without overlays.`);
+          }
+
+          // ── Mux selected music track LAST (after overlays) so audio is preserved ──
+          if (hasSelectedTrack) {
+            try {
+              const { data: track } = await supabase
+                .from("tracks")
+                .select("supabase_path, title")
+                .eq("id", (project as any).selected_track_id)
+                .single();
+              
+              if (track) {
+                await log("info", `Adding music track (final step): ${track.title}`);
+                const { data: trackUrl } = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path);
+                const mp3Resp = await withRetry(() => fetch(trackUrl.publicUrl));
+                if (mp3Resp.ok) {
+                  const mp3Data = new Uint8Array(await mp3Resp.arrayBuffer());
+                  const videoDuration = completedClips.length * (project.clip_duration_sec || 5);
+                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Data, videoDuration);
+                  await log("info", `Music track muxed as final step. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                } else {
+                  await log("warn", "Failed to download music track — continuing without music.");
+                }
+              } else {
+                await log("warn", "Selected track not found — continuing without music.");
+              }
+            } catch (muxErr) {
+              await log("warn", `Music mux failed: ${muxErr.message} — continuing without music.`);
+            }
           }
 
           const finalPath = `${project.id}/final/${runId}/final-video.mp4`;
