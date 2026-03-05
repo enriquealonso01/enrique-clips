@@ -550,9 +550,44 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
           }
         }
 
-        // All Kling tasks submitted — return and let poll-kling handle the rest
-        await log("info", "All Kling tasks submitted. Waiting for poll-kling to check completion.");
-        return json({ status: "kling_polling", run_id: runId });
+        // Server-side poll loop: poll Kling for up to ~2 minutes so pipeline
+        // continues without requiring the client to be active.
+        await log("info", "All Kling tasks submitted. Starting server-side polling loop...");
+        const POLL_INTERVAL_MS = 15000;
+        const MAX_POLLS = 8; // ~2 minutes
+        for (let poll = 0; poll < MAX_POLLS; poll++) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+          
+          const currentStatus = await checkRunStatus();
+          if (currentStatus !== "running") {
+            await log("info", "Run halted during Kling polling");
+            return json({ status: "halted" });
+          }
+
+          try {
+            const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/poll-kling`;
+            const pollResp = await fetch(fnUrl, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ run_id: runId }),
+            });
+            const pollResult = await pollResp.json();
+            await log("debug", `Poll result: ${JSON.stringify(pollResult)}`);
+            
+            if (pollResult.status === "kling_complete") {
+              await log("info", "All Kling tasks completed during inline polling.");
+              return json({ status: "kling_complete_and_finalized", run_id: runId });
+            }
+          } catch (pollErr) {
+            await log("warn", `Inline poll error: ${pollErr.message}`);
+          }
+        }
+
+        await log("info", "Inline polling timed out — client polling will continue.");
+        return json({ status: "kling_polling_timeout", run_id: runId });
       } catch (err) {
         await log("error", `Kling step failed: ${err.message}`);
         await updateRun({ status: "failed", error_message: `Kling failed: ${err.message}`, finished_at: new Date().toISOString() });
