@@ -483,7 +483,13 @@ function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Ui
   if (files.length === 0) throw new Error("No files to concatenate");
   if (files.length === 1) return files[0];
 
-  const parsed = files.map(parseFile);
+  const parsed = files.map((f, idx) => {
+    try {
+      return parseFile(f);
+    } catch (e) {
+      throw new Error(`Failed to parse file ${idx}: ${e.message}`);
+    }
+  });
   const first = parsed[0];
   const videoOnly = opts?.videoOnly ?? false;
 
@@ -491,6 +497,13 @@ function concatenateMP4(files: Uint8Array[], opts?: { videoOnly?: boolean }): Ui
   if (videoOnly) {
     for (const p of parsed) {
       p.trakBoxes = p.trakBoxes.filter((trak) => isVideoTrack(p.data, trak));
+    }
+  }
+
+  // Validate: all files must have at least one track
+  for (let f = 0; f < parsed.length; f++) {
+    if (!parsed[f].trakBoxes || parsed[f].trakBoxes.length === 0) {
+      throw new Error(`File ${f} has no ${videoOnly ? "video " : ""}tracks`);
     }
   }
 
@@ -1090,7 +1103,12 @@ function muxMP3IntoMP4(videoMP4: Uint8Array, mp3Data: Uint8Array, videoDurationS
     }
   }
   
-  // Also fix existing video track co64 offsets (they reference old positions)
+  // Also fix existing video track co64/stco offsets (they reference old positions)
+  // The original file might have ANY layout (ftyp+moov+mdat or ftyp+mdat+moov etc.)
+  // So we use the actual mdat position from the parsed file, not an assumed layout.
+  const oldMdatContentStart = existingMdat ? existingMdat.start + existingMdat.hdr : 0;
+  const newMdatContentStart = mdatStartInFile + 8; // after ftyp + newMoov + mdat header
+  
   for (let i = 0; i < traks.length - 1; i++) {
     const trak = traks[i];
     const trakCh = scanBoxes(newMoov, trak.start + trak.hdr, trak.start + trak.size);
@@ -1098,32 +1116,23 @@ function muxMP3IntoMP4(videoMP4: Uint8Array, mp3Data: Uint8Array, videoDurationS
     if (co64Box) {
       const base = co64Box.start + co64Box.hdr;
       const count = readU32(newMoov, base + 4);
-      // Existing offsets are absolute from old file layout; we need to rebase them
-      // Old layout: ftyp + moov(oldSize) + mdat
-      // New layout: ftyp + moov(newSize) + mdat
-      const oldMoovSize = parsed.moov.size;
-      const oldMdatStart = ftypData.length + oldMoovSize;
-      const newMdatStart = mdatStartInFile;
-      const delta = newMdatStart - oldMdatStart;
       for (let j = 0; j < count; j++) {
         const pos = base + 8 + j * 8;
         const current = readU64(newMoov, pos);
-        writeU64(newMoov, pos, current + delta);
+        // Rebase: subtract old mdat content start, add new mdat content start
+        const relativeOffset = current - oldMdatContentStart;
+        writeU64(newMoov, pos, newMdatContentStart + relativeOffset);
       }
     }
-    // Also check stco
     const stcoBox = findBox(newMoov, trakCh, "mdia", "minf", "stbl", "stco");
     if (stcoBox) {
       const base = stcoBox.start + stcoBox.hdr;
       const count = readU32(newMoov, base + 4);
-      const oldMoovSize = parsed.moov.size;
-      const oldMdatStart = ftypData.length + oldMoovSize;
-      const newMdatStart = mdatStartInFile;
-      const delta = newMdatStart - oldMdatStart;
       for (let j = 0; j < count; j++) {
         const pos = base + 8 + j * 4;
         const current = readU32(newMoov, pos);
-        writeU32(newMoov, pos, (current + delta) >>> 0);
+        const relativeOffset = current - oldMdatContentStart;
+        writeU32(newMoov, pos, (newMdatContentStart + relativeOffset) >>> 0);
       }
     }
   }
