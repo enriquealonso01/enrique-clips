@@ -66,6 +66,7 @@ export type Database = {
         Row: {
           bg_color: string | null
           content_mode: string
+          content_prompt: string | null
           content_text: string | null
           created_at: string
           end_pct: number
@@ -84,6 +85,7 @@ export type Database = {
         Insert: {
           bg_color?: string | null
           content_mode?: string
+          content_prompt?: string | null
           content_text?: string | null
           created_at?: string
           end_pct?: number
@@ -102,6 +104,7 @@ export type Database = {
         Update: {
           bg_color?: string | null
           content_mode?: string
+          content_prompt?: string | null
           content_text?: string | null
           created_at?: string
           end_pct?: number

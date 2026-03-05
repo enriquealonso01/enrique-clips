@@ -508,7 +508,7 @@ Only the natural environment exists at the start. Human elements may ONLY appear
 Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
-${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_text || "Generate appropriate content"}`).join("\n")}`,
+${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_prompt || o.content_text || "Generate appropriate content"}`).join("\n")}`,
               },
             ],
             [

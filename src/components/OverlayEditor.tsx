@@ -18,6 +18,7 @@ interface Overlay {
   overlay_type: string;
   style: string;
   content_text: string | null;
+  content_prompt: string | null;
   content_mode: string;
   position: string;
   start_pct: number;
@@ -243,7 +244,9 @@ export function OverlayEditor({ projectId }: OverlayEditorProps) {
                       <div className="flex items-center gap-3">
                         <Switch
                           checked={ov.content_mode === "ai_generated"}
-                          onCheckedChange={(v) => handleUpdate(ov.id, "content_mode", v ? "ai_generated" : "exact")}
+                          onCheckedChange={(v) => {
+                            handleUpdate(ov.id, "content_mode", v ? "ai_generated" : "exact");
+                          }}
                         />
                         <Label className="text-sm">
                           {ov.content_mode === "ai_generated"
@@ -254,21 +257,30 @@ export function OverlayEditor({ projectId }: OverlayEditorProps) {
 
                       {/* Content */}
                       {ov.overlay_type === "text" ? (
-                        <div className="space-y-1">
-                          <Label className="text-xs">
-                            {ov.content_mode === "ai_generated" ? "Prompt / Guidance for AI" : "Text Content"}
-                          </Label>
-                          <Textarea
-                            value={ov.content_text || ""}
-                            onChange={(e) => handleUpdate(ov.id, "content_text", e.target.value)}
-                            placeholder={
-                              ov.content_mode === "ai_generated"
-                                ? "e.g. 'Generate an interesting fact about this scene'"
-                                : "Enter the exact text to display"
-                            }
-                            rows={2}
-                          />
-                        </div>
+                        ov.content_mode === "ai_generated" ? (
+                          <div className="space-y-1">
+                            <Label className="text-xs">Prompt / Guidance for AI</Label>
+                            <Textarea
+                              value={ov.content_prompt || ""}
+                              onChange={(e) => handleUpdate(ov.id, "content_prompt", e.target.value)}
+                              placeholder="e.g. 'Generate a project label like PROJECT: [CODENAME] | $[X]M'"
+                              rows={2}
+                            />
+                            {ov.content_text && (
+                              <p className="text-xs text-muted-foreground">Last generated: {ov.content_text}</p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <Label className="text-xs">Text Content</Label>
+                            <Textarea
+                              value={ov.content_text || ""}
+                              onChange={(e) => handleUpdate(ov.id, "content_text", e.target.value)}
+                              placeholder="Enter the exact text to display"
+                              rows={2}
+                            />
+                          </div>
+                        )
                       ) : (
                         <div className="space-y-2">
                           <Label className="text-xs">Overlay Image</Label>
