@@ -86,15 +86,18 @@ Deno.serve(async (req) => {
     for (const asset of pendingTasks) {
       const meta = asset.metadata as any;
       const reqId = meta.pika_request_id;
+      const falEndpoint = meta.pika_model === "image-to-video"
+        ? "fal-ai/pika/v2.2/image-to-video"
+        : "fal-ai/pika/v2.2/pikaframes";
 
       try {
-        const status = await fal.queue.status("fal-ai/pika/v2.2/pikaframes", {
+        const status = await fal.queue.status(falEndpoint, {
           requestId: reqId,
           logs: false,
         });
 
         if (status.status === "COMPLETED") {
-          const result = await fal.queue.result("fal-ai/pika/v2.2/pikaframes", {
+          const result = await fal.queue.result(falEndpoint, {
             requestId: reqId,
           });
           const videoUrl = (result.data as any)?.video?.url;

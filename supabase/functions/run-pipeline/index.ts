@@ -738,79 +738,116 @@ ${scene.end_keyframe_prompt}
 
         fal.config({ credentials: FAL_KEY });
         const pikaResolution = (project as any).pika_resolution || "1080p";
+        const pikaModel = (project as any).pika_model || "pikaframes";
+        const falEndpoint = pikaModel === "image-to-video"
+          ? "fal-ai/pika/v2.2/image-to-video"
+          : "fal-ai/pika/v2.2/pikaframes";
 
-        // Build consecutive 2-image pairs: [initial→K1], [K1→K2], [K2→K3], etc.
-        // Each pair produces one 5-second clip
-        const imageUrls: string[] = [];
-        if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
-        for (const scene of scenes) {
-          if (sceneKeyframes[scene.scene_index]) {
-            imageUrls.push(sceneKeyframes[scene.scene_index]);
-          }
-        }
-
-        if (imageUrls.length < 2) {
-          await log("error", "Pika needs at least 2 keyframe images");
-          await updateRun({ status: "failed", error_message: "Not enough keyframes for Pika" });
-          return json({ error: "Not enough keyframes" }, 500);
-        }
-
-        // Create pairs: [img0, img1], [img1, img2], [img2, img3], ...
-        const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
-        for (let i = 0; i < imageUrls.length - 1; i++) {
-          const scene = scenes[i] || scenes[scenes.length - 1];
-          pairs.push({
-            start: imageUrls[i],
-            end: imageUrls[i + 1],
-            sceneIndex: scene.scene_index,
-            prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
-          });
-        }
-
-        await log("info", `Pika: submitting ${pairs.length} clip(s), each with 2 keyframes (start→end, 5s each)`);
+        await log("info", `Pika model: ${pikaModel}, endpoint: ${falEndpoint}`);
 
         const pikaRequestIds: string[] = [];
 
-        for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
-          const pair = pairs[clipIdx];
-
-          const pikaInput: Record<string, any> = {
-            image_urls: [pair.start, pair.end],
-            prompt: pair.prompt,
-            negative_prompt: negPrompt,
-            resolution: pikaResolution,
-            transitions: [{ duration: 5, prompt: pair.prompt }],
-          };
-
-          await log("debug", `Pika clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
-            start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
-            end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
-          });
-
-          try {
-            const { request_id } = await fal.queue.submit("fal-ai/pika/v2.2/pikaframes", {
-              input: pikaInput,
-            });
-
-            if (!request_id) {
-              await log("error", `No request_id for clip ${clipIdx + 1}`);
-              continue;
+        if (pikaModel === "image-to-video") {
+          // ── Image-to-Video: one clip per keyframe image ──
+          const imageItems: Array<{ url: string; sceneIndex: number; prompt: string }> = [];
+          if (runInitialImageUrl) {
+            imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || project.series_prompt || "cinematic motion" });
+          }
+          for (const scene of scenes) {
+            if (sceneKeyframes[scene.scene_index]) {
+              imageItems.push({
+                url: sceneKeyframes[scene.scene_index],
+                sceneIndex: scene.scene_index,
+                prompt: scene.kling_prompt || project.series_prompt || "cinematic motion",
+              });
             }
+          }
 
-            pikaRequestIds.push(request_id);
-            await log("info", `Pika clip ${clipIdx + 1} submitted: ${request_id}`);
+          await log("info", `Pika image-to-video: submitting ${imageItems.length} clip(s), 5s each`);
 
-            const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
-            await supabase.from("assets").insert({
-              supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
-              type: "clip" as any,
-              run_id: runId,
-              scene_id: sceneForAsset.id,
-              metadata: { pika_request_id: request_id, clip_index: clipIdx, scene_index: pair.sceneIndex, status: "submitted" },
+          for (let clipIdx = 0; clipIdx < imageItems.length; clipIdx++) {
+            const item = imageItems[clipIdx];
+            const pikaInput: Record<string, any> = {
+              image_url: item.url,
+              prompt: item.prompt,
+              negative_prompt: negPrompt,
+              resolution: pikaResolution,
+              duration: "5",
+            };
+
+            await log("debug", `Pika i2v clip ${clipIdx + 1}/${imageItems.length} (scene ${item.sceneIndex})`);
+
+            try {
+              const { request_id } = await fal.queue.submit(falEndpoint, { input: pikaInput });
+              if (!request_id) { await log("error", `No request_id for i2v clip ${clipIdx + 1}`); continue; }
+              pikaRequestIds.push(request_id);
+              await log("info", `Pika i2v clip ${clipIdx + 1} submitted: ${request_id}`);
+
+              const sceneForAsset = scenes.find(s => s.scene_index === item.sceneIndex) || scenes[0];
+              await supabase.from("assets").insert({
+                supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
+                type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
+                metadata: { pika_request_id: request_id, clip_index: clipIdx, scene_index: item.sceneIndex, status: "submitted", pika_model: "image-to-video" },
+              });
+            } catch (submitErr) {
+              await log("error", `Pika i2v clip ${clipIdx + 1} submit error: ${submitErr.message}`);
+            }
+          }
+        } else {
+          // ── Pikaframes: consecutive 2-image pairs ──
+          const imageUrls: string[] = [];
+          if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
+          for (const scene of scenes) {
+            if (sceneKeyframes[scene.scene_index]) imageUrls.push(sceneKeyframes[scene.scene_index]);
+          }
+
+          if (imageUrls.length < 2) {
+            await log("error", "Pikaframes needs at least 2 keyframe images");
+            await updateRun({ status: "failed", error_message: "Not enough keyframes for Pikaframes" });
+            return json({ error: "Not enough keyframes" }, 500);
+          }
+
+          const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
+          for (let i = 0; i < imageUrls.length - 1; i++) {
+            const scene = scenes[i] || scenes[scenes.length - 1];
+            pairs.push({
+              start: imageUrls[i], end: imageUrls[i + 1],
+              sceneIndex: scene.scene_index,
+              prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
             });
-          } catch (submitErr) {
-            await log("error", `Pika clip ${clipIdx + 1} submit error: ${submitErr.message}`);
-            continue;
+          }
+
+          await log("info", `Pika pikaframes: submitting ${pairs.length} clip(s), each with 2 keyframes (start→end, 5s each)`);
+
+          for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+            const pair = pairs[clipIdx];
+            const pikaInput: Record<string, any> = {
+              image_urls: [pair.start, pair.end],
+              prompt: pair.prompt, negative_prompt: negPrompt,
+              resolution: pikaResolution,
+              transitions: [{ duration: 5, prompt: pair.prompt }],
+            };
+
+            await log("debug", `Pika clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
+              start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
+              end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
+            });
+
+            try {
+              const { request_id } = await fal.queue.submit(falEndpoint, { input: pikaInput });
+              if (!request_id) { await log("error", `No request_id for clip ${clipIdx + 1}`); continue; }
+              pikaRequestIds.push(request_id);
+              await log("info", `Pika clip ${clipIdx + 1} submitted: ${request_id}`);
+
+              const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
+              await supabase.from("assets").insert({
+                supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
+                type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
+                metadata: { pika_request_id: request_id, clip_index: clipIdx, scene_index: pair.sceneIndex, status: "submitted", pika_model: "pikaframes" },
+              });
+            } catch (submitErr) {
+              await log("error", `Pika clip ${clipIdx + 1} submit error: ${submitErr.message}`);
+            }
           }
         }
 
@@ -827,7 +864,7 @@ ${scene.end_keyframe_prompt}
           let completedInline = 0;
           for (const reqId of pikaRequestIds) {
             try {
-              const status = await fal.queue.status("fal-ai/pika/v2.2/pikaframes", {
+              const status = await fal.queue.status(falEndpoint, {
                 requestId: reqId,
                 logs: false,
               });
@@ -845,7 +882,7 @@ ${scene.end_keyframe_prompt}
                   continue;
                 }
 
-                const result = await fal.queue.result("fal-ai/pika/v2.2/pikaframes", {
+                const result = await fal.queue.result(falEndpoint, {
                   requestId: reqId,
                 });
                 const videoUrl = (result.data as any)?.video?.url;
