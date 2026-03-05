@@ -600,19 +600,28 @@ ${scene.end_keyframe_prompt}
             userContent.push({ type: "image_url", image_url: { url: prevKeyframeUrl } });
           }
 
-          const imageResult = await callAI(
-            [{ role: "user", content: userContent }],
-            undefined, undefined,
-            "google/gemini-3-pro-image-preview",
-            ["image", "text"]
-          );
+          let assetId: string | null = null;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const imageResult = await callAI(
+              [{ role: "user", content: userContent }],
+              undefined, undefined,
+              "google/gemini-3-pro-image-preview",
+              ["image", "text"]
+            );
 
-          const assetId = await extractAndUploadImage(
-            imageResult,
-            `${project.id}/keyframes/${runId}/scene-${scene.scene_index}-end`,
-            "keyframe",
-            { run_id: runId, scene_id: scene.id, keyframe_type: "end", scene_index: scene.scene_index }
-          );
+            assetId = await extractAndUploadImage(
+              imageResult,
+              `${project.id}/keyframes/${runId}/scene-${scene.scene_index}-end`,
+              "keyframe",
+              { run_id: runId, scene_id: scene.id, keyframe_type: "end", scene_index: scene.scene_index }
+            );
+
+            if (assetId) break;
+            if (attempt === 0) {
+              await log("warn", `No image data for keyframe K${scene.scene_index}, retrying...`);
+              await new Promise(r => setTimeout(r, 2000));
+            }
+          }
 
           if (assetId) {
             await log("info", `Keyframe K${scene.scene_index} saved`);
@@ -626,7 +635,7 @@ ${scene.end_keyframe_prompt}
               prevKeyframeUrl = urlData.publicUrl;
             }
           } else {
-            await log("warn", `No image data for keyframe K${scene.scene_index}`);
+            await log("warn", `No image data for keyframe K${scene.scene_index} after retry`);
           }
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           generatedCount++;
@@ -811,9 +820,9 @@ ${scene.end_keyframe_prompt}
           });
         }
 
-        // Poll fal.ai for results
-        const POLL_INTERVAL_MS = 10000;
-        const MAX_POLLS = 60; // 10 minutes
+        // Short inline poll (~2 min), then client-side poll-pika takes over
+        const POLL_INTERVAL_MS = 15000;
+        const MAX_POLLS = 8; // ~2 minutes
         for (let poll = 0; poll < MAX_POLLS; poll++) {
           await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
           const currentStatus = await checkRunStatus();
@@ -870,9 +879,8 @@ ${scene.end_keyframe_prompt}
           await updateRun({ progress_pct: 40 + Math.round(30 * (poll / MAX_POLLS)) });
         }
 
-        await log("warn", "Pika polling timed out after 10 minutes");
-        await updateRun({ status: "failed", error_message: "Pika polling timed out" });
-        return json({ status: "pika_timeout" });
+        await log("info", "Inline Pika polling timed out — client-side poll-pika will continue.");
+        return json({ status: "pika_polling_timeout", run_id: runId });
       }
 
       // ══════════════════════════════════════════════════════
