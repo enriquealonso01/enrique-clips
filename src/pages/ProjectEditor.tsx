@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusBadge } from "@/components/StatusBadge";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Project = Tables<"projects">;
@@ -30,6 +30,7 @@ export default function ProjectEditor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Partial<Project>>({});
+  const [customKlingModel, setCustomKlingModel] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -57,8 +58,15 @@ export default function ProjectEditor() {
     enabled: !!projectId,
   });
 
+  const KLING_PRESETS = ["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"];
+
   useEffect(() => {
-    if (project) setForm(project);
+    if (project) {
+      setForm(project);
+      if (project.kling_model_name && !KLING_PRESETS.includes(project.kling_model_name)) {
+        setCustomKlingModel(true);
+      }
+    }
   }, [project]);
 
   const updateProject = useMutation({
@@ -198,8 +206,16 @@ export default function ProjectEditor() {
                 <Label>Model</Label>
                 <div className="flex gap-2">
                   <Select
-                    value={["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"].includes(form.kling_model_name || "") ? form.kling_model_name : "__custom__"}
-                    onValueChange={(v) => { if (v !== "__custom__") update("kling_model_name", v); else update("kling_model_name", ""); }}
+                    value={customKlingModel ? "__custom__" : (form.kling_model_name || "kling-v1")}
+                    onValueChange={(v) => {
+                      if (v === "__custom__") {
+                        setCustomKlingModel(true);
+                        update("kling_model_name", "");
+                      } else {
+                        setCustomKlingModel(false);
+                        update("kling_model_name", v);
+                      }
+                    }}
                   >
                     <SelectTrigger className="flex-1"><SelectValue placeholder="Select or type custom" /></SelectTrigger>
                     <SelectContent>
@@ -215,12 +231,13 @@ export default function ProjectEditor() {
                     </SelectContent>
                   </Select>
                 </div>
-                {!["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"].includes(form.kling_model_name || "kling-v1") && (
+                {customKlingModel && (
                   <Input
                     value={form.kling_model_name || ""}
                     onChange={(e) => update("kling_model_name", e.target.value)}
                     placeholder="Enter custom model name, e.g. kling-v3-pro"
                     className="mt-1"
+                    autoFocus
                   />
                 )}
               </div>
