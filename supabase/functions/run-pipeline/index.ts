@@ -579,7 +579,14 @@ Only the natural environment exists at the start. Human elements may ONLY appear
 
       // Generate keyframes for pending scenes (may not finish all — that's OK, we'll re-chain)
       let generatedCount = 0;
+      const stepStartTime = Date.now();
       for (const scene of pendingScenes) {
+        // Time-budget guard: if we've used >100s, re-chain to avoid edge function timeout
+        if (Date.now() - stepStartTime > 100_000) {
+          await log("info", `Time budget reached after ${generatedCount} keyframes. Re-chaining for remaining ${pendingScenes.length - generatedCount} scenes.`);
+          chainNextStep();
+          return json({ status: "keyframes_time_budget", generated: generatedCount, remaining: pendingScenes.length - generatedCount });
+        }
         const status = await checkRunStatus();
         if (status !== "running") {
           await log("info", "Run halted during keyframe generation");
@@ -781,7 +788,12 @@ ${scene.end_keyframe_prompt}
 
           await log("info", `Vidu: submitting ${pairs.length} clip(s), each with start→end frame, 5s each`);
 
+          const viduStartTime = Date.now();
           for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+            if (Date.now() - viduStartTime > 100_000) {
+              await log("info", `Time budget reached after ${clipIdx} Vidu submissions. Re-chaining.`);
+              break;
+            }
             const pair = pairs[clipIdx];
             const falInput: Record<string, any> = {
               image_url: pair.start,
@@ -831,7 +843,12 @@ ${scene.end_keyframe_prompt}
 
           await log("info", `Pika i2v: submitting ${imageItems.length} clip(s), 5s each`);
 
+          const pikaI2vStartTime = Date.now();
           for (let clipIdx = 0; clipIdx < imageItems.length; clipIdx++) {
+            if (Date.now() - pikaI2vStartTime > 100_000) {
+              await log("info", `Time budget reached after ${clipIdx} Pika i2v submissions. Re-chaining.`);
+              break;
+            }
             const item = imageItems[clipIdx];
             const falInput: Record<string, any> = {
               image_url: item.url,
@@ -885,7 +902,12 @@ ${scene.end_keyframe_prompt}
 
           await log("info", `Pika pikaframes: submitting ${pairs.length} clip(s), each with 2 keyframes (start→end, 5s each)`);
 
+          const pikaFramesStartTime = Date.now();
           for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+            if (Date.now() - pikaFramesStartTime > 100_000) {
+              await log("info", `Time budget reached after ${clipIdx} Pikaframes submissions. Re-chaining.`);
+              break;
+            }
             const pair = pairs[clipIdx];
             const pikaInput: Record<string, any> = {
               image_urls: [pair.start, pair.end],
