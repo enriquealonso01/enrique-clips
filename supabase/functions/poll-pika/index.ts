@@ -58,24 +58,20 @@ Deno.serve(async (req) => {
 
     fal.config({ credentials: FAL_KEY });
 
-    // Find pending clip assets with pika request IDs
-    const { data: pendingAssets } = await supabase
+    // Find pending clip assets with pika request IDs (handles both old batch- and new clip- naming)
+    const { data: allClipAssets } = await supabase
       .from("assets")
       .select("*")
       .eq("run_id", runId)
-      .eq("type", "clip")
-      .like("supabase_path", `pending-pika/${runId}/%`);
+      .eq("type", "clip");
 
-    if (!pendingAssets || pendingAssets.length === 0) {
-      const { data: completedClips } = await supabase
-        .from("assets")
-        .select("id")
-        .eq("run_id", runId)
-        .eq("type", "clip")
-        .not("supabase_path", "like", "pending-%");
-      if (completedClips && completedClips.length > 0) {
-        return json({ status: "pika_complete" });
-      }
+    // Filter to pika assets only
+    const pendingAssets = (allClipAssets || []).filter(a => {
+      const meta = a.metadata as any;
+      return meta?.pika_request_id;
+    });
+
+    if (pendingAssets.length === 0) {
       return json({ status: "no_pending_tasks" });
     }
 
