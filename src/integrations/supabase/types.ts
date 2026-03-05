@@ -62,6 +62,71 @@ export type Database = {
           },
         ]
       }
+      overlays: {
+        Row: {
+          bg_color: string | null
+          content_mode: string
+          content_text: string | null
+          created_at: string
+          end_pct: number
+          font_color: string | null
+          font_size: number | null
+          id: string
+          image_path: string | null
+          overlay_type: string
+          position: string
+          project_id: string
+          sort_order: number
+          start_pct: number
+          style: string
+          z_index: number
+        }
+        Insert: {
+          bg_color?: string | null
+          content_mode?: string
+          content_text?: string | null
+          created_at?: string
+          end_pct?: number
+          font_color?: string | null
+          font_size?: number | null
+          id?: string
+          image_path?: string | null
+          overlay_type?: string
+          position?: string
+          project_id: string
+          sort_order?: number
+          start_pct?: number
+          style?: string
+          z_index?: number
+        }
+        Update: {
+          bg_color?: string | null
+          content_mode?: string
+          content_text?: string | null
+          created_at?: string
+          end_pct?: number
+          font_color?: string | null
+          font_size?: number | null
+          id?: string
+          image_path?: string | null
+          overlay_type?: string
+          position?: string
+          project_id?: string
+          sort_order?: number
+          start_pct?: number
+          style?: string
+          z_index?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "overlays_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           aspect_ratio: string

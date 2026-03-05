@@ -8,6 +8,20 @@ const corsHeaders = {
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
+// Map overlay position to FFmpeg drawtext x/y
+function getFFmpegPosition(position: string, fontSize: number): string {
+  const pad = 20;
+  const map: Record<string, string> = {
+    top_left: `x=${pad}:y=${pad}`,
+    top_center: `x=(w-text_w)/2:y=${pad}`,
+    top_right: `x=w-text_w-${pad}:y=${pad}`,
+    center: `x=(w-text_w)/2:y=(h-text_h)/2`,
+    bottom_left: `x=${pad}:y=h-text_h-${pad}`,
+    bottom_center: `x=(w-text_w)/2:y=h-text_h-${pad}`,
+    bottom_right: `x=w-text_w-${pad}:y=h-text_h-${pad}`,
+  };
+  return map[position] || map.bottom_center;
+}
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1296,6 +1310,154 @@ Deno.serve(async (req) => {
             } catch (muxErr) {
               await log("warn", `Music mux failed: ${muxErr.message} — continuing without music.`);
             }
+          }
+
+          // ── Apply overlays via fal.ai FFmpeg API ──
+          try {
+            const { data: overlays } = await supabase
+              .from("overlays")
+              .select("*")
+              .eq("project_id", project.id)
+              .order("sort_order");
+
+            if (overlays && overlays.length > 0) {
+              await log("info", `Applying ${overlays.length} overlay(s) via FFmpeg...`);
+              
+              const FAL_KEY = Deno.env.get("FAL_KEY");
+              if (!FAL_KEY) {
+                await log("warn", "FAL_KEY not configured — skipping overlay rendering.");
+              } else {
+                // 1. Upload the current final video to get a URL for fal.ai
+                const tempOverlayPath = `${project.id}/final/${runId}/pre-overlay.mp4`;
+                await supabase.storage
+                  .from("project-assets")
+                  .upload(tempOverlayPath, finalVideo, { contentType: "video/mp4", upsert: true });
+                const { data: tempUrl } = supabase.storage.from("project-assets").getPublicUrl(tempOverlayPath);
+
+                const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
+
+                // 2. Build FFmpeg drawtext filter for text overlays
+                const textOverlays = overlays.filter((o: any) => o.overlay_type === "text" && o.content_text);
+                const imageOverlays = overlays.filter((o: any) => o.overlay_type === "image" && o.image_path);
+
+                // Build drawtext filters
+                const drawFilters: string[] = [];
+                for (const ov of textOverlays) {
+                  const startSec = Math.round((ov.start_pct / 100) * videoDurationSec);
+                  const endSec = Math.round((ov.end_pct / 100) * videoDurationSec);
+                  const pos = getFFmpegPosition(ov.position, ov.font_size || 48);
+                  const escapedText = (ov.content_text || "").replace(/'/g, "'\\''").replace(/:/g, "\\:");
+                  
+                  // Build a background box + text
+                  const bgColor = ov.bg_color || "black@0.5";
+                  const fontColor = (ov.font_color || "#FFFFFF").replace("#", "0x");
+                  
+                  drawFilters.push(
+                    `drawtext=text='${escapedText}':fontsize=${ov.font_size || 48}:fontcolor=${fontColor}:${pos}:box=1:boxcolor=${bgColor}:boxborderw=10:enable='between(t,${startSec},${endSec})'`
+                  );
+                }
+
+                if (drawFilters.length > 0 || imageOverlays.length > 0) {
+                  // Use fal.ai FFmpeg compose API
+                  const tracks: any[] = [
+                    {
+                      id: "main",
+                      type: "video",
+                      keyframes: [{ url: tempUrl.publicUrl, timestamp: 0, duration: videoDurationSec }],
+                    },
+                  ];
+
+                  // Add image overlay tracks
+                  for (const imgOv of imageOverlays) {
+                    const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
+                    const startSec = Math.round((imgOv.start_pct / 100) * videoDurationSec);
+                    const duration = Math.round(((imgOv.end_pct - imgOv.start_pct) / 100) * videoDurationSec);
+                    tracks.push({
+                      id: `overlay_img_${imgOv.id.slice(0, 8)}`,
+                      type: "overlay",
+                      keyframes: [{
+                        url: imgUrl.publicUrl,
+                        timestamp: startSec,
+                        duration: duration,
+                      }],
+                    });
+                  }
+
+                  try {
+                    // Call fal.ai FFmpeg compose
+                    const falResp = await withRetry(() =>
+                      fetch("https://queue.fal.run/fal-ai/ffmpeg-api/compose", {
+                        method: "POST",
+                        headers: {
+                          Authorization: `Key ${FAL_KEY}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          tracks,
+                          ...(drawFilters.length > 0 ? { video_filters: drawFilters.join(",") } : {}),
+                        }),
+                      })
+                    );
+
+                    if (falResp.ok) {
+                      const falResult = await falResp.json();
+                      
+                      // If queued, poll for result
+                      if (falResult.request_id) {
+                        let resultUrl: string | null = null;
+                        for (let poll = 0; poll < 60; poll++) {
+                          await new Promise(r => setTimeout(r, 5000));
+                          const statusResp = await fetch(
+                            `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}/status`,
+                            { headers: { Authorization: `Key ${FAL_KEY}` } }
+                          );
+                          const statusData = await statusResp.json();
+                          if (statusData.status === "COMPLETED") {
+                            // Fetch the result
+                            const resultResp = await fetch(
+                              `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}`,
+                              { headers: { Authorization: `Key ${FAL_KEY}` } }
+                            );
+                            const resultData = await resultResp.json();
+                            resultUrl = resultData.video_url;
+                            break;
+                          } else if (statusData.status === "FAILED") {
+                            throw new Error("FFmpeg compose failed: " + JSON.stringify(statusData));
+                          }
+                        }
+
+                        if (resultUrl) {
+                          const overlaidResp = await fetch(resultUrl);
+                          if (overlaidResp.ok) {
+                            finalVideo = new Uint8Array(await overlaidResp.arrayBuffer());
+                            await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                          }
+                        } else {
+                          await log("warn", "FFmpeg compose timed out — continuing without overlays.");
+                        }
+                      } else if (falResult.video_url) {
+                        // Synchronous result
+                        const overlaidResp = await fetch(falResult.video_url);
+                        if (overlaidResp.ok) {
+                          finalVideo = new Uint8Array(await overlaidResp.arrayBuffer());
+                          await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                        }
+                      }
+                    } else {
+                      const errText = await falResp.text();
+                      await log("warn", `fal.ai FFmpeg compose failed (${falResp.status}): ${errText} — continuing without overlays.`);
+                    }
+                  } catch (composeErr) {
+                    await log("warn", `Overlay compose failed: ${composeErr.message} — continuing without overlays.`);
+                  }
+                }
+
+                // Clean up temp file
+                await supabase.storage.from("project-assets").remove([tempOverlayPath]);
+              }
+            }
+          } catch (overlayErr) {
+            await log("warn", `Overlay step failed: ${overlayErr.message} — continuing without overlays.`);
           }
 
           const finalPath = `${project.id}/final/${runId}/final-video.mp4`;
