@@ -57,7 +57,9 @@ Deno.serve(async (req) => {
     tools?: any[],
     tool_choice?: any,
     model?: string,
-    modalities?: string[]
+    modalities?: string[],
+    timeoutMs = 120000,
+    retries = 1
   ) {
     const body: any = {
       model: model || "google/gemini-3-flash-preview",
@@ -68,20 +70,36 @@ Deno.serve(async (req) => {
     if (tool_choice) body.tool_choice = tool_choice;
     if (modalities) body.modalities = modalities;
 
-    const resp = await fetch(AI_GATEWAY, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const resp = await fetch(AI_GATEWAY, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
 
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`AI gateway error ${resp.status}: ${errText}`);
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`AI gateway error ${resp.status}: ${errText}`);
+        }
+        return await resp.json();
+      } catch (err) {
+        clearTimeout(timer);
+        if (attempt < retries) {
+          await log("warn", `AI call attempt ${attempt + 1} failed (${err.message}), retrying...`);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        throw err;
+      }
     }
-    return await resp.json();
   }
 
   // Helper: extract image from AI response, upload to storage, create asset
