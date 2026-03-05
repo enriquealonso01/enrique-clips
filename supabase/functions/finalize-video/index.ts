@@ -1243,6 +1243,19 @@ Deno.serve(async (req) => {
 
     // ===== STEP 4: STITCH =====
     if (run.current_step === "stitch") {
+      // Atomic lock: only the first caller proceeds. Use progress_pct as CAS guard.
+      const { data: lockRows } = await supabase
+        .from("runs")
+        .update({ progress_pct: 55 })
+        .eq("id", runId)
+        .eq("current_step", "stitch")
+        .eq("progress_pct", run.progress_pct)
+        .select("id");
+      if (!lockRows || lockRows.length === 0) {
+        await log("info", "Stitch step already claimed by another execution — skipping.");
+        return json({ status: "already_processing" });
+      }
+
       await log("info", "Step 4/7: Stitching video clips...");
       try {
         // Fetch scenes in order, then match clips by scene_id to guarantee correct ordering
