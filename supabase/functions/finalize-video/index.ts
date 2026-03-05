@@ -8,10 +8,18 @@ const corsHeaders = {
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
+// Compute scale factor based on video resolution relative to 540p baseline
+function getResolutionScale(pikaResolution: string): number {
+  // Overlay values are authored for 540p. Scale proportionally for higher resolutions.
+  const heightMap: Record<string, number> = { "540p": 540, "720p": 720, "1080p": 1080 };
+  const targetHeight = heightMap[pikaResolution] || 540;
+  return targetHeight / 540;
+}
+
 // Map overlay position to FFmpeg drawtext x/y
-function getFFmpegPosition(position: string, fontSize: number): string {
-  const pad = 20;
-  const topPad = 160;
+function getFFmpegPosition(position: string, fontSize: number, scale = 1): string {
+  const pad = Math.round(20 * scale);
+  const topPad = Math.round(160 * scale);
   const map: Record<string, string> = {
     top_left: `x=${pad}:y=${topPad}`,
     top_center: `x=(w-text_w)/2:y=${topPad}`,
@@ -25,9 +33,9 @@ function getFFmpegPosition(position: string, fontSize: number): string {
 }
 
 // Map overlay position to FFmpeg overlay filter x:y expressions
-function getFFmpegOverlayPosition(position: string): string {
-  const pad = 20;
-  const topPad = 160;
+function getFFmpegOverlayPosition(position: string, scale = 1): string {
+  const pad = Math.round(20 * scale);
+  const topPad = Math.round(160 * scale);
   const map: Record<string, string> = {
     top_left: `x=${pad}:y=${topPad}`,
     top_center: `x=(main_w-overlay_w)/2:y=${topPad}`,
@@ -1563,6 +1571,7 @@ Deno.serve(async (req) => {
             const imageOverlays = (overlays || []).filter((o: any) => o.overlay_type === "image" && o.image_path);
             const textOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_text);
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
+            const resScale = getResolutionScale((project as any).pika_resolution || "540p");
             const needsPostProd = hasOverlays || hasSelectedTrack;
 
             const tempCleanupPaths: string[] = [];
@@ -1616,7 +1625,7 @@ Deno.serve(async (req) => {
                 const outLabel = `v${filterIdx}`;
 
                 // Position mapping for image overlays
-                const pos = getFFmpegOverlayPosition(imgOv.position);
+                const pos = getFFmpegOverlayPosition(imgOv.position, resScale);
 
                 filterParts.push(
                   `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
@@ -1628,14 +1637,14 @@ Deno.serve(async (req) => {
               // Text overlays: use drawtext filter (no external files needed)
               for (const textOv of textOverlays) {
                 const text = (textOv.content_text || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
-                const fontSize = textOv.font_size || 48;
+                const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
                 const outLabel = `v${filterIdx}`;
 
                 // Position mapping for drawtext
-                const posStr = getFFmpegPosition(textOv.position, fontSize);
+                const posStr = getFFmpegPosition(textOv.position, fontSize, resScale);
 
                 // Build drawtext with background box
                 const bgColor = textOv.bg_color || "rgba(0,0,0,0.5)";
@@ -1650,8 +1659,10 @@ Deno.serve(async (req) => {
                   boxColor = `0x${r}${g}${b}@${a}`;
                 }
 
+                const scaledBoxBorder = Math.round(10 * resScale);
+
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=10:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
