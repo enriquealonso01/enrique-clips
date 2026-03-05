@@ -1,0 +1,1 @@
+ALTER TABLE public.overlays ADD COLUMN content_prompt text;
