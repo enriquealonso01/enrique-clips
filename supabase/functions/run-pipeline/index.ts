@@ -755,8 +755,66 @@ ${scene.end_keyframe_prompt}
 
         const falRequestIds: string[] = [];
 
-        if (videoGenerator === "vidu" || pikaModel === "image-to-video") {
-          // ── Single-image-to-video path (Vidu or Pika i2v) ──
+        if (videoGenerator === "vidu") {
+          // ── Vidu: consecutive pairs with start + end frame ──
+          const imageUrls: string[] = [];
+          if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
+          for (const scene of scenes) {
+            if (sceneKeyframes[scene.scene_index]) imageUrls.push(sceneKeyframes[scene.scene_index]);
+          }
+
+          if (imageUrls.length < 2) {
+            await log("error", "Vidu needs at least 2 keyframe images for start→end transitions");
+            await updateRun({ status: "failed", error_message: "Not enough keyframes for Vidu" });
+            return json({ error: "Not enough keyframes" }, 500);
+          }
+
+          const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
+          for (let i = 0; i < imageUrls.length - 1; i++) {
+            const scene = scenes[i] || scenes[scenes.length - 1];
+            pairs.push({
+              start: imageUrls[i], end: imageUrls[i + 1],
+              sceneIndex: scene.scene_index,
+              prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
+            });
+          }
+
+          await log("info", `Vidu: submitting ${pairs.length} clip(s), each with start→end frame, 5s each`);
+
+          for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+            const pair = pairs[clipIdx];
+            const falInput: Record<string, any> = {
+              image_url: pair.start,
+              end_image_url: pair.end,
+              prompt: pair.prompt,
+              duration: 5,
+              resolution: falResolution,
+              audio: enableAudio,
+            };
+
+            await log("debug", `Vidu clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
+              start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
+              end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
+            });
+
+            try {
+              const { request_id } = await fal.queue.submit(falEndpoint, { input: falInput });
+              if (!request_id) { await log("error", `No request_id for Vidu clip ${clipIdx + 1}`); continue; }
+              falRequestIds.push(request_id);
+              await log("info", `Vidu clip ${clipIdx + 1} submitted: ${request_id}`);
+
+              const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
+              await supabase.from("assets").insert({
+                supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
+                type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
+                metadata: { pika_request_id: request_id, fal_endpoint: falEndpoint, clip_index: clipIdx, scene_index: pair.sceneIndex, status: "submitted", pika_model: "vidu-q3-turbo" },
+              });
+            } catch (submitErr) {
+              await log("error", `Vidu clip ${clipIdx + 1} submit error: ${submitErr.message}`);
+            }
+          }
+        } else if (pikaModel === "image-to-video") {
+          // ── Pika Image-to-Video: single image per clip ──
           const imageItems: Array<{ url: string; sceneIndex: number; prompt: string }> = [];
           if (runInitialImageUrl) {
             imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || project.series_prompt || "cinematic motion" });
@@ -771,46 +829,34 @@ ${scene.end_keyframe_prompt}
             }
           }
 
-          await log("info", `${videoGenerator} i2v: submitting ${imageItems.length} clip(s), 5s each`);
+          await log("info", `Pika i2v: submitting ${imageItems.length} clip(s), 5s each`);
 
           for (let clipIdx = 0; clipIdx < imageItems.length; clipIdx++) {
             const item = imageItems[clipIdx];
-            let falInput: Record<string, any>;
+            const falInput: Record<string, any> = {
+              image_url: item.url,
+              prompt: item.prompt,
+              negative_prompt: negPrompt,
+              resolution: falResolution,
+              duration: "5",
+            };
 
-            if (videoGenerator === "vidu") {
-              falInput = {
-                image_url: item.url,
-                prompt: item.prompt,
-                duration: 5,
-                resolution: falResolution,
-                audio: enableAudio,
-              };
-            } else {
-              falInput = {
-                image_url: item.url,
-                prompt: item.prompt,
-                negative_prompt: negPrompt,
-                resolution: falResolution,
-                duration: "5",
-              };
-            }
-
-            await log("debug", `${videoGenerator} i2v clip ${clipIdx + 1}/${imageItems.length} (scene ${item.sceneIndex})`);
+            await log("debug", `Pika i2v clip ${clipIdx + 1}/${imageItems.length} (scene ${item.sceneIndex})`);
 
             try {
               const { request_id } = await fal.queue.submit(falEndpoint, { input: falInput });
               if (!request_id) { await log("error", `No request_id for i2v clip ${clipIdx + 1}`); continue; }
               falRequestIds.push(request_id);
-              await log("info", `${videoGenerator} i2v clip ${clipIdx + 1} submitted: ${request_id}`);
+              await log("info", `Pika i2v clip ${clipIdx + 1} submitted: ${request_id}`);
 
               const sceneForAsset = scenes.find(s => s.scene_index === item.sceneIndex) || scenes[0];
               await supabase.from("assets").insert({
                 supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
                 type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
-                metadata: { pika_request_id: request_id, fal_endpoint: falEndpoint, clip_index: clipIdx, scene_index: item.sceneIndex, status: "submitted", pika_model: videoGenerator === "vidu" ? "vidu-q3-turbo" : "image-to-video" },
+                metadata: { pika_request_id: request_id, fal_endpoint: falEndpoint, clip_index: clipIdx, scene_index: item.sceneIndex, status: "submitted", pika_model: "image-to-video" },
               });
             } catch (submitErr) {
-              await log("error", `${videoGenerator} i2v clip ${clipIdx + 1} submit error: ${submitErr.message}`);
+              await log("error", `Pika i2v clip ${clipIdx + 1} submit error: ${submitErr.message}`);
             }
           }
         } else {
