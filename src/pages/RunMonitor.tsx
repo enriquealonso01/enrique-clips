@@ -37,7 +37,6 @@ export default function RunMonitor() {
   const isActive = run?.status === "running" || run?.status === "queued" || run?.status === "paused";
   const isKlingStep = run?.current_step === "kling" && run?.status === "running";
   const isPikaPolling = run?.current_step === "kling" && run?.status === "running";
-  const isStitchStep = (run?.current_step === "stitch" || run?.current_step === "metadata" || run?.current_step === "publish") && run?.status === "running";
 
   // Auto-poll Kling tasks when in kling step
   useEffect(() => {
@@ -87,30 +86,6 @@ export default function RunMonitor() {
     return () => clearInterval(interval);
   }, [isPikaPolling, runId, queryClient]);
 
-  // Auto-invoke finalize-video when stitch/metadata/publish step is reached
-  useEffect(() => {
-    if (!isStitchStep || !runId) return;
-    let cancelled = false;
-
-    const finalize = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("finalize-video", {
-          body: { run_id: runId },
-        });
-        if (!cancelled) {
-          queryClient.invalidateQueries({ queryKey: ["run", runId] });
-          queryClient.invalidateQueries({ queryKey: ["scenes", runId] });
-          queryClient.invalidateQueries({ queryKey: ["run-logs", runId] });
-          queryClient.invalidateQueries({ queryKey: ["publish-jobs", runId] });
-        }
-      } catch (err) {
-        console.error("Finalize-video error:", err);
-      }
-    };
-
-    finalize();
-    return () => { cancelled = true; };
-  }, [isStitchStep, runId, queryClient]);
 
   const { data: scenes } = useQuery({
     queryKey: ["scenes", runId],
