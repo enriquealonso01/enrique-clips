@@ -94,8 +94,14 @@ Deno.serve(async (req) => {
           `https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}/status`,
           { headers: { Authorization: `Key ${FAL_KEY}` } }
         );
-        if (!statusResp.ok) { allDone = false; continue; }
-        const statusData = await statusResp.json();
+        const statusText = await statusResp.text();
+        if (!statusResp.ok) { 
+          await log("warn", `Pika status check failed for ${reqId}: ${statusResp.status} ${statusText}`);
+          allDone = false; 
+          continue; 
+        }
+        let statusData: any;
+        try { statusData = JSON.parse(statusText); } catch { allDone = false; continue; }
 
         if (statusData.status === "COMPLETED") {
           const resultResp = await fetch(
@@ -104,6 +110,7 @@ Deno.serve(async (req) => {
           );
           if (resultResp.ok) {
             const resultData = await resultResp.json();
+            await log("debug", `Pika result for ${reqId}`, resultData);
             const videoUrl = resultData.video?.url;
             if (videoUrl) {
               const videoResp = await fetch(videoUrl);
