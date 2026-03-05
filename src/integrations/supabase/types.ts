@@ -74,6 +74,7 @@ export type Database = {
           kling_model_name: string
           kling_sound: boolean
           negative_prompt: string | null
+          pika_resolution: string
           posting_cron: string | null
           posting_frequency_type: Database["public"]["Enums"]["posting_frequency"]
           posting_interval_hours: number | null
@@ -90,6 +91,7 @@ export type Database = {
           uploadpost_api_key_configured: boolean
           uploadpost_api_key_encrypted: string | null
           uploadpost_profile_username: string | null
+          video_generator: Database["public"]["Enums"]["video_generator"]
         }
         Insert: {
           aspect_ratio?: string
@@ -102,6 +104,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           negative_prompt?: string | null
+          pika_resolution?: string
           posting_cron?: string | null
           posting_frequency_type?: Database["public"]["Enums"]["posting_frequency"]
           posting_interval_hours?: number | null
@@ -118,6 +121,7 @@ export type Database = {
           uploadpost_api_key_configured?: boolean
           uploadpost_api_key_encrypted?: string | null
           uploadpost_profile_username?: string | null
+          video_generator?: Database["public"]["Enums"]["video_generator"]
         }
         Update: {
           aspect_ratio?: string
@@ -130,6 +134,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           negative_prompt?: string | null
+          pika_resolution?: string
           posting_cron?: string | null
           posting_frequency_type?: Database["public"]["Enums"]["posting_frequency"]
           posting_interval_hours?: number | null
@@ -146,6 +151,7 @@ export type Database = {
           uploadpost_api_key_configured?: boolean
           uploadpost_api_key_encrypted?: string | null
           uploadpost_profile_username?: string | null
+          video_generator?: Database["public"]["Enums"]["video_generator"]
         }
         Relationships: [
           {
@@ -388,6 +394,7 @@ export type Database = {
         | "clip_requested"
         | "clip_ready"
         | "failed"
+      video_generator: "kling" | "pika"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -565,6 +572,7 @@ export const Constants = {
         "clip_ready",
         "failed",
       ],
+      video_generator: ["kling", "pika"],
     },
   },
 } as const
