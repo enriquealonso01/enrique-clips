@@ -1,71 +1,36 @@
 
 
-# Phase 2: Edge Functions, Image Upload, Run Triggering & Wiring
+## Diagnosis: Edge Function Wall-Clock Timeout
 
-Phase 1 delivered the UI shell and database. Phase 2 connects everything: functional image uploads, run creation, project control API endpoints, and real-time run monitoring.
+The run got stuck generating keyframe K6 because the edge function hit its **wall-clock timeout** (~150 seconds). The keyframe step started at 15:06:00 and reached K6 at 15:09:05 (3+ minutes). Each keyframe takes ~30-40 seconds via the AI gateway, and with 9 scenes, the total sequential time (~5-6 minutes) far exceeds the edge function limit.
 
-## 1. Initial Image Upload (Image Tab)
-Wire the "Choose File" button in the Project Editor Image tab to actually upload images to the `project-assets` storage bucket.
+K1 through K5 were saved successfully. K6 generation started but the function was killed before it could complete, leaving scenes 6-9 with `pending` status and no error logged.
 
-- File input with drag-and-drop support
-- Upload to `project-assets/{projectId}/initial-image/{filename}`
-- Create an `assets` record with `type = 'initial_image'`
-- Update `projects.initial_asset_id` to point to the new asset
-- Show preview of uploaded image with replace/remove buttons
-- Display loading state during upload
+## Root Cause
 
-## 2. Run Now / Pause / Resume / Stop Wiring
-Connect the action buttons on the Projects List and Run Monitor pages.
+The keyframe loop processes **all** pending scenes in a single function invocation. There is no mid-step self-chaining or time-budget check.
 
-- **Run Now**: Insert a new `runs` row with `status = 'queued'`, navigate to Run Monitor
-- **Pause**: Update run `status` to `'paused'`
-- **Resume**: Update run `status` back to `'running'`
-- **Stop**: Update run `status` to `'stopped'`
-- Add confirmation dialogs for Stop
-- Disable buttons based on current run state (e.g., can't pause a queued run)
+## Plan
 
-## 3. Project Control API (Edge Functions)
-Create edge functions for external automation, secured by project control tokens.
+### 1. Add a time-budget guard to the keyframe loop
 
-- **`project-control`** edge function handling routes:
-  - `POST /trigger` — creates a new run for the project
-  - `POST /pause` — pauses the active run
-  - `POST /resume` — resumes a paused run
-  - `POST /stop` — stops the active run
-  - `GET /status` — returns current run status
-- Token validation: hash the incoming `X-Project-Token` header and compare against `project_control_token_hash`
-- Set `verify_jwt = false` in config.toml for this function
+Inside the `for (const scene of pendingScenes)` loop in `run-pipeline/index.ts`, add a check at the top of each iteration:
 
-## 4. Upload-Post Webhook Receiver (Edge Function)
-Create an edge function to receive webhook callbacks from Upload-Post.
+- Track `const startTime = Date.now()` before the loop
+- Before each keyframe generation, check if `Date.now() - startTime > 100_000` (100 seconds used, leaving ~50s buffer)
+- If the budget is exceeded, log "Time budget reached, re-chaining for remaining keyframes", call `chainNextStep()`, and return early
+- The next invocation will pick up where it left off thanks to the existing resumability logic (it checks `doneSceneIds`)
 
-- **`uploadpost-webhook`** edge function
-- Receives POST with platform results payload
-- Updates `publish_jobs.platform_results` and `publish_jobs.status`
-- Set `verify_jwt = false` in config.toml
+### 2. Apply the same pattern to the kling/pika/vidu submission loop
 
-## 5. Runs History on Project Detail
-Add a "Runs" section to the Project Editor showing past runs.
+The video submission step also iterates over multiple scenes. Add the same time-budget guard there to prevent the same issue when submitting many clips.
 
-- List of recent runs with status badges, timestamps, and links to Run Monitor
-- Visible below or as a tab in the Project Editor
+### Changes
 
-## 6. Realtime for Run Monitor
-Enable realtime on `runs`, `scenes`, and `run_logs` tables so the Run Monitor page auto-updates without polling.
+**File: `supabase/functions/run-pipeline/index.ts`**
+- Add `const stepStartTime = Date.now();` before the keyframe loop (around line 581)
+- Add a time check at the top of the loop body (after line 582): if elapsed > 100s, log + chain + return
+- Add the same pattern in the kling step loop
 
-- Add tables to `supabase_realtime` publication
-- Replace `refetchInterval` polling with Supabase realtime subscriptions
-- Live log streaming and progress updates
-
-## 7. API Key Secure Storage
-Store API keys as project-level encrypted values rather than plaintext in the projects table.
-
-- The Upload-Post API key in the Publish tab currently saves to `uploadpost_api_key_encrypted` as plaintext
-- Hash or encrypt before storing; show only configured/not-configured status
-- Global settings keys (OpenAI, Gemini, Kling) stored as Cloud secrets via the secrets tool
-
-## Technical Notes
-- Edge functions use CORS headers for browser access
-- Project control token is hashed with SHA-256 before comparison
-- Realtime migration: `ALTER PUBLICATION supabase_realtime ADD TABLE runs, scenes, run_logs;`
+This is a small, surgical fix. No database changes needed. The existing resumability logic already handles re-entry correctly.
 
