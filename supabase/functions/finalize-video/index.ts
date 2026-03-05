@@ -684,8 +684,9 @@ function concatenateMP4(files: Uint8Array[]): Uint8Array {
       }
     }
 
-    // Remove stco (replaced by co64)
-    const removeTypes = new Set(["stco"]);
+    // Remove stco (replaced by co64) and edts (contains elst with original
+    // clip duration that would truncate playback to just the first clip)
+    const removeTypes = new Set(["stco", "edts"]);
     const rebuilt = rebuildContainer(first.data, trak, replacements, removeTypes);
     rebuiltTraks.push(rebuilt);
   }
