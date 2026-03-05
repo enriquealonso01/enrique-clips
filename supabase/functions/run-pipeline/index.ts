@@ -452,7 +452,7 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
           .order("scene_index");
 
         if (scenes) {
-          // Gather keyframe asset URLs for each scene
+          // Gather keyframe asset URLs for each scene (end keyframes)
           const sceneKeyframes: Record<number, string> = {};
           for (const scene of scenes) {
             const { data: keyframeAssets } = await supabase
@@ -470,6 +470,21 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             }
           }
 
+          // Fetch initial image URL for this run (used as Scene 1's start image)
+          let runInitialImageUrl: string | null = null;
+          const { data: initAssets } = await supabase
+            .from("assets")
+            .select("supabase_path")
+            .eq("run_id", runId)
+            .eq("type", "initial_image")
+            .limit(1);
+          if (initAssets && initAssets.length > 0) {
+            const { data: urlData } = supabase.storage
+              .from("project-assets")
+              .getPublicUrl(initAssets[0].supabase_path);
+            runInitialImageUrl = urlData.publicUrl;
+          }
+
           // Determine if sound is supported (only v2.6+)
           const soundSupported = project.kling_model_name?.startsWith("kling-v2-6");
           // Map clip_duration_sec to valid Kling duration ("5" or "10")
@@ -481,9 +496,10 @@ ${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}`,
             const scene = scenes[i];
             await supabase.from("scenes").update({ status: "clip_requested" as const }).eq("id", scene.id);
 
-            const startImageUrl = i > 0 && sceneKeyframes[scenes[i - 1].scene_index]
-              ? sceneKeyframes[scenes[i - 1].scene_index]
-              : sceneKeyframes[scene.scene_index];
+            // Chain: scene 1 starts from initial image, subsequent scenes start from previous scene's end keyframe
+            const startImageUrl = i === 0
+              ? (runInitialImageUrl || sceneKeyframes[scene.scene_index])
+              : (sceneKeyframes[scenes[i - 1].scene_index] || runInitialImageUrl);
             const endImageUrl = sceneKeyframes[scene.scene_index];
 
             const klingBody: Record<string, any> = {
