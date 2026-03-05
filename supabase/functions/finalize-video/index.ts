@@ -22,6 +22,21 @@ function getFFmpegPosition(position: string, fontSize: number): string {
   };
   return map[position] || map.bottom_center;
 }
+
+// Map overlay position to FFmpeg overlay filter x:y expressions
+function getFFmpegOverlayPosition(position: string): string {
+  const pad = 20;
+  const map: Record<string, string> = {
+    top_left: `x=${pad}:y=${pad}`,
+    top_center: `x=(main_w-overlay_w)/2:y=${pad}`,
+    top_right: `x=main_w-overlay_w-${pad}:y=${pad}`,
+    center: `x=(main_w-overlay_w)/2:y=(main_h-overlay_h)/2`,
+    bottom_left: `x=${pad}:y=main_h-overlay_h-${pad}`,
+    bottom_center: `x=(main_w-overlay_w)/2:y=main_h-overlay_h-${pad}`,
+    bottom_right: `x=main_w-overlay_w-${pad}:y=main_h-overlay_h-${pad}`,
+  };
+  return map[position] || map.bottom_center;
+}
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1529,13 +1544,12 @@ Deno.serve(async (req) => {
             selectedTrackUrl = supabase.storage.from("project-assets").getPublicUrl(track.supabase_path).data.publicUrl;
           }
 
-          // ── TWO-STEP POST-PRODUCTION: Overlays first, then audio ──
-          // Step 1: Apply overlays via compose (overlay tracks only, NO audio)
-          // Step 2: Add audio via dedicated merge-audio-video endpoint
-          // Each step is independent — failure in one doesn't affect the other.
-          const FAL_KEY = Deno.env.get("FAL_KEY");
+          // ── POST-PRODUCTION via Rendi (raw FFmpeg commands) ──
+          // Single FFmpeg command handles overlays + audio in one pass.
+          // Fallback: local muxMP3IntoMP4 if Rendi fails for audio.
+          const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
+          const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
           const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
-          const videoDurationMs = videoDurationSec * 1000;
 
           try {
             const { data: overlays } = await supabase
@@ -1547,228 +1561,235 @@ Deno.serve(async (req) => {
             const imageOverlays = (overlays || []).filter((o: any) => o.overlay_type === "image" && o.image_path);
             const textOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_text);
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
+            const needsPostProd = hasOverlays || hasSelectedTrack;
 
             const tempCleanupPaths: string[] = [];
 
-            // ── STEP 1: OVERLAYS (compose, overlay tracks only — NO audio) ──
-            if (hasOverlays && FAL_KEY) {
-              await log("info", `Applying overlays: ${imageOverlays.length} image(s), ${textOverlays.length} text(s)`);
+            if (needsPostProd && RENDI_API_KEY) {
+              await log("info", `Rendi post-production: ${textOverlays.length} text overlay(s), ${imageOverlays.length} image overlay(s), music=${hasSelectedTrack ? "yes" : "no"}`);
 
-              // Upload stitched video for fal.ai access
-              const tempComposePath = `${project.id}/final/${runId}/pre-overlay-${Date.now()}.mp4`;
+              // Upload base video for Rendi access
+              const tempVideoPath = `${project.id}/final/${runId}/pre-rendi-${Date.now()}.mp4`;
               await supabase.storage
                 .from("project-assets")
-                .upload(tempComposePath, finalVideo, { contentType: "video/mp4", upsert: true });
-              tempCleanupPaths.push(tempComposePath);
-              const { data: tempUrl } = supabase.storage.from("project-assets").getPublicUrl(tempComposePath);
+                .upload(tempVideoPath, finalVideo, { contentType: "video/mp4", upsert: true });
+              tempCleanupPaths.push(tempVideoPath);
+              const { data: tempVideoUrl } = supabase.storage.from("project-assets").getPublicUrl(tempVideoPath);
 
-              const overlayTracks: any[] = [
-                {
-                  id: "main",
-                  type: "video",
-                  keyframes: [{ url: tempUrl.publicUrl, timestamp: 0, duration: videoDurationMs }],
-                },
-              ];
+              // Build input_files map and ffmpeg command
+              const inputFiles: Record<string, string> = {
+                in_video: tempVideoUrl.publicUrl,
+              };
 
-              // Render text overlays as SVG images
-              for (const textOv of textOverlays) {
-                try {
-                  const text = textOv.content_text || "";
-                  const fontSize = textOv.font_size || 48;
-                  const fontColor = textOv.font_color || "#FFFFFF";
-                  const bgColor = textOv.bg_color || "rgba(0,0,0,0.5)";
-
-                  const canvasW = project.aspect_ratio === "16:9" ? 1920 : 1080;
-                  const canvasH = project.aspect_ratio === "16:9" ? 1080 : 1920;
-                  const escapedText = text
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .replace(/"/g, "&quot;");
-
-                  let textAnchor = "middle";
-                  let svgX = canvasW / 2;
-                  let svgY = canvasH - 100;
-                  const pad = 40;
-
-                  if (textOv.position.includes("left")) { textAnchor = "start"; svgX = pad; }
-                  if (textOv.position.includes("right")) { textAnchor = "end"; svgX = canvasW - pad; }
-                  if (textOv.position.includes("top")) { svgY = pad + fontSize; }
-                  if (textOv.position === "center") { svgY = canvasH / 2; }
-                  if (textOv.position.includes("bottom")) { svgY = canvasH - pad; }
-
-                  const textWidth = Math.min(text.length * fontSize * 0.6, canvasW - pad * 2);
-                  const rectX = textAnchor === "middle" ? svgX - textWidth / 2 - 10 : (textAnchor === "start" ? svgX - 10 : svgX - textWidth - 10);
-                  const rectY = svgY - fontSize;
-                  const rectW = textWidth + 20;
-                  const rectH = fontSize * 1.4;
-
-                  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" preserveAspectRatio="xMinYMin slice">
-                    <defs>
-                      <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
-                        <feDropShadow dx="2" dy="2" stdDeviation="3" flood-color="black" flood-opacity="0.7"/>
-                      </filter>
-                    </defs>
-                    <rect width="${canvasW}" height="${canvasH}" fill="transparent" opacity="0"/>
-                    <rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" rx="8" fill="${bgColor}" />
-                    <text x="${svgX}" y="${svgY}" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-weight="bold" font-size="${fontSize}" fill="${fontColor}" text-anchor="${textAnchor}" dominant-baseline="auto">
-                      <tspan filter="url(#shadow)">${escapedText}</tspan>
-                    </text>
-                  </svg>`;
-
-                  const svgBytes = new TextEncoder().encode(svg);
-                  const svgPath = `${project.id}/final/${runId}/text-overlay-${textOv.id.slice(0, 8)}.svg`;
-                  await supabase.storage
-                    .from("project-assets")
-                    .upload(svgPath, svgBytes, { contentType: "image/svg+xml", upsert: true });
-                  tempCleanupPaths.push(svgPath);
-
-                  const { data: svgUrl } = supabase.storage.from("project-assets").getPublicUrl(svgPath);
-                  const startMs = Math.round((textOv.start_pct / 100) * videoDurationMs);
-                  const durationMs = Math.max(1000, Math.round(((textOv.end_pct - textOv.start_pct) / 100) * videoDurationMs));
-
-                  overlayTracks.push({
-                    id: `overlay_txt_${textOv.id.slice(0, 8)}`,
-                    type: "video",
-                    keyframes: [{ url: svgUrl.publicUrl, timestamp: startMs, duration: durationMs }],
-                  });
-                  await log("info", `Text overlay "${text.substring(0, 30)}..." rendered as SVG (${canvasW}x${canvasH}) at position=${textOv.position}.`);
-                } catch (txtErr) {
-                  await log("warn", `Failed to render text overlay: ${(txtErr as Error).message}`);
-                }
-              }
-
-              // Add image overlays
+              // Collect image overlay inputs
+              let imgInputIdx = 0;
               for (const imgOv of imageOverlays) {
                 const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
-                const startMs = Math.round((imgOv.start_pct / 100) * videoDurationMs);
-                const durationMs = Math.max(1000, Math.round(((imgOv.end_pct - imgOv.start_pct) / 100) * videoDurationMs));
-                overlayTracks.push({
-                  id: `overlay_img_${imgOv.id.slice(0, 8)}`,
-                  type: "video",
-                  keyframes: [{ url: imgUrl.publicUrl, timestamp: startMs, duration: durationMs }],
-                });
+                const key = `in_img${imgInputIdx}`;
+                inputFiles[key] = imgUrl.publicUrl;
+                imgInputIdx++;
               }
 
-              // Only call compose if we actually have overlay tracks beyond the main video
-              if (overlayTracks.length > 1) {
+              // Add audio input if selected
+              if (hasSelectedTrack && selectedTrackUrl) {
+                inputFiles["in_audio"] = selectedTrackUrl;
+              }
+
+              // Build FFmpeg filter_complex
+              const filterParts: string[] = [];
+              let currentVideoLabel = "0:v";
+              let filterIdx = 0;
+
+              // Image overlays: chain overlay filters
+              for (let i = 0; i < imageOverlays.length; i++) {
+                const imgOv = imageOverlays[i];
+                const startSec = (imgOv.start_pct / 100) * videoDurationSec;
+                const endSec = (imgOv.end_pct / 100) * videoDurationSec;
+                const inputIdx = i + 1; // 0 is video, 1+ are image inputs
+                const outLabel = `v${filterIdx}`;
+
+                // Position mapping for image overlays
+                const pos = getFFmpegOverlayPosition(imgOv.position);
+
+                filterParts.push(
+                  `[${currentVideoLabel}][${inputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                );
+                currentVideoLabel = outLabel;
+                filterIdx++;
+              }
+
+              // Text overlays: use drawtext filter (no external files needed)
+              for (const textOv of textOverlays) {
+                const text = (textOv.content_text || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+                const fontSize = textOv.font_size || 48;
+                const fontColor = textOv.font_color || "#FFFFFF";
+                const startSec = (textOv.start_pct / 100) * videoDurationSec;
+                const endSec = (textOv.end_pct / 100) * videoDurationSec;
+                const outLabel = `v${filterIdx}`;
+
+                // Position mapping for drawtext
+                const posStr = getFFmpegPosition(textOv.position, fontSize);
+
+                // Build drawtext with background box
+                const bgColor = textOv.bg_color || "rgba(0,0,0,0.5)";
+                // Convert rgba to ffmpeg box color format
+                let boxColor = "black@0.5";
+                const rgbaMatch = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+                if (rgbaMatch) {
+                  const r = parseInt(rgbaMatch[1]).toString(16).padStart(2, "0");
+                  const g = parseInt(rgbaMatch[2]).toString(16).padStart(2, "0");
+                  const b = parseInt(rgbaMatch[3]).toString(16).padStart(2, "0");
+                  const a = rgbaMatch[4] ? parseFloat(rgbaMatch[4]) : 1;
+                  boxColor = `0x${r}${g}${b}@${a}`;
+                }
+
+                filterParts.push(
+                  `[${currentVideoLabel}]drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=10:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                );
+                currentVideoLabel = outLabel;
+                filterIdx++;
+              }
+
+              // Build the full FFmpeg command
+              let ffmpegCmd: string;
+              const inputArgs = Object.keys(inputFiles)
+                .sort()
+                .map((k) => `-i {{${k}}}`)
+                .join(" ");
+
+              if (filterParts.length > 0) {
+                const filterComplex = filterParts.join(";");
+                if (hasSelectedTrack && selectedTrackUrl) {
+                  const audioInputIdx = Object.keys(inputFiles).sort().indexOf("in_audio");
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -c:v libx264 -preset fast -crf 23 -an -movflags +faststart {{out_1}}`;
+                }
+              } else if (hasSelectedTrack && selectedTrackUrl) {
+                // No overlays, just audio merge
+                const audioInputIdx = Object.keys(inputFiles).sort().indexOf("in_audio");
+                ffmpegCmd = `${inputArgs} -map 0:v -map ${audioInputIdx}:a -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+              } else {
+                // Nothing to do
+                ffmpegCmd = "";
+              }
+
+              if (ffmpegCmd) {
+                await log("info", `Rendi FFmpeg command: ${ffmpegCmd.substring(0, 200)}...`);
+
                 try {
-                  const overlayResult = await runFalCompose(FAL_KEY, overlayTracks, log);
-                  if (overlayResult) {
-                    finalVideo = overlayResult;
-                    await log("info", `Overlay compose succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                  // Submit to Rendi
+                  const rendiResp = await withRetry(() =>
+                    fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "X-API-KEY": RENDI_API_KEY,
+                      },
+                      body: JSON.stringify({
+                        ffmpeg_command: ffmpegCmd,
+                        input_files: inputFiles,
+                        output_files: { out_1: "output.mp4" },
+                        max_command_run_seconds: 300,
+                        vcpu_count: 8,
+                      }),
+                    })
+                  );
+
+                  if (!rendiResp.ok) {
+                    const errText = await rendiResp.text();
+                    throw new Error(`Rendi submit failed (${rendiResp.status}): ${errText.substring(0, 300)}`);
                   }
-                } catch (overlayErr) {
-                  await log("warn", `Overlay compose failed: ${(overlayErr as Error).message} — continuing without overlays.`);
-                  // finalVideo remains as-is (base stitched video)
+
+                  const { command_id } = await rendiResp.json();
+                  await log("info", `Rendi command submitted: ${command_id}`);
+
+                  // Poll for completion
+                  let rendiSuccess = false;
+                  for (let poll = 0; poll < 60; poll++) {
+                    await new Promise((r) => setTimeout(r, 3000));
+                    const pollResp = await fetch(`https://api.rendi.dev/v1/commands/${command_id}`, {
+                      headers: { "X-API-KEY": RENDI_API_KEY },
+                    });
+                    if (!pollResp.ok) {
+                      await log("warn", `Rendi poll failed: ${pollResp.status}`);
+                      continue;
+                    }
+                    const pollData = await pollResp.json();
+
+                    if (pollData.status === "SUCCESS") {
+                      const outputUrl = pollData.output_files?.out_1?.storage_url;
+                      if (!outputUrl) {
+                        throw new Error("Rendi succeeded but no output URL found.");
+                      }
+                      const dlResp = await fetch(outputUrl);
+                      if (!dlResp.ok) throw new Error(`Rendi output download failed: ${dlResp.status}`);
+                      finalVideo = new Uint8Array(await dlResp.arrayBuffer());
+                      rendiSuccess = true;
+                      await log("info", `Rendi post-production succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
+                      break;
+                    }
+
+                    if (pollData.status === "FAILED" || pollData.status === "ERROR") {
+                      throw new Error(`Rendi command failed: ${JSON.stringify(pollData).substring(0, 300)}`);
+                    }
+
+                    // Still processing, continue polling
+                  }
+
+                  if (!rendiSuccess) {
+                    throw new Error("Rendi command timed out after 3 minutes.");
+                  }
+                } catch (rendiErr) {
+                  await log("warn", `Rendi failed: ${(rendiErr as Error).message} — falling back to local processing.`);
+
+                  // Fallback: local mux for audio (overlays are lost but audio is preserved)
+                  if (hasSelectedTrack && selectedTrackUrl) {
+                    try {
+                      const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
+                      if (!mp3Resp.ok) throw new Error(`Download failed: ${mp3Resp.status}`);
+                      const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
+                      finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
+                      await log("info", `Local MP3 mux fallback succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                    } catch (localErr) {
+                      await log("error", `Local MP3 mux also failed: ${(localErr as Error).message}`);
+                    }
+                  }
                 }
               }
-            } else if (hasOverlays && !FAL_KEY) {
-              await log("warn", "FAL_KEY not set — skipping overlay compose.");
+            } else if (needsPostProd && !RENDI_API_KEY) {
+              await log("warn", "RENDI_API_KEY not set — attempting local audio mux only (overlays skipped).");
+              if (hasSelectedTrack && selectedTrackUrl) {
+                try {
+                  const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
+                  if (mp3Resp.ok) {
+                    const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
+                    finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
+                    await log("info", `Local MP3 mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                  }
+                } catch (localErr) {
+                  await log("error", `Local MP3 mux failed: ${(localErr as Error).message}`);
+                }
+              }
             }
 
-            // ── STEP 2: AUDIO via dedicated merge-audio-video endpoint ──
-            if (hasSelectedTrack && selectedTrackUrl && FAL_KEY) {
-              await log("info", `Adding audio track: ${selectedTrack?.title || "selected track"}`);
-
-              // Upload current video (with or without overlays) for merge
-              const preMuxPath = `${project.id}/final/${runId}/pre-audio-${Date.now()}.mp4`;
-              await supabase.storage
-                .from("project-assets")
-                .upload(preMuxPath, finalVideo, { contentType: "video/mp4", upsert: true });
-              tempCleanupPaths.push(preMuxPath);
-              const { data: preMuxUrl } = supabase.storage.from("project-assets").getPublicUrl(preMuxPath);
-
-              let audioMerged = false;
-              try {
-                const mergeResp = await withRetry(() =>
-                  fetch("https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video", {
-                    method: "POST",
-                    headers: {
-                      Authorization: `Key ${FAL_KEY}`,
-                      "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                      video_url: preMuxUrl.publicUrl,
-                      audio_url: selectedTrackUrl,
-                      use_shortest: true,
-                    }),
-                  })
-                );
-                const mergeText = await mergeResp.text();
-                if (mergeResp.ok) {
-                  const mergeResult: any = tryParseJson(mergeText);
-                  let mergedVideoUrl = extractFalVideoUrl(mergeResult);
-                  if (!mergedVideoUrl && mergeResult.request_id) {
-                    const pollUrl = mergeResult.status_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}/status`;
-                    const respUrl = mergeResult.response_url || `https://queue.fal.run/fal-ai/ffmpeg-api/merge-audio-video/requests/${mergeResult.request_id}`;
-                    for (let poll = 0; poll < 30; poll++) {
-                      await new Promise((r) => setTimeout(r, 2000));
-                      const sResp = await fetch(pollUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
-                      const sData = await sResp.json();
-                      if (sData.status === "COMPLETED") {
-                        const immediateUrl = extractFalVideoUrl(sData);
-                        if (immediateUrl) { mergedVideoUrl = immediateUrl; break; }
-                        // Retry hydration
-                        for (let h = 0; h < 5; h++) {
-                          if (h > 0) await new Promise((r) => setTimeout(r, 1200));
-                          const rResp = await fetch(respUrl, { headers: { Authorization: `Key ${FAL_KEY}` } });
-                          const rData = await rResp.json();
-                          mergedVideoUrl = extractFalVideoUrl(rData);
-                          if (mergedVideoUrl) break;
-                        }
-                        break;
-                      }
-                      if (sData.status === "FAILED") throw new Error("merge-audio-video failed on fal.ai");
-                    }
-                  }
-                  if (mergedVideoUrl) {
-                    const mResp = await fetch(mergedVideoUrl);
-                    if (mResp.ok) {
-                      finalVideo = new Uint8Array(await mResp.arrayBuffer());
-                      audioMerged = true;
-                      await log("info", `Audio merge succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                    } else {
-                      await log("warn", `Audio merge returned URL but download failed: ${mResp.status}`);
-                    }
-                  } else {
-                    await log("warn", "Audio merge completed without video URL.");
-                  }
-                } else {
-                  await log("warn", `merge-audio-video request failed (${mergeResp.status}): ${mergeText.substring(0, 240)}`);
-                }
-              } catch (mergeErr) {
-                await log("warn", `merge-audio-video failed: ${(mergeErr as Error).message} — will try local mux.`);
-              }
-
-              // Local mux fallback if remote merge didn't work
-              if (!audioMerged || !hasAudioTrack(finalVideo)) {
-                await log("info", "Trying local MP3 mux as fallback...");
+            // Hard guarantee: when a selected track exists, final candidate must contain audio.
+            if (hasSelectedTrack && selectedTrackUrl) {
+              if (!hasAudioTrack(finalVideo)) {
+                // One last try with local mux
+                await log("warn", "Final candidate has no audio — last-resort local MP3 mux.");
                 try {
                   const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
                   if (!mp3Resp.ok) throw new Error(`Download failed: ${mp3Resp.status}`);
                   const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
                   finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
-                  await log("info", `Local MP3 mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
-                } catch (localMuxErr) {
-                  await log("error", `Local MP3 mux also failed: ${(localMuxErr as Error).message}`);
+                  await log("info", `Last-resort local mux succeeded. hasAudio=${hasAudioTrack(finalVideo)}`);
+                } catch (lastErr) {
+                  await log("error", `Last-resort local mux failed: ${(lastErr as Error).message}`);
                 }
               }
-
-              // Hard guarantee: fail the run if audio is still missing
               if (!hasAudioTrack(finalVideo)) {
                 throw new Error("Selected music track is configured, but final output still has no audio after all attempts.");
-              }
-            } else if (hasSelectedTrack && !FAL_KEY) {
-              // No FAL_KEY but track selected — try local mux directly
-              await log("info", "FAL_KEY not set — trying local MP3 mux directly.");
-              if (selectedTrackUrl) {
-                const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
-                if (mp3Resp.ok) {
-                  const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
-                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
-                  await log("info", `Local MP3 mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                }
               }
             }
 
