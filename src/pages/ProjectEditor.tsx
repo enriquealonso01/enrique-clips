@@ -284,10 +284,20 @@ export default function ProjectEditor() {
           {((form as any).video_generator || "kling") === "pika" && (
             <Card>
               <CardHeader>
-                <CardTitle>Pika 2.2 Pikaframes</CardTitle>
-                <CardDescription>Keyframe-to-video transitions via fal.ai</CardDescription>
+                <CardTitle>Pika 2.2 Configuration</CardTitle>
+                <CardDescription>Video generation via fal.ai</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Pika Model</Label>
+                  <Select value={(form as any).pika_model || "pikaframes"} onValueChange={(v) => update("pika_model" as any, v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pikaframes">Pikaframes (keyframe-to-keyframe transitions)</SelectItem>
+                      <SelectItem value="image-to-video">Image-to-Video (single image per clip)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="space-y-2">
                   <Label>Resolution</Label>
                   <Select value={(form as any).pika_resolution || "1080p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
@@ -299,7 +309,9 @@ export default function ProjectEditor() {
                   </Select>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Pika Pikaframes generates smooth transitions between consecutive keyframe images. Each transition is up to 5s, max 25s total.
+                  {(form as any).pika_model === "image-to-video"
+                    ? "Image-to-Video generates a 5s video from each keyframe image individually using a motion prompt."
+                    : "Pikaframes generates smooth transitions between consecutive keyframe pairs (start→end, 5s each)."}
                 </p>
               </CardContent>
             </Card>

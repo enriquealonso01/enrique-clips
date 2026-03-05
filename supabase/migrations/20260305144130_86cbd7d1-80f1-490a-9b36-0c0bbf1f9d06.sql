@@ -1,0 +1,1 @@
+ALTER TABLE public.projects ADD COLUMN pika_model text NOT NULL DEFAULT 'pikaframes';

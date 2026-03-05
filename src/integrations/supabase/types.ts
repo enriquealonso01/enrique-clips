@@ -74,6 +74,7 @@ export type Database = {
           kling_model_name: string
           kling_sound: boolean
           negative_prompt: string | null
+          pika_model: string
           pika_resolution: string
           posting_cron: string | null
           posting_frequency_type: Database["public"]["Enums"]["posting_frequency"]
@@ -104,6 +105,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           negative_prompt?: string | null
+          pika_model?: string
           pika_resolution?: string
           posting_cron?: string | null
           posting_frequency_type?: Database["public"]["Enums"]["posting_frequency"]
@@ -134,6 +136,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           negative_prompt?: string | null
+          pika_model?: string
           pika_resolution?: string
           posting_cron?: string | null
           posting_frequency_type?: Database["public"]["Enums"]["posting_frequency"]
