@@ -739,7 +739,8 @@ ${scene.end_keyframe_prompt}
         fal.config({ credentials: FAL_KEY });
         const pikaResolution = (project as any).pika_resolution || "1080p";
 
-        // Build ordered keyframe image URLs: initial → scene1 end → scene2 end → ...
+        // Build consecutive 2-image pairs: [initial→K1], [K1→K2], [K2→K3], etc.
+        // Each pair produces one 5-second clip
         const imageUrls: string[] = [];
         if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
         for (const scene of scenes) {
@@ -754,42 +755,37 @@ ${scene.end_keyframe_prompt}
           return json({ error: "Not enough keyframes" }, 500);
         }
 
-        // Pika supports max 5 images, 25s total. Batch if needed.
-        const MAX_PIKA_IMAGES = 5;
-        const batches: string[][] = [];
-        for (let i = 0; i < imageUrls.length; i += MAX_PIKA_IMAGES - 1) {
-          const batch = imageUrls.slice(i, i + MAX_PIKA_IMAGES);
-          if (batch.length < 2 && batches.length > 0) {
-            batch.unshift(imageUrls[i - 1]);
-          }
-          if (batch.length >= 2) batches.push(batch);
+        // Create pairs: [img0, img1], [img1, img2], [img2, img3], ...
+        const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
+        for (let i = 0; i < imageUrls.length - 1; i++) {
+          const scene = scenes[i] || scenes[scenes.length - 1];
+          pairs.push({
+            start: imageUrls[i],
+            end: imageUrls[i + 1],
+            sceneIndex: scene.scene_index,
+            prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
+          });
         }
 
-        await log("info", `Pika: submitting ${batches.length} batch(es) with ${imageUrls.length} total images`);
+        await log("info", `Pika: submitting ${pairs.length} clip(s), each with 2 keyframes (start→end, 5s each)`);
 
         const pikaRequestIds: string[] = [];
 
-        for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-          const batch = batches[batchIdx];
-          
-          const transitions: Array<{ duration: number; prompt?: string }> = [];
-          for (let t = 0; t < batch.length - 1; t++) {
-            const sceneForTransition = scenes[batchIdx * (MAX_PIKA_IMAGES - 1) + t];
-            transitions.push({
-              duration: Math.min(project.clip_duration_sec || 5, 10),
-              prompt: sceneForTransition?.kling_prompt || undefined,
-            });
-          }
+        for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+          const pair = pairs[clipIdx];
 
           const pikaInput: Record<string, any> = {
-            image_urls: batch,
-            prompt: project.series_prompt || "smooth cinematic transition",
+            image_urls: [pair.start, pair.end],
+            prompt: pair.prompt,
             negative_prompt: negPrompt,
             resolution: pikaResolution,
+            transitions: [{ duration: 5, prompt: pair.prompt }],
           };
-          if (transitions.length > 0) pikaInput.transitions = transitions;
 
-          await log("debug", `Pika batch ${batchIdx + 1} request`, pikaInput);
+          await log("debug", `Pika clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
+            start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
+            end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
+          });
 
           try {
             const { request_id } = await fal.queue.submit("fal-ai/pika/v2.2/pikaframes", {
@@ -797,35 +793,38 @@ ${scene.end_keyframe_prompt}
             });
 
             if (!request_id) {
-              await log("error", "No request_id from Pika submit");
+              await log("error", `No request_id for clip ${clipIdx + 1}`);
               continue;
             }
 
             pikaRequestIds.push(request_id);
-            await log("info", `Pika batch ${batchIdx + 1} submitted: ${request_id}`);
+            await log("info", `Pika clip ${clipIdx + 1} submitted: ${request_id}`);
 
+            const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
             await supabase.from("assets").insert({
-              supabase_path: `pending-pika/${runId}/batch-${batchIdx}`,
+              supabase_path: `pending-pika/${runId}/clip-${clipIdx}`,
               type: "clip" as any,
               run_id: runId,
-              scene_id: scenes[Math.min(batchIdx * (MAX_PIKA_IMAGES - 1), scenes.length - 1)].id,
-              metadata: { pika_request_id: request_id, batch_index: batchIdx, status: "submitted" },
+              scene_id: sceneForAsset.id,
+              metadata: { pika_request_id: request_id, clip_index: clipIdx, scene_index: pair.sceneIndex, status: "submitted" },
             });
           } catch (submitErr) {
-            await log("error", `Pika submit error: ${submitErr.message}`, { error: String(submitErr) });
+            await log("error", `Pika clip ${clipIdx + 1} submit error: ${submitErr.message}`);
             continue;
           }
         }
 
-        // Short inline poll (~2 min), then client-side poll-pika takes over
-        const POLL_INTERVAL_MS = 15000;
-        const MAX_POLLS = 8;
+        // Inline poll — up to ~8 min, then client-side poll-pika takes over
+        // Pika can take up to ~500s per clip
+        const POLL_INTERVAL_MS = 30000;
+        const MAX_POLLS = 16; // ~8 minutes
         for (let poll = 0; poll < MAX_POLLS; poll++) {
           await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
           const currentStatus = await checkRunStatus();
           if (currentStatus !== "running") return json({ status: "halted" });
 
           let allDone = true;
+          let completedInline = 0;
           for (const reqId of pikaRequestIds) {
             try {
               const status = await fal.queue.status("fal-ai/pika/v2.2/pikaframes", {
@@ -834,6 +833,18 @@ ${scene.end_keyframe_prompt}
               });
 
               if (status.status === "COMPLETED") {
+                // Check if already downloaded
+                const { data: existing } = await supabase.from("assets")
+                  .select("supabase_path")
+                  .eq("run_id", runId)
+                  .eq("type", "clip")
+                  .filter("metadata->>pika_request_id", "eq", reqId)
+                  .single();
+                if (existing && !existing.supabase_path.startsWith("pending-")) {
+                  completedInline++;
+                  continue;
+                }
+
                 const result = await fal.queue.result("fal-ai/pika/v2.2/pikaframes", {
                   requestId: reqId,
                 });
@@ -846,31 +857,35 @@ ${scene.end_keyframe_prompt}
                     await supabase.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
                     await supabase.from("assets")
                       .update({ supabase_path: storagePath, metadata: { pika_request_id: reqId, status: "completed" } })
-                      .match({ run_id: runId, type: "clip" })
+                      .eq("run_id", runId)
+                      .eq("type", "clip")
                       .filter("metadata->>pika_request_id", "eq", reqId);
-                    await log("info", `Pika video downloaded and stored: ${reqId}`);
+                    await log("info", `Pika clip ${reqId} downloaded and stored`);
+                    completedInline++;
                   }
                 }
               } else if (status.status === "FAILED") {
-                await log("error", `Pika request ${reqId} failed`, status);
+                await log("error", `Pika clip ${reqId} failed`, status);
+                completedInline++;
               } else {
                 allDone = false;
-                await log("debug", `Pika ${reqId} status: ${status.status}`);
+                await log("debug", `Pika clip ${reqId}: ${status.status}`);
               }
             } catch (pollErr) {
-              await log("warn", `Pika poll error for ${reqId}: ${pollErr.message}`);
+              await log("warn", `Pika poll error ${reqId}: ${pollErr.message}`);
               allDone = false;
             }
           }
 
           if (allDone) {
-            await log("info", "All Pika tasks completed.");
+            await log("info", `All ${pikaRequestIds.length} Pika clips completed.`);
             await updateRun({ current_step: "stitch", progress_pct: 70 });
             chainNextStep();
             return json({ status: "pika_complete", run_id: runId });
           }
 
-          await updateRun({ progress_pct: 40 + Math.round(30 * (poll / MAX_POLLS)) });
+          const progress = 40 + Math.round(30 * (completedInline / pikaRequestIds.length));
+          await updateRun({ progress_pct: Math.min(progress, 69) });
         }
 
         await log("info", "Inline Pika polling timed out — client-side poll-pika will continue.");
