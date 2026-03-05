@@ -1750,18 +1750,42 @@ Deno.serve(async (req) => {
                         if (mResp.ok) {
                           finalVideo = new Uint8Array(await mResp.arrayBuffer());
                           await log("info", `Deterministic fallback mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
+                        } else {
+                          finalVideo = fallbackVideo;
+                          await log("warn", `Merge returned URL but download failed: ${mResp.status} — keeping overlay/base result.`);
                         }
                       } else {
                         finalVideo = fallbackVideo;
                         await log("warn", "Merge fallback completed without video URL — keeping overlay-only result.");
                       }
+                    } else {
+                      finalVideo = fallbackVideo;
+                      await log("warn", `Merge fallback request failed (${mergeResp.status}): ${mergeText.substring(0, 240)} — keeping overlay/base result.`);
                     }
                   } catch (fallbackErr) {
                     finalVideo = fallbackVideo;
-                    await log("error", `Fallback music mux failed: ${(fallbackErr as Error).message} — keeping overlay-only result.`);
+                    await log("error", `Fallback music mux failed: ${(fallbackErr as Error).message} — keeping overlay/base result.`);
                   }
                 } else {
                   finalVideo = fallbackVideo;
+                }
+              }
+
+              // Hard guarantee: when a selected track exists, final candidate must contain audio.
+              if (hasSelectedTrack && selectedTrackUrl) {
+                if (!hasAudioTrack(finalVideo)) {
+                  await log("warn", "Final candidate has no audio after compose/fallback — trying local MP3 mux.");
+                  const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
+                  if (!mp3Resp.ok) {
+                    throw new Error(`Could not download selected track for local mux: ${mp3Resp.status}`);
+                  }
+                  const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
+                  finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
+                  await log("info", `Local MP3 mux succeeded. Final size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
+                }
+
+                if (!hasAudioTrack(finalVideo)) {
+                  throw new Error("Selected music track is configured, but final output still has no audio.");
                 }
               }
 
@@ -1772,6 +1796,9 @@ Deno.serve(async (req) => {
               await log("warn", "FAL_KEY not set — skipping overlay/music compose.");
             }
           } catch (composeStepErr) {
+            if (hasSelectedTrack) {
+              throw composeStepErr;
+            }
             await log("warn", `Compose step failed: ${(composeStepErr as Error).message} — continuing with stitched video.`);
           }
 
