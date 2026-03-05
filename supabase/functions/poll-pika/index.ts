@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
     if (run.current_step !== "kling") return json({ status: "not_in_kling_step", current_step: run.current_step });
 
     const { data: project } = await supabase.from("projects").select("id, video_generator").eq("id", run.project_id).single();
-    if (!project || project.video_generator !== "pika") return json({ status: "not_pika" });
+    if (!project || (project.video_generator !== "pika" && project.video_generator !== "vidu")) return json({ status: "not_fal_generator" });
     if (!FAL_KEY) return json({ error: "FAL_KEY not configured" }, 500);
 
     fal.config({ credentials: FAL_KEY });
@@ -86,9 +86,11 @@ Deno.serve(async (req) => {
     for (const asset of pendingTasks) {
       const meta = asset.metadata as any;
       const reqId = meta.pika_request_id;
-      const falEndpoint = meta.pika_model === "image-to-video"
-        ? "fal-ai/pika/v2.2/image-to-video"
-        : "fal-ai/pika/v2.2/pikaframes";
+      // Use stored endpoint or fall back to detection
+      const falEndpoint = meta.fal_endpoint
+        || (meta.pika_model === "vidu-q3-turbo" ? "fal-ai/vidu/q3/image-to-video/turbo"
+          : meta.pika_model === "image-to-video" ? "fal-ai/pika/v2.2/image-to-video"
+          : "fal-ai/pika/v2.2/pikaframes");
 
       try {
         const status = await fal.queue.status(falEndpoint, {
@@ -105,7 +107,7 @@ Deno.serve(async (req) => {
             const videoResp = await fetch(videoUrl);
             if (videoResp.ok) {
               const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
-              const storagePath = `${project.id}/clips/${runId}/pika-${reqId}.mp4`;
+              const storagePath = `${project.id}/clips/${runId}/fal-${reqId}.mp4`;
               await supabase.storage.from("project-assets").upload(storagePath, videoBytes, {
                 contentType: "video/mp4",
                 upsert: true,

@@ -208,7 +208,8 @@ export default function ProjectEditor() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="kling">Kling AI</SelectItem>
-                    <SelectItem value="pika">Pika 2.2 Pikaframes (via fal.ai)</SelectItem>
+                    <SelectItem value="pika">Pika 2.2 (via fal.ai)</SelectItem>
+                    <SelectItem value="vidu">Vidu Q3 Turbo (via fal.ai)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -312,6 +313,37 @@ export default function ProjectEditor() {
                   {(form as any).pika_model === "image-to-video"
                     ? "Image-to-Video generates a 5s video from each keyframe image individually using a motion prompt."
                     : "Pikaframes generates smooth transitions between consecutive keyframe pairs (start→end, 5s each)."}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Vidu Settings */}
+          {((form as any).video_generator || "kling") === "vidu" && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Vidu Q3 Turbo</CardTitle>
+                <CardDescription>Image-to-video generation via fal.ai</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Resolution</Label>
+                  <Select value={(form as any).pika_resolution || "720p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="360p">360p</SelectItem>
+                      <SelectItem value="540p">540p</SelectItem>
+                      <SelectItem value="720p">720p</SelectItem>
+                      <SelectItem value="1080p">1080p</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Switch checked={(form as any).kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
+                  <Label>Enable Audio</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Vidu Q3 Turbo generates a 5s video from each keyframe image. Supports audio generation with dialogue and sound effects.
                 </p>
               </CardContent>
             </Card>
