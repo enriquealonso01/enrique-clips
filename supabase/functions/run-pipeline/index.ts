@@ -485,6 +485,81 @@ Only the natural environment exists at the start. Human elements may ONLY appear
         });
       }
 
+      // ── 1d: AI overlay content generation ──
+      try {
+        const { data: overlays } = await supabase
+          .from("overlays")
+          .select("*")
+          .eq("project_id", project.id)
+          .eq("content_mode", "ai_generated")
+          .order("sort_order");
+
+        if (overlays && overlays.length > 0) {
+          await log("info", `Generating AI content for ${overlays.length} overlays...`);
+          const overlayGenResult = await callAI(
+            [
+              {
+                role: "system",
+                content: `You are a video overlay content writer. Given a series concept, scene plan, and overlay descriptions, generate compelling text content for each overlay. Keep text concise and impactful — suitable for on-screen display.`,
+              },
+              {
+                role: "user",
+                content: `Series: ${project.series_prompt || project.title}
+Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
+
+Generate content for these overlays:
+${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_text || "Generate appropriate content"}`).join("\n")}`,
+              },
+            ],
+            [
+              {
+                type: "function",
+                function: {
+                  name: "set_overlay_content",
+                  description: "Set the text content for each overlay",
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      overlays: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            index: { type: "number", description: "0-based index of the overlay" },
+                            content: { type: "string", description: "The generated text content for display" },
+                          },
+                          required: ["index", "content"],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: ["overlays"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            ],
+            { type: "function", function: { name: "set_overlay_content" } }
+          );
+
+          const overlayToolCall = overlayGenResult.choices?.[0]?.message?.tool_calls?.[0];
+          if (overlayToolCall) {
+            const generated = JSON.parse(overlayToolCall.function.arguments);
+            for (const gen of generated.overlays) {
+              if (gen.index >= 0 && gen.index < overlays.length) {
+                await supabase
+                  .from("overlays")
+                  .update({ content_text: gen.content })
+                  .eq("id", overlays[gen.index].id);
+              }
+            }
+            await log("info", "AI overlay content generated", generated);
+          }
+        }
+      } catch (err) {
+        await log("warn", `Overlay content generation failed: ${err.message} — continuing.`);
+      }
+
       // Store style bible + negative prompt in metadata for downstream steps
       await updateRun({
         current_step: "keyframes",

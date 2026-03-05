@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { StatusBadge } from "@/components/StatusBadge";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
+import { OverlayEditor } from "@/components/OverlayEditor";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
@@ -133,6 +134,7 @@ export default function ProjectEditor() {
         <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="series">Series</TabsTrigger>
           <TabsTrigger value="video">Video Gen</TabsTrigger>
+          <TabsTrigger value="overlays">Overlays</TabsTrigger>
           <TabsTrigger value="publish">Publish</TabsTrigger>
           <TabsTrigger value="schedule">Schedule</TabsTrigger>
           <TabsTrigger value="api">API</TabsTrigger>
@@ -355,6 +357,11 @@ export default function ProjectEditor() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* Overlays Tab */}
+        <TabsContent value="overlays" className="space-y-4 mt-4">
+          <OverlayEditor projectId={projectId!} />
         </TabsContent>
 
         {/* Publish Tab */}
