@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { fal } from "https://esm.sh/@fal-ai/client@1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -55,6 +56,8 @@ Deno.serve(async (req) => {
     if (!project || project.video_generator !== "pika") return json({ status: "not_pika" });
     if (!FAL_KEY) return json({ error: "FAL_KEY not configured" }, 500);
 
+    fal.config({ credentials: FAL_KEY });
+
     // Find pending clip assets with pika request IDs
     const { data: pendingAssets } = await supabase
       .from("assets")
@@ -64,7 +67,6 @@ Deno.serve(async (req) => {
       .like("supabase_path", `pending-pika/${runId}/%`);
 
     if (!pendingAssets || pendingAssets.length === 0) {
-      // Check if there are completed pika clips already
       const { data: completedClips } = await supabase
         .from("assets")
         .select("id")
@@ -90,58 +92,51 @@ Deno.serve(async (req) => {
       const reqId = meta.pika_request_id;
 
       try {
-        const statusResp = await fetch(
-          `https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}/status`,
-          { headers: { Authorization: `Key ${FAL_KEY}` } }
-        );
-        const statusText = await statusResp.text();
-        if (!statusResp.ok) { 
-          await log("warn", `Pika status check failed for ${reqId}: ${statusResp.status} ${statusText}`);
-          allDone = false; 
-          continue; 
-        }
-        let statusData: any;
-        try { statusData = JSON.parse(statusText); } catch { allDone = false; continue; }
+        const status = await fal.queue.status("fal-ai/pika/v2.2/pikaframes", {
+          requestId: reqId,
+          logs: false,
+        });
 
-        if (statusData.status === "COMPLETED") {
-          const resultResp = await fetch(
-            `https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}`,
-            { headers: { Authorization: `Key ${FAL_KEY}` } }
-          );
-          if (resultResp.ok) {
-            const resultData = await resultResp.json();
-            await log("debug", `Pika result for ${reqId}`, resultData);
-            const videoUrl = resultData.video?.url;
-            if (videoUrl) {
-              const videoResp = await fetch(videoUrl);
-              if (videoResp.ok) {
-                const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
-                const storagePath = `${project.id}/clips/${runId}/pika-${reqId}.mp4`;
-                await supabase.storage.from("project-assets").upload(storagePath, videoBytes, {
-                  contentType: "video/mp4",
-                  upsert: true,
-                });
-                await supabase.from("assets").update({
-                  supabase_path: storagePath,
-                  metadata: { pika_request_id: reqId, batch_index: meta.batch_index, status: "completed" },
-                }).eq("id", asset.id);
-                await log("info", `Pika video downloaded and stored: ${reqId}`);
-                completedCount++;
-              }
+        if (status.status === "COMPLETED") {
+          const result = await fal.queue.result("fal-ai/pika/v2.2/pikaframes", {
+            requestId: reqId,
+          });
+          const videoUrl = (result.data as any)?.video?.url;
+          if (videoUrl) {
+            const videoResp = await fetch(videoUrl);
+            if (videoResp.ok) {
+              const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
+              const storagePath = `${project.id}/clips/${runId}/pika-${reqId}.mp4`;
+              await supabase.storage.from("project-assets").upload(storagePath, videoBytes, {
+                contentType: "video/mp4",
+                upsert: true,
+              });
+              await supabase.from("assets").update({
+                supabase_path: storagePath,
+                metadata: { pika_request_id: reqId, batch_index: meta.batch_index, status: "completed" },
+              }).eq("id", asset.id);
+              await log("info", `Pika video downloaded and stored: ${reqId}`);
+              completedCount++;
             }
+          } else {
+            await log("error", `No video URL in Pika result for ${reqId}`, result.data);
+            await supabase.from("assets").update({
+              metadata: { ...meta, status: "failed" },
+            }).eq("id", asset.id);
+            completedCount++;
           }
-        } else if (statusData.status === "FAILED") {
-          await log("error", `Pika request ${reqId} failed`, statusData);
+        } else if (status.status === "FAILED") {
+          await log("error", `Pika request ${reqId} failed`, status);
           await supabase.from("assets").update({
             metadata: { ...meta, status: "failed" },
           }).eq("id", asset.id);
           completedCount++;
         } else {
           allDone = false;
-          await log("debug", `Pika request ${reqId} status: ${statusData.status}`);
+          await log("debug", `Pika request ${reqId} status: ${status.status}`);
         }
       } catch (err) {
-        await log("error", `Error polling Pika ${reqId}: ${err.message}`);
+        await log("warn", `Error polling Pika ${reqId}: ${err.message}`);
         allDone = false;
       }
     }

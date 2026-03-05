@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { fal } from "https://esm.sh/@fal-ai/client@1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -735,6 +736,7 @@ ${scene.end_keyframe_prompt}
           return json({ error: "FAL_KEY not configured" }, 500);
         }
 
+        fal.config({ credentials: FAL_KEY });
         const pikaResolution = (project as any).pika_resolution || "1080p";
 
         // Build ordered keyframe image URLs: initial → scene1 end → scene2 end → ...
@@ -758,7 +760,6 @@ ${scene.end_keyframe_prompt}
         for (let i = 0; i < imageUrls.length; i += MAX_PIKA_IMAGES - 1) {
           const batch = imageUrls.slice(i, i + MAX_PIKA_IMAGES);
           if (batch.length < 2 && batches.length > 0) {
-            // Overlap: add last image from previous batch as first
             batch.unshift(imageUrls[i - 1]);
           }
           if (batch.length >= 2) batches.push(batch);
@@ -771,7 +772,6 @@ ${scene.end_keyframe_prompt}
         for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
           const batch = batches[batchIdx];
           
-          // Build per-transition prompts from scene kling_prompts
           const transitions: Array<{ duration: number; prompt?: string }> = [];
           for (let t = 0; t < batch.length - 1; t++) {
             const sceneForTransition = scenes[batchIdx * (MAX_PIKA_IMAGES - 1) + t];
@@ -791,51 +791,35 @@ ${scene.end_keyframe_prompt}
 
           await log("debug", `Pika batch ${batchIdx + 1} request`, pikaInput);
 
-          // Submit to fal.ai queue
-          const submitResp = await fetch("https://queue.fal.run/fal-ai/pika/v2.2/pikaframes", {
-            method: "POST",
-            headers: {
-              "Authorization": `Key ${FAL_KEY}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(pikaInput),
-          });
+          try {
+            const { request_id } = await fal.queue.submit("fal-ai/pika/v2.2/pikaframes", {
+              input: pikaInput,
+            });
 
-          const submitText = await submitResp.text();
-          await log("debug", `Pika submit response ${submitResp.status}: ${submitText}`);
+            if (!request_id) {
+              await log("error", "No request_id from Pika submit");
+              continue;
+            }
 
-          if (!submitResp.ok) {
-            await log("error", `Pika submit failed: ${submitResp.status} ${submitText}`);
+            pikaRequestIds.push(request_id);
+            await log("info", `Pika batch ${batchIdx + 1} submitted: ${request_id}`);
+
+            await supabase.from("assets").insert({
+              supabase_path: `pending-pika/${runId}/batch-${batchIdx}`,
+              type: "clip" as any,
+              run_id: runId,
+              scene_id: scenes[Math.min(batchIdx * (MAX_PIKA_IMAGES - 1), scenes.length - 1)].id,
+              metadata: { pika_request_id: request_id, batch_index: batchIdx, status: "submitted" },
+            });
+          } catch (submitErr) {
+            await log("error", `Pika submit error: ${submitErr.message}`, { error: String(submitErr) });
             continue;
           }
-
-          let submitResult: any;
-          try { submitResult = JSON.parse(submitText); } catch { 
-            await log("error", `Pika submit response not JSON: ${submitText}`);
-            continue;
-          }
-          const requestId = submitResult.request_id;
-          if (!requestId) {
-            await log("error", "No request_id from Pika submit", submitResult);
-            continue;
-          }
-
-          pikaRequestIds.push(requestId);
-          await log("info", `Pika batch ${batchIdx + 1} submitted: ${requestId}`);
-
-          // Store a placeholder clip asset with the request ID
-          await supabase.from("assets").insert({
-            supabase_path: `pending-pika/${runId}/batch-${batchIdx}`,
-            type: "clip" as any,
-            run_id: runId,
-            scene_id: scenes[Math.min(batchIdx * (MAX_PIKA_IMAGES - 1), scenes.length - 1)].id,
-            metadata: { pika_request_id: requestId, batch_index: batchIdx, status: "submitted" },
-          });
         }
 
         // Short inline poll (~2 min), then client-side poll-pika takes over
         const POLL_INTERVAL_MS = 15000;
-        const MAX_POLLS = 8; // ~2 minutes
+        const MAX_POLLS = 8;
         for (let poll = 0; poll < MAX_POLLS; poll++) {
           await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
           const currentStatus = await checkRunStatus();
@@ -843,41 +827,38 @@ ${scene.end_keyframe_prompt}
 
           let allDone = true;
           for (const reqId of pikaRequestIds) {
-            const statusResp = await fetch(`https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}/status`, {
-              headers: { "Authorization": `Key ${FAL_KEY}` },
-            });
-            if (!statusResp.ok) { allDone = false; continue; }
-            const statusData = await statusResp.json();
-
-            if (statusData.status === "COMPLETED") {
-              // Fetch result
-              const resultResp = await fetch(`https://queue.fal.run/fal-ai/pika/v2.2/pikaframes/requests/${reqId}`, {
-                headers: { "Authorization": `Key ${FAL_KEY}` },
+            try {
+              const status = await fal.queue.status("fal-ai/pika/v2.2/pikaframes", {
+                requestId: reqId,
+                logs: false,
               });
-              if (resultResp.ok) {
-                const resultData = await resultResp.json();
-                const videoUrl = resultData.video?.url;
+
+              if (status.status === "COMPLETED") {
+                const result = await fal.queue.result("fal-ai/pika/v2.2/pikaframes", {
+                  requestId: reqId,
+                });
+                const videoUrl = (result.data as any)?.video?.url;
                 if (videoUrl) {
-                  // Download and upload to storage
                   const videoResp = await fetch(videoUrl);
                   if (videoResp.ok) {
                     const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
                     const storagePath = `${project.id}/clips/${runId}/pika-${reqId}.mp4`;
                     await supabase.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
-
-                    // Update the placeholder asset
                     await supabase.from("assets")
                       .update({ supabase_path: storagePath, metadata: { pika_request_id: reqId, status: "completed" } })
                       .match({ run_id: runId, type: "clip" })
                       .filter("metadata->>pika_request_id", "eq", reqId);
-
                     await log("info", `Pika video downloaded and stored: ${reqId}`);
                   }
                 }
+              } else if (status.status === "FAILED") {
+                await log("error", `Pika request ${reqId} failed`, status);
+              } else {
+                allDone = false;
+                await log("debug", `Pika ${reqId} status: ${status.status}`);
               }
-            } else if (statusData.status === "FAILED") {
-              await log("error", `Pika request ${reqId} failed`, statusData);
-            } else {
+            } catch (pollErr) {
+              await log("warn", `Pika poll error for ${reqId}: ${pollErr.message}`);
               allDone = false;
             }
           }
