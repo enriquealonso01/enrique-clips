@@ -11,7 +11,7 @@ const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 // Map overlay position to FFmpeg drawtext x/y
 function getFFmpegPosition(position: string, fontSize: number): string {
   const pad = 20;
-  const topPad = 60;
+  const topPad = 160;
   const map: Record<string, string> = {
     top_left: `x=${pad}:y=${topPad}`,
     top_center: `x=(w-text_w)/2:y=${topPad}`,
@@ -27,7 +27,7 @@ function getFFmpegPosition(position: string, fontSize: number): string {
 // Map overlay position to FFmpeg overlay filter x:y expressions
 function getFFmpegOverlayPosition(position: string): string {
   const pad = 20;
-  const topPad = 60;
+  const topPad = 160;
   const map: Record<string, string> = {
     top_left: `x=${pad}:y=${topPad}`,
     top_center: `x=(main_w-overlay_w)/2:y=${topPad}`,
