@@ -1399,8 +1399,25 @@ Deno.serve(async (req) => {
                       })
                     );
 
+                    const falRespText = await falResp.text();
+                    await log("info", `fal.ai response status=${falResp.status}, body preview: ${falRespText.substring(0, 300)}`);
+
                     if (falResp.ok) {
-                      const falResult = await falResp.json();
+                      let falResult: any;
+                      try {
+                        // Strip markdown fences and find JSON
+                        let cleaned = falRespText.trim()
+                          .replace(/```json\s*/gi, "")
+                          .replace(/```\s*/g, "")
+                          .trim();
+                        const jsonStart = cleaned.search(/[\{\[]/);
+                        const jsonEnd = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+                        if (jsonStart === -1 || jsonEnd === -1) throw new Error("No JSON found in response");
+                        cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+                        falResult = JSON.parse(cleaned);
+                      } catch (parseErr) {
+                        throw new Error(`Failed to parse fal.ai response: ${parseErr.message}. Raw: ${falRespText.substring(0, 200)}`);
+                      }
                       
                       // If queued, poll for result
                       if (falResult.request_id) {
@@ -1411,15 +1428,18 @@ Deno.serve(async (req) => {
                             `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}/status`,
                             { headers: { Authorization: `Key ${FAL_KEY}` } }
                           );
-                          const statusData = await statusResp.json();
+                          const statusText = await statusResp.text();
+                          let statusData: any;
+                          try { statusData = JSON.parse(statusText); } catch { throw new Error(`Bad status response: ${statusText.substring(0, 200)}`); }
                           if (statusData.status === "COMPLETED") {
-                            // Fetch the result
                             const resultResp = await fetch(
                               `https://queue.fal.run/fal-ai/ffmpeg-api/compose/requests/${falResult.request_id}`,
                               { headers: { Authorization: `Key ${FAL_KEY}` } }
                             );
-                            const resultData = await resultResp.json();
-                            resultUrl = resultData.video_url;
+                            const resultText = await resultResp.text();
+                            let resultData: any;
+                            try { resultData = JSON.parse(resultText); } catch { throw new Error(`Bad result response: ${resultText.substring(0, 200)}`); }
+                            resultUrl = resultData.video_url || resultData.video?.url;
                             break;
                           } else if (statusData.status === "FAILED") {
                             throw new Error("FFmpeg compose failed: " + JSON.stringify(statusData));
@@ -1435,17 +1455,16 @@ Deno.serve(async (req) => {
                         } else {
                           await log("warn", "FFmpeg compose timed out — continuing without overlays.");
                         }
-                      } else if (falResult.video_url) {
-                        // Synchronous result
-                        const overlaidResp = await fetch(falResult.video_url);
+                      } else if (falResult.video_url || falResult.video?.url) {
+                        const videoUrl = falResult.video_url || falResult.video?.url;
+                        const overlaidResp = await fetch(videoUrl);
                         if (overlaidResp.ok) {
                           finalVideo = new Uint8Array(await overlaidResp.arrayBuffer());
                           await log("info", `Overlays applied. New size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
                         }
                       }
                     } else {
-                      const errText = await falResp.text();
-                      await log("warn", `fal.ai FFmpeg compose failed (${falResp.status}): ${errText} — continuing without overlays.`);
+                      await log("warn", `fal.ai FFmpeg compose failed (${falResp.status}): ${falRespText.substring(0, 500)} — continuing without overlays.`);
                     }
                   } catch (composeErr) {
                     await log("warn", `Overlay compose failed: ${composeErr.message} — continuing without overlays.`);
