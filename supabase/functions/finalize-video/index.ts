@@ -1561,16 +1561,17 @@ Deno.serve(async (req) => {
                   const rectW = textWidth + 20;
                   const rectH = fontSize * 1.4;
 
-                  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}">
-                    <rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" rx="8" fill="${bgColor}" />
-                    <text x="${svgX}" y="${svgY}" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="${fontSize}" fill="${fontColor}" text-anchor="${textAnchor}" dominant-baseline="auto">
-                      <tspan filter="url(#shadow)">${escapedText}</tspan>
-                    </text>
+                  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}" preserveAspectRatio="xMinYMin slice">
                     <defs>
                       <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
                         <feDropShadow dx="2" dy="2" stdDeviation="3" flood-color="black" flood-opacity="0.7"/>
                       </filter>
                     </defs>
+                    <rect width="${canvasW}" height="${canvasH}" fill="transparent" opacity="0"/>
+                    <rect x="${rectX}" y="${rectY}" width="${rectW}" height="${rectH}" rx="8" fill="${bgColor}" />
+                    <text x="${svgX}" y="${svgY}" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="${fontSize}" fill="${fontColor}" text-anchor="${textAnchor}" dominant-baseline="auto">
+                      <tspan filter="url(#shadow)">${escapedText}</tspan>
+                    </text>
                   </svg>`;
                   
                   const svgBytes = new TextEncoder().encode(svg);
@@ -1593,7 +1594,7 @@ Deno.serve(async (req) => {
                       duration: durationMs,
                     }],
                   });
-                  await log("info", `Text overlay "${text.substring(0, 30)}..." rendered as SVG and added as track.`);
+                  await log("info", `Text overlay "${text.substring(0, 30)}..." rendered as SVG (${canvasW}x${canvasH}) at position=${textOv.position} svgX=${svgX} svgY=${svgY} anchor=${textAnchor}.`);
                 } catch (txtErr) {
                   await log("warn", `Failed to render text overlay: ${(txtErr as Error).message}`);
                 }
