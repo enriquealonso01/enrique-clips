@@ -677,19 +677,16 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
         await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title}`);
 
         try {
-          const promptText = `Generate a high-quality ${project.aspect_ratio} image for this scene's END frame. This is keyframe K${scene.scene_index} of ${scenes.length}.
-
-=== STYLE BIBLE (follow exactly) ===
-${styleBibleText || "Cinematic, high detail, vibrant colors."}
-
-=== SCENE ===
-${scene.end_keyframe_prompt}
-
-=== RULES ===
-- Maintain IDENTICAL character appearance, outfit, and art style as the reference image.
-- Keep the same lighting/palette direction.
-- Match the composition anchors specified in the scene description.
-- Do NOT add text, watermarks, or logos.`;
+          // Build keyframe prompt from resolved config template
+          const kfConfig = resolvedConfig.keyframes;
+          const promptText = kfConfig.prompt_template
+            .replace("{aspect_ratio}", project.aspect_ratio || "9:16")
+            .replace("{scene_index}", String(scene.scene_index))
+            .replace("{total_scenes}", String(scenes.length))
+            .replace("{style_bible}", styleBibleText || "Cinematic, high detail, vibrant colors.")
+            .replace("{end_keyframe_prompt}", scene.end_keyframe_prompt || "")
+            .replace("{composition_rules}", kfConfig.composition_rules.map(r => `- ${r}`).join("\n"))
+            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"));
 
           const userContent: any[] = [{ type: "text", text: promptText }];
           if (prevKeyframeUrl) {
