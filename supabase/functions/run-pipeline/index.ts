@@ -908,7 +908,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
           // ── Pika Image-to-Video: single image per clip ──
           const imageItems: Array<{ url: string; sceneIndex: number; prompt: string }> = [];
           if (runInitialImageUrl) {
-            imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || project.series_prompt || "cinematic motion" });
+            imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || conceptPrompt || "cinematic motion" });
           }
           for (const scene of scenes) {
             if (sceneKeyframes[scene.scene_index]) {
