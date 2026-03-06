@@ -431,7 +431,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           },
           {
             role: "user",
-            content: `Create a ${project.scene_count}-scene plan for: ${project.series_prompt || "A visually stunning short video"}`,
+            content: `Create a ${project.scene_count}-scene plan for: ${conceptPrompt || "A visually stunning short video"}`,
           },
         ],
         [
