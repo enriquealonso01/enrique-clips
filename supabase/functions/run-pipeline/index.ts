@@ -108,6 +108,57 @@ Deno.serve(async (req) => {
     }).catch((e) => console.error("Chain error:", e));
   }
 
+  /** Summarize messages for logging (truncate long content) */
+  function summarizeMessages(messages: Array<{ role: string; content: any }>): any[] {
+    return messages.map(m => {
+      const content = m.content;
+      if (typeof content === "string") {
+        return { role: m.role, content: content.length > 500 ? content.substring(0, 500) + "…[truncated]" : content };
+      }
+      if (Array.isArray(content)) {
+        return {
+          role: m.role,
+          content: content.map((part: any) => {
+            if (part.type === "text" && typeof part.text === "string") {
+              return { type: "text", text: part.text.length > 500 ? part.text.substring(0, 500) + "…[truncated]" : part.text };
+            }
+            if (part.type === "image_url") return { type: "image_url", url: "[image]" };
+            return part;
+          }),
+        };
+      }
+      return { role: m.role, content: "[complex]" };
+    });
+  }
+
+  /** Summarize AI response for logging */
+  function summarizeAIResponse(result: any): any {
+    const msg = result?.choices?.[0]?.message;
+    if (!msg) return { raw_preview: JSON.stringify(result).substring(0, 300) };
+    const summary: any = {};
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      summary.tool_calls = msg.tool_calls.map((tc: any) => ({
+        name: tc.function?.name,
+        args_preview: tc.function?.arguments?.substring(0, 300) + (tc.function?.arguments?.length > 300 ? "…" : ""),
+      }));
+    }
+    if (typeof msg.content === "string" && msg.content) {
+      summary.text = msg.content.length > 500 ? msg.content.substring(0, 500) + "…[truncated]" : msg.content;
+    }
+    if (msg.images && Array.isArray(msg.images) && msg.images.length > 0) {
+      summary.images = `${msg.images.length} image(s) returned`;
+    }
+    if (Array.isArray(msg.content)) {
+      const imgParts = msg.content.filter((p: any) => p.type === "image_url");
+      const textParts = msg.content.filter((p: any) => p.type === "text");
+      if (imgParts.length > 0) summary.images = `${imgParts.length} image(s) in content`;
+      if (textParts.length > 0) summary.text = textParts.map((p: any) => p.text).join("").substring(0, 300);
+    }
+    summary.finish_reason = result?.choices?.[0]?.finish_reason;
+    summary.usage = result?.usage;
+    return summary;
+  }
+
   async function callAI(
     messages: Array<{ role: string; content: any }>,
     tools?: any[],
@@ -117,14 +168,21 @@ Deno.serve(async (req) => {
     timeoutMs = 120000,
     retries = 1
   ) {
+    const usedModel = model || "google/gemini-3-flash-preview";
     const body: any = {
-      model: model || "google/gemini-3-flash-preview",
+      model: usedModel,
       messages,
       stream: false,
     };
     if (tools) body.tools = tools;
     if (tool_choice) body.tool_choice = tool_choice;
     if (modalities) body.modalities = modalities;
+
+    // Log the outgoing prompt
+    const toolNames = tools?.map((t: any) => t.function?.name).filter(Boolean) || [];
+    await log("debug", `🔵 AI CALL → model=${usedModel}${toolNames.length ? `, tools=[${toolNames.join(",")}]` : ""}${modalities ? `, modalities=[${modalities.join(",")}]` : ""}`, {
+      messages: summarizeMessages(messages),
+    });
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       const controller = new AbortController();
@@ -144,7 +202,12 @@ Deno.serve(async (req) => {
           const errText = await resp.text();
           throw new Error(`AI gateway error ${resp.status}: ${errText}`);
         }
-        return await resp.json();
+        const result = await resp.json();
+
+        // Log the response summary
+        await log("debug", `🟢 AI RESP ← model=${usedModel}`, summarizeAIResponse(result));
+
+        return result;
       } catch (err) {
         clearTimeout(timer);
         if (attempt < retries) {
@@ -1173,7 +1236,15 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             klingBody.image_tail = endImageUrl;
           }
 
-          await log("debug", `Kling request for scene ${sceneIdx}`, klingBody);
+          await log("debug", `🔵 KLING CALL → POST /v1/videos/image2video scene=${sceneIdx}`, {
+            model_name: klingBody.model_name,
+            mode: klingBody.mode,
+            duration: klingBody.duration,
+            prompt: klingBody.prompt?.substring(0, 300),
+            negative_prompt: klingBody.negative_prompt?.substring(0, 200),
+            has_image: !!klingBody.image,
+            has_image_tail: !!klingBody.image_tail,
+          });
 
           const klingToken = await getKlingToken();
           const createResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
@@ -1182,6 +1253,8 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             body: JSON.stringify(klingBody),
           });
           const createResult = await createResp.json();
+
+          await log("debug", `🟢 KLING RESP ← scene=${sceneIdx}`, createResult);
 
           if (createResult.code !== 0 || !createResult.data?.task_id) {
             await log("error", `Kling task creation failed for scene ${sceneIdx}: ${createResult.message}`, createResult);
