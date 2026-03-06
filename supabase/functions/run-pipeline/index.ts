@@ -336,7 +336,7 @@ Deno.serve(async (req) => {
             },
             {
               role: "user",
-              content: `Series concept: ${project.series_prompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${project.series_rules ? `Rules: ${project.series_rules}` : ""}\n${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}\n\nCreate a detailed style bible.`,
+              content: `Series concept: ${conceptPrompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible.`,
             },
           ],
           [
