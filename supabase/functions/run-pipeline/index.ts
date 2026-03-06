@@ -860,7 +860,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             pairs.push({
               start: imageUrls[i], end: imageUrls[i + 1],
               sceneIndex: scene.scene_index,
-              prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
+              prompt: scene.kling_prompt || conceptPrompt || "smooth cinematic transition",
             });
           }
 
