@@ -1,0 +1,1 @@
+ALTER TABLE public.projects ADD COLUMN prompt_config_json jsonb DEFAULT NULL;
