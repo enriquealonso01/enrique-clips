@@ -382,17 +382,23 @@ Deno.serve(async (req) => {
         [
           {
             role: "system",
-            content: `You are a creative director for short-form video content. Generate a scene-by-scene plan.
+            content: `${resolvedConfig.planning.planner_system_prompt}
 The series has ${project.scene_count} scenes, each ${project.clip_duration_sec} seconds long, in ${project.aspect_ratio} aspect ratio.
-${project.series_rules ? `Rules: ${project.series_rules}` : ""}
-${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}
+${resolvedConfig.global.rules.length ? `Rules:\n${resolvedConfig.global.rules.map(r => `- ${r}`).join("\n")}` : ""}
+${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}
 
 === STYLE BIBLE (must be followed for ALL scenes) ===
 ${styleBibleText || "No style bible available."}
 
+=== FIRST SCENE HOOK RULES ===
+${resolvedConfig.planning.first_scene_hook_rules.map(r => `- ${r}`).join("\n")}
+
+=== VIRAL PACING RULES ===
+${resolvedConfig.planning.viral_pacing_rules.map(r => `- ${r}`).join("\n")}
+
 === KEYFRAME PROMPT RULES ===
-- Each end_keyframe_prompt must include composition anchors: camera distance, subject position, horizon line, and environment layout.
-- Maintain identical character appearance, outfit, and art style as defined in the style bible.
+${resolvedConfig.keyframes.composition_rules.map(r => `- ${r}`).join("\n")}
+${resolvedConfig.keyframes.continuity_rules.map(r => `- ${r}`).join("\n")}
 
 === SCENE BEHAVIOR SYSTEM ===
 Each scene MUST be assigned a scene_behavior from: environment_idle, cinematic_action, timelapse_build, conversation, exploration, reveal.
@@ -417,18 +423,11 @@ Each scene must also specify activity_density (low, medium, high):
 - medium: moderate activity, 2-4 elements
 - high: busy scene, many simultaneous activities (construction, crowds, machinery)
 
-=== GLOBAL START STATE ===
-The world begins COMPLETELY UNTOUCHED. Scene 1 must show ONLY the natural landscape.
-There are NO buildings, NO excavation, NO construction materials, NO workers, NO vehicles, NO machinery, NO tools, NO human structures.
-Only the natural environment exists at the start. Human elements may ONLY appear if the series prompt explicitly introduces them in a later scene.
+=== SCENE PROGRESSION RULES ===
+${resolvedConfig.planning.scene_progression_rules.map(r => `- ${r}`).join("\n")}
 
-=== TEMPORAL CONTINUITY ===
-- Scene 1 must preserve the untouched natural start state unless the series prompt says otherwise.
-- Each scene must logically follow the previous one.
-- Objects, characters, and structures cannot appear if they were not introduced in a prior scene.
-- If something is being built, it must progress incrementally across scenes — no sudden jumps.
-- Environmental conditions (time of day, weather) should transition smoothly.
-- The first sign of human activity (if any) should emerge gradually, not appear fully formed.`,
+=== START STATE RULES ===
+${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           },
           {
             role: "user",
