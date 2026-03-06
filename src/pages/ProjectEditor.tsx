@@ -9,13 +9,21 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2 } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
+import {
+  getDefaultPromptConfig,
+  validatePromptConfig,
+  legacyFieldsToPromptConfig,
+  buildResolvedPromptConfig,
+  mergePromptConfig,
+} from "@/lib/promptConfig";
 
 type Project = Tables<"projects">;
 
