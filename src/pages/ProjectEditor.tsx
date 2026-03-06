@@ -39,8 +39,11 @@ export default function ProjectEditor() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Partial<Project>>({});
+  const [form, setForm] = useState<Partial<Project & { prompt_config_json?: any }>>({});
   const [customKlingModel, setCustomKlingModel] = useState(false);
+  const [promptConfigText, setPromptConfigText] = useState("");
+  const [promptConfigErrors, setPromptConfigErrors] = useState<string[]>([]);
+  const [resolvedPreviewOpen, setResolvedPreviewOpen] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
