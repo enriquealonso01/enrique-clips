@@ -264,22 +264,28 @@ Deno.serve(async (req) => {
 
     const step = run.current_step;
 
-    // If run is new (queued), start it
+    // ── Build resolved prompt config ──
+    const resolvedConfig: PromptConfig = buildResolvedPromptConfig(project);
+
+    // If run is new (queued), start it and snapshot the resolved config
     if (run.status === "queued") {
       await updateRun({
         status: "running",
         started_at: new Date().toISOString(),
         current_step: "plan",
         progress_pct: 0,
+        generated_metadata: { resolved_prompt_config: resolvedConfig },
       });
       await log("info", "Pipeline started");
     } else if (run.status !== "running") {
       return json({ status: "not_running", run_status: run.status });
     }
 
-    const fullNegativePrompt = project.negative_prompt
-      ? `${KLING_NEGATIVE_TEMPLATE}, ${project.negative_prompt}`
-      : KLING_NEGATIVE_TEMPLATE;
+    // Combine motion negative prompt with global negative prompt
+    const fullNegativePrompt = [
+      resolvedConfig.motion.negative_prompt_extra,
+      resolvedConfig.global.negative_prompt,
+    ].filter(Boolean).join(", ");
 
     // ═══════════════════════════════════════════════════════
     // STEP: plan — initial image + style bible + scene plan
