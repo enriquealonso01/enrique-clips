@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
+import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,9 +9,6 @@ const corsHeaders = {
 };
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
-
-// Global negative prompt injected into every Kling call
-const KLING_NEGATIVE_TEMPLATE = "flicker, jitter, warping, morphing face, melting, extra limbs, extra fingers, text, watermark, logo, low-res, heavy noise, blurry, duplicate, deformed";
 
 // ── Behavior-Based Motion Grammar ──────────────────────────
 const MOTION_GRAMMAR: Record<string, { camera: string; action: string; density_hint: string }> = {
