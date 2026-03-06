@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
+import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,9 +9,6 @@ const corsHeaders = {
 };
 
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
-
-// Global negative prompt injected into every Kling call
-const KLING_NEGATIVE_TEMPLATE = "flicker, jitter, warping, morphing face, melting, extra limbs, extra fingers, text, watermark, logo, low-res, heavy noise, blurry, duplicate, deformed";
 
 // ── Behavior-Based Motion Grammar ──────────────────────────
 const MOTION_GRAMMAR: Record<string, { camera: string; action: string; density_hint: string }> = {
@@ -266,22 +264,30 @@ Deno.serve(async (req) => {
 
     const step = run.current_step;
 
-    // If run is new (queued), start it
+    // ── Build resolved prompt config ──
+    const resolvedConfig: PromptConfig = buildResolvedPromptConfig(project);
+
+    // If run is new (queued), start it and snapshot the resolved config
     if (run.status === "queued") {
       await updateRun({
         status: "running",
         started_at: new Date().toISOString(),
         current_step: "plan",
         progress_pct: 0,
+        generated_metadata: { resolved_prompt_config: resolvedConfig },
       });
       await log("info", "Pipeline started");
     } else if (run.status !== "running") {
       return json({ status: "not_running", run_status: run.status });
     }
 
-    const fullNegativePrompt = project.negative_prompt
-      ? `${KLING_NEGATIVE_TEMPLATE}, ${project.negative_prompt}`
-      : KLING_NEGATIVE_TEMPLATE;
+    // Combine motion negative prompt with global negative prompt
+    const fullNegativePrompt = [
+      resolvedConfig.motion.negative_prompt_extra,
+      resolvedConfig.global.negative_prompt,
+    ].filter(Boolean).join(", ");
+
+    const conceptPrompt = resolvedConfig.global.concept_prompt;
 
     // ═══════════════════════════════════════════════════════
     // STEP: plan — initial image + style bible + scene plan
@@ -291,8 +297,9 @@ Deno.serve(async (req) => {
 
       // ── 1a: Generate initial consistency image ──
       try {
-      const initialImagePrompt = project.series_prompt
-          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\nSeries concept: "${project.series_prompt}"\n\nIMPORTANT: If the series describes a transformation or construction process, show ONLY the untouched, unmodified starting environment with NO activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.`
+      const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
+      const initialImagePrompt = conceptPrompt
+          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: If the series describes a transformation or construction process, show ONLY the untouched, unmodified starting environment with NO activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
           : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
 
         const imageResult = await callAI(
@@ -330,7 +337,7 @@ Deno.serve(async (req) => {
             },
             {
               role: "user",
-              content: `Series concept: ${project.series_prompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${project.series_rules ? `Rules: ${project.series_rules}` : ""}\n${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}\n\nCreate a detailed style bible.`,
+              content: `Series concept: ${conceptPrompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible.`,
             },
           ],
           [
@@ -376,17 +383,23 @@ Deno.serve(async (req) => {
         [
           {
             role: "system",
-            content: `You are a creative director for short-form video content. Generate a scene-by-scene plan.
+            content: `${resolvedConfig.planning.planner_system_prompt}
 The series has ${project.scene_count} scenes, each ${project.clip_duration_sec} seconds long, in ${project.aspect_ratio} aspect ratio.
-${project.series_rules ? `Rules: ${project.series_rules}` : ""}
-${project.negative_prompt ? `Avoid: ${project.negative_prompt}` : ""}
+${resolvedConfig.global.rules.length ? `Rules:\n${resolvedConfig.global.rules.map(r => `- ${r}`).join("\n")}` : ""}
+${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}
 
 === STYLE BIBLE (must be followed for ALL scenes) ===
 ${styleBibleText || "No style bible available."}
 
+=== FIRST SCENE HOOK RULES ===
+${resolvedConfig.planning.first_scene_hook_rules.map(r => `- ${r}`).join("\n")}
+
+=== VIRAL PACING RULES ===
+${resolvedConfig.planning.viral_pacing_rules.map(r => `- ${r}`).join("\n")}
+
 === KEYFRAME PROMPT RULES ===
-- Each end_keyframe_prompt must include composition anchors: camera distance, subject position, horizon line, and environment layout.
-- Maintain identical character appearance, outfit, and art style as defined in the style bible.
+${resolvedConfig.keyframes.composition_rules.map(r => `- ${r}`).join("\n")}
+${resolvedConfig.keyframes.continuity_rules.map(r => `- ${r}`).join("\n")}
 
 === SCENE BEHAVIOR SYSTEM ===
 Each scene MUST be assigned a scene_behavior from: environment_idle, cinematic_action, timelapse_build, conversation, exploration, reveal.
@@ -411,22 +424,15 @@ Each scene must also specify activity_density (low, medium, high):
 - medium: moderate activity, 2-4 elements
 - high: busy scene, many simultaneous activities (construction, crowds, machinery)
 
-=== GLOBAL START STATE ===
-The world begins COMPLETELY UNTOUCHED. Scene 1 must show ONLY the natural landscape.
-There are NO buildings, NO excavation, NO construction materials, NO workers, NO vehicles, NO machinery, NO tools, NO human structures.
-Only the natural environment exists at the start. Human elements may ONLY appear if the series prompt explicitly introduces them in a later scene.
+=== SCENE PROGRESSION RULES ===
+${resolvedConfig.planning.scene_progression_rules.map(r => `- ${r}`).join("\n")}
 
-=== TEMPORAL CONTINUITY ===
-- Scene 1 must preserve the untouched natural start state unless the series prompt says otherwise.
-- Each scene must logically follow the previous one.
-- Objects, characters, and structures cannot appear if they were not introduced in a prior scene.
-- If something is being built, it must progress incrementally across scenes — no sudden jumps.
-- Environmental conditions (time of day, weather) should transition smoothly.
-- The first sign of human activity (if any) should emerge gradually, not appear fully formed.`,
+=== START STATE RULES ===
+${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           },
           {
             role: "user",
-            content: `Create a ${project.scene_count}-scene plan for: ${project.series_prompt || "A visually stunning short video"}`,
+            content: `Create a ${project.scene_count}-scene plan for: ${conceptPrompt || "A visually stunning short video"}`,
           },
         ],
         [
@@ -504,7 +510,7 @@ Only the natural environment exists at the start. Human elements may ONLY appear
               },
               {
                 role: "user",
-                content: `Series: ${project.series_prompt || project.title}
+                content: `Series: ${conceptPrompt || project.title}
 Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
@@ -560,13 +566,14 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
         await log("warn", `Overlay content generation failed: ${err.message} — continuing.`);
       }
 
-      // Store style bible + negative prompt in metadata for downstream steps
+      // Store style bible + negative prompt + resolved config in metadata for downstream steps
       await updateRun({
         current_step: "keyframes",
         progress_pct: 15,
         generated_metadata: {
           style_bible: styleBible,
           full_negative_prompt: fullNegativePrompt,
+          resolved_prompt_config: resolvedConfig,
         },
       });
       await log("info", "Plan step complete. Chaining to keyframes step.");
@@ -671,19 +678,16 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
         await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title}`);
 
         try {
-          const promptText = `Generate a high-quality ${project.aspect_ratio} image for this scene's END frame. This is keyframe K${scene.scene_index} of ${scenes.length}.
-
-=== STYLE BIBLE (follow exactly) ===
-${styleBibleText || "Cinematic, high detail, vibrant colors."}
-
-=== SCENE ===
-${scene.end_keyframe_prompt}
-
-=== RULES ===
-- Maintain IDENTICAL character appearance, outfit, and art style as the reference image.
-- Keep the same lighting/palette direction.
-- Match the composition anchors specified in the scene description.
-- Do NOT add text, watermarks, or logos.`;
+          // Build keyframe prompt from resolved config template
+          const kfConfig = resolvedConfig.keyframes;
+          const promptText = kfConfig.prompt_template
+            .replace("{aspect_ratio}", project.aspect_ratio || "9:16")
+            .replace("{scene_index}", String(scene.scene_index))
+            .replace("{total_scenes}", String(scenes.length))
+            .replace("{style_bible}", styleBibleText || "Cinematic, high detail, vibrant colors.")
+            .replace("{end_keyframe_prompt}", scene.end_keyframe_prompt || "")
+            .replace("{composition_rules}", kfConfig.composition_rules.map(r => `- ${r}`).join("\n"))
+            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"));
 
           const userContent: any[] = [{ type: "text", text: promptText }];
           if (prevKeyframeUrl) {
@@ -857,7 +861,7 @@ ${scene.end_keyframe_prompt}
             pairs.push({
               start: imageUrls[i], end: imageUrls[i + 1],
               sceneIndex: scene.scene_index,
-              prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
+              prompt: scene.kling_prompt || conceptPrompt || "smooth cinematic transition",
             });
           }
 
@@ -905,14 +909,14 @@ ${scene.end_keyframe_prompt}
           // ── Pika Image-to-Video: single image per clip ──
           const imageItems: Array<{ url: string; sceneIndex: number; prompt: string }> = [];
           if (runInitialImageUrl) {
-            imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || project.series_prompt || "cinematic motion" });
+            imageItems.push({ url: runInitialImageUrl, sceneIndex: 0, prompt: scenes[0]?.kling_prompt || conceptPrompt || "cinematic motion" });
           }
           for (const scene of scenes) {
             if (sceneKeyframes[scene.scene_index]) {
               imageItems.push({
                 url: sceneKeyframes[scene.scene_index],
                 sceneIndex: scene.scene_index,
-                prompt: scene.kling_prompt || project.series_prompt || "cinematic motion",
+                prompt: scene.kling_prompt || conceptPrompt || "cinematic motion",
               });
             }
           }
@@ -973,7 +977,7 @@ ${scene.end_keyframe_prompt}
             pairs.push({
               start: imageUrls[i], end: imageUrls[i + 1],
               sceneIndex: scene.scene_index,
-              prompt: scene.kling_prompt || project.series_prompt || "smooth cinematic transition",
+              prompt: scene.kling_prompt || conceptPrompt || "smooth cinematic transition",
             });
           }
 

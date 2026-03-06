@@ -9,13 +9,21 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2 } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
+import {
+  getDefaultPromptConfig,
+  validatePromptConfig,
+  legacyFieldsToPromptConfig,
+  buildResolvedPromptConfig,
+  mergePromptConfig,
+} from "@/lib/promptConfig";
 
 type Project = Tables<"projects">;
 
@@ -31,8 +39,11 @@ export default function ProjectEditor() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [form, setForm] = useState<Partial<Project>>({});
+  const [form, setForm] = useState<Partial<Project & { prompt_config_json?: any }>>({});
   const [customKlingModel, setCustomKlingModel] = useState(false);
+  const [promptConfigText, setPromptConfigText] = useState("");
+  const [promptConfigErrors, setPromptConfigErrors] = useState<string[]>([]);
+  const [resolvedPreviewOpen, setResolvedPreviewOpen] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -68,6 +79,10 @@ export default function ProjectEditor() {
       if (project.kling_model_name && !KLING_PRESETS.includes(project.kling_model_name)) {
         setCustomKlingModel(true);
       }
+      // Init prompt config text from project
+      const pcj = (project as any).prompt_config_json;
+      setPromptConfigText(pcj ? JSON.stringify(pcj, null, 2) : "");
+      setPromptConfigErrors([]);
     }
   }, [project]);
 
@@ -85,7 +100,29 @@ export default function ProjectEditor() {
   });
 
   const handleSave = () => {
-    const { id, created_at, updated_at, ...updates } = form as Project;
+    const { id, created_at, updated_at, ...updates } = form as any;
+
+    // Validate and attach prompt config JSON if present
+    if (promptConfigText.trim()) {
+      try {
+        const parsed = JSON.parse(promptConfigText);
+        const validation = validatePromptConfig(parsed);
+        if (!validation.valid) {
+          setPromptConfigErrors(validation.errors);
+          toast({ title: "Validation Error", description: validation.errors[0], variant: "destructive" });
+          return;
+        }
+        updates.prompt_config_json = parsed;
+        setPromptConfigErrors([]);
+      } catch (e: any) {
+        setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
+        toast({ title: "Invalid JSON", description: e.message, variant: "destructive" });
+        return;
+      }
+    } else {
+      updates.prompt_config_json = null;
+    }
+
     updateProject.mutate(updates);
   };
 
@@ -193,6 +230,104 @@ export default function ProjectEditor() {
                   </span>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Prompt Config JSON Editor */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Prompt Config JSON</CardTitle>
+              <CardDescription>
+                Advanced: override all pipeline prompts, rules, and settings via a single JSON configuration.
+                If empty, the system uses legacy fields above + system defaults.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPromptConfigText(JSON.stringify(getDefaultPromptConfig(), null, 2));
+                    setPromptConfigErrors([]);
+                  }}
+                >
+                  <RotateCcw className="mr-1 h-3 w-3" /> Reset to Default
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const legacy = legacyFieldsToPromptConfig({
+                      series_prompt: form.series_prompt as string,
+                      series_rules: form.series_rules as string,
+                      negative_prompt: form.negative_prompt as string,
+                    });
+                    const merged = mergePromptConfig(getDefaultPromptConfig(), legacy);
+                    setPromptConfigText(JSON.stringify(merged, null, 2));
+                    setPromptConfigErrors([]);
+                  }}
+                >
+                  <Wand2 className="mr-1 h-3 w-3" /> Generate from Legacy Fields
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(promptConfigText);
+                      setPromptConfigText(JSON.stringify(parsed, null, 2));
+                    } catch (e: any) {
+                      setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
+                    }
+                  }}
+                >
+                  Pretty Print
+                </Button>
+              </div>
+              <Textarea
+                value={promptConfigText}
+                onChange={(e) => {
+                  setPromptConfigText(e.target.value);
+                  setPromptConfigErrors([]);
+                }}
+                placeholder='Paste or edit JSON config here... Leave empty to use legacy fields.'
+                rows={16}
+                className="font-mono text-xs"
+              />
+              {promptConfigErrors.length > 0 && (
+                <div className="text-sm text-destructive space-y-1">
+                  {promptConfigErrors.map((err, i) => (
+                    <p key={i}>⚠ {err}</p>
+                  ))}
+                </div>
+              )}
+
+              {/* Resolved Config Preview */}
+              <Collapsible open={resolvedPreviewOpen} onOpenChange={setResolvedPreviewOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between">
+                    Resolved Config Preview
+                    <ChevronDown className={`h-4 w-4 transition-transform ${resolvedPreviewOpen ? "rotate-180" : ""}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <pre className="mt-2 p-3 bg-muted rounded-md text-xs font-mono overflow-auto max-h-[400px]">
+                    {JSON.stringify(
+                      buildResolvedPromptConfig({
+                        series_prompt: form.series_prompt as string,
+                        series_rules: form.series_rules as string,
+                        negative_prompt: form.negative_prompt as string,
+                        prompt_config_json: promptConfigText.trim()
+                          ? (() => { try { return JSON.parse(promptConfigText); } catch { return null; } })()
+                          : null,
+                      }),
+                      null,
+                      2
+                    )}
+                  </pre>
+                </CollapsibleContent>
+              </Collapsible>
             </CardContent>
           </Card>
         </TabsContent>

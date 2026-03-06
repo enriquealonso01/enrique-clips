@@ -149,6 +149,7 @@ export type Database = {
           posting_interval_hours: number | null
           project_control_token_hash: string | null
           project_control_token_hint: string | null
+          prompt_config_json: Json | null
           publish_defaults: Json
           publish_platforms: Json
           scene_count: number
@@ -181,6 +182,7 @@ export type Database = {
           posting_interval_hours?: number | null
           project_control_token_hash?: string | null
           project_control_token_hint?: string | null
+          prompt_config_json?: Json | null
           publish_defaults?: Json
           publish_platforms?: Json
           scene_count?: number
@@ -213,6 +215,7 @@ export type Database = {
           posting_interval_hours?: number | null
           project_control_token_hash?: string | null
           project_control_token_hint?: string | null
+          prompt_config_json?: Json | null
           publish_defaults?: Json
           publish_platforms?: Json
           scene_count?: number
