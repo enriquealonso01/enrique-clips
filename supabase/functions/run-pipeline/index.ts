@@ -1197,14 +1197,91 @@ ${scene.end_keyframe_prompt}
           });
         };
 
-        for (let batch = 0; batch < pendingScenes.length; batch += CONCURRENCY) {
+        // Submit in batches of CONCURRENCY, waiting for each batch to complete
+        // before submitting the next to avoid Kling's "parallel task over resource pack limit"
+        const totalBatches = Math.ceil(pendingScenes.length / CONCURRENCY);
+        for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
           const status = await checkRunStatus();
           if (status !== "running") {
             await log("info", "Run halted during Kling submission");
             return json({ status: "halted" });
           }
-          const batchItems = pendingScenes.slice(batch, batch + CONCURRENCY);
-          await Promise.all(batchItems.map((s, i) => submitTask(s, batch + i)));
+          const batchStart = batchIdx * CONCURRENCY;
+          const batchItems = pendingScenes.slice(batchStart, batchStart + CONCURRENCY);
+          await log("info", `Submitting Kling batch ${batchIdx + 1}/${totalBatches} (${batchItems.length} scenes)`);
+          await Promise.all(batchItems.map((s, i) => submitTask(s, batchStart + i)));
+
+          // If there are more batches, poll until this batch completes before submitting next
+          if (batchIdx < totalBatches - 1) {
+            await log("info", `Waiting for batch ${batchIdx + 1} to complete before submitting next batch...`);
+            const BATCH_POLL_INTERVAL = 15000;
+            const MAX_BATCH_POLLS = 40; // ~10 minutes per batch
+            let batchDone = false;
+            for (let poll = 0; poll < MAX_BATCH_POLLS; poll++) {
+              await new Promise(r => setTimeout(r, BATCH_POLL_INTERVAL));
+              const runStatus = await checkRunStatus();
+              if (runStatus !== "running") return json({ status: "halted" });
+
+              // Check if all tasks from this batch have resolved
+              const { data: batchAssets } = await supabase
+                .from("assets")
+                .select("metadata")
+                .eq("run_id", runId)
+                .eq("type", "clip")
+                .like("supabase_path", `pending-kling/${runId}/%`);
+
+              // Count how many of this batch's scenes are still pending
+              const batchSceneIndices = new Set(batchItems.map(s => s.scene_index));
+              const stillPending = (batchAssets || []).filter(a => {
+                const meta = a.metadata as any;
+                return meta?.kling_task_id && batchSceneIndices.has(meta.scene_index) &&
+                  meta.status !== "completed" && meta.status !== "failed";
+              });
+
+              // Also check if tasks were downloaded (path no longer starts with pending-)
+              const { data: completedAssets } = await supabase
+                .from("assets")
+                .select("metadata")
+                .eq("run_id", runId)
+                .eq("type", "clip")
+                .not("supabase_path", "like", "pending-%");
+              const completedSceneIndices = new Set((completedAssets || []).map(a => (a.metadata as any)?.scene_index));
+              const failedScenes = (batchAssets || []).filter(a => {
+                const meta = a.metadata as any;
+                return batchSceneIndices.has(meta?.scene_index) && meta?.status === "failed";
+              });
+
+              // Batch is done when all its scenes are either completed or failed
+              const resolvedCount = [...batchSceneIndices].filter(idx =>
+                completedSceneIndices.has(idx) || failedScenes.some(a => (a.metadata as any)?.scene_index === idx)
+              ).length;
+
+              if (resolvedCount >= batchItems.length || stillPending.length === 0) {
+                await log("info", `Batch ${batchIdx + 1} complete. Proceeding to next batch.`);
+                batchDone = true;
+                break;
+              }
+
+              // Trigger poll-kling to process completions
+              try {
+                const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/poll-kling`;
+                await fetch(fnUrl, {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({ run_id: runId }),
+                });
+              } catch (pollErr) {
+                await log("warn", `Batch poll error: ${pollErr.message}`);
+              }
+            }
+
+            if (!batchDone) {
+              await log("warn", `Batch ${batchIdx + 1} polling timed out. Submitting next batch anyway.`);
+            }
+          }
         }
 
         await log("info", "All Kling tasks submitted.");
