@@ -287,6 +287,8 @@ Deno.serve(async (req) => {
       resolvedConfig.global.negative_prompt,
     ].filter(Boolean).join(", ");
 
+    const conceptPrompt = resolvedConfig.global.concept_prompt;
+
     // ═══════════════════════════════════════════════════════
     // STEP: plan — initial image + style bible + scene plan
     // ═══════════════════════════════════════════════════════
@@ -295,7 +297,6 @@ Deno.serve(async (req) => {
 
       // ── 1a: Generate initial consistency image ──
       try {
-      const conceptPrompt = resolvedConfig.global.concept_prompt;
       const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
       const initialImagePrompt = conceptPrompt
           ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: If the series describes a transformation or construction process, show ONLY the untouched, unmodified starting environment with NO activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
