@@ -915,7 +915,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
               imageItems.push({
                 url: sceneKeyframes[scene.scene_index],
                 sceneIndex: scene.scene_index,
-                prompt: scene.kling_prompt || project.series_prompt || "cinematic motion",
+                prompt: scene.kling_prompt || conceptPrompt || "cinematic motion",
               });
             }
           }
