@@ -1902,6 +1902,11 @@ Deno.serve(async (req) => {
 
       // AI metadata generation
       try {
+        // Retrieve resolved prompt config from run metadata (snapshotted at pipeline start)
+        const runMetadata = (run.generated_metadata as any) || {};
+        const resolvedConfig: PromptConfig = runMetadata.resolved_prompt_config || buildResolvedPromptConfig(project);
+        const metaConfig = resolvedConfig.metadata;
+
         const { data: scenes } = await supabase
           .from("scenes")
           .select("scene_title, scene_description")
@@ -1929,8 +1934,8 @@ Deno.serve(async (req) => {
                 {
                   role: "user",
                   content: `Generate a title, description, and hashtags for this video:\n\nSeries: ${
-                    project.series_prompt || project.title
-                  }\nScenes:\n${scenesSummary}`,
+                    resolvedConfig.global.concept_prompt || project.series_prompt || project.title
+                  }\nScenes:\n${scenesSummary}\n\nTitle instructions: ${metaConfig.title_prompt}\nDescription instructions: ${metaConfig.description_prompt}\nHashtag instructions: ${metaConfig.hashtag_prompt}`,
                 },
               ],
               tools: [
@@ -1968,7 +1973,8 @@ Deno.serve(async (req) => {
         const metaToolCall = metaResult.choices?.[0]?.message?.tool_calls?.[0];
         if (metaToolCall) {
           const metadata = JSON.parse(metaToolCall.function.arguments);
-          await updateRun({ generated_metadata: metadata });
+          // Preserve resolved_prompt_config when updating metadata
+          await updateRun({ generated_metadata: { ...runMetadata, ...metadata } });
           await log("info", "Metadata generated", metadata);
         }
       } catch (err) {
