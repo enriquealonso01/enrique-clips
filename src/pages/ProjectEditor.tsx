@@ -100,7 +100,29 @@ export default function ProjectEditor() {
   });
 
   const handleSave = () => {
-    const { id, created_at, updated_at, ...updates } = form as Project;
+    const { id, created_at, updated_at, ...updates } = form as any;
+
+    // Validate and attach prompt config JSON if present
+    if (promptConfigText.trim()) {
+      try {
+        const parsed = JSON.parse(promptConfigText);
+        const validation = validatePromptConfig(parsed);
+        if (!validation.valid) {
+          setPromptConfigErrors(validation.errors);
+          toast({ title: "Validation Error", description: validation.errors[0], variant: "destructive" });
+          return;
+        }
+        updates.prompt_config_json = parsed;
+        setPromptConfigErrors([]);
+      } catch (e: any) {
+        setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
+        toast({ title: "Invalid JSON", description: e.message, variant: "destructive" });
+        return;
+      }
+    } else {
+      updates.prompt_config_json = null;
+    }
+
     updateProject.mutate(updates);
   };
 
