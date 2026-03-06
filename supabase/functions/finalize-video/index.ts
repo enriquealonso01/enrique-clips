@@ -1916,6 +1916,27 @@ Deno.serve(async (req) => {
         const scenesSummary =
           scenes?.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n") || "";
 
+        const metadataPromptMessages = [
+          {
+            role: "system",
+            content:
+              "You are a social media content expert. Generate engaging metadata for a short-form video post.",
+          },
+          {
+            role: "user",
+            content: `Generate a title, description, and hashtags for this video:\n\nSeries: ${
+              resolvedConfig.global.concept_prompt || project.series_prompt || project.title
+            }\nScenes:\n${scenesSummary}\n\nTitle instructions: ${metaConfig.title_prompt}\nDescription instructions: ${metaConfig.description_prompt}\nHashtag instructions: ${metaConfig.hashtag_prompt}`,
+          },
+        ];
+
+        await log("debug", "🔵 AI CALL → model=google/gemini-2.5-flash, tool=generate_metadata", {
+          messages: metadataPromptMessages.map(m => ({
+            role: m.role,
+            content: m.content.length > 500 ? m.content.substring(0, 500) + "…[truncated]" : m.content,
+          })),
+        });
+
         const aiResp = await withRetry(() =>
           fetch(AI_GATEWAY, {
             method: "POST",
@@ -1925,19 +1946,7 @@ Deno.serve(async (req) => {
             },
             body: JSON.stringify({
               model: "google/gemini-2.5-flash",
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    "You are a social media content expert. Generate engaging metadata for a short-form video post.",
-                },
-                {
-                  role: "user",
-                  content: `Generate a title, description, and hashtags for this video:\n\nSeries: ${
-                    resolvedConfig.global.concept_prompt || project.series_prompt || project.title
-                  }\nScenes:\n${scenesSummary}\n\nTitle instructions: ${metaConfig.title_prompt}\nDescription instructions: ${metaConfig.description_prompt}\nHashtag instructions: ${metaConfig.hashtag_prompt}`,
-                },
-              ],
+              messages: metadataPromptMessages,
               tools: [
                 {
                   type: "function",
@@ -1971,6 +1980,16 @@ Deno.serve(async (req) => {
 
         const metaResult = await aiResp.json();
         const metaToolCall = metaResult.choices?.[0]?.message?.tool_calls?.[0];
+
+        await log("debug", "🟢 AI RESP ← model=google/gemini-2.5-flash", {
+          tool_call: metaToolCall ? {
+            name: metaToolCall.function?.name,
+            args_preview: metaToolCall.function?.arguments?.substring(0, 500),
+          } : null,
+          finish_reason: metaResult?.choices?.[0]?.finish_reason,
+          usage: metaResult?.usage,
+        });
+
         if (metaToolCall) {
           const metadata = JSON.parse(metaToolCall.function.arguments);
           // Preserve resolved_prompt_config when updating metadata
