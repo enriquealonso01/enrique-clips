@@ -565,13 +565,14 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
         await log("warn", `Overlay content generation failed: ${err.message} — continuing.`);
       }
 
-      // Store style bible + negative prompt in metadata for downstream steps
+      // Store style bible + negative prompt + resolved config in metadata for downstream steps
       await updateRun({
         current_step: "keyframes",
         progress_pct: 15,
         generated_metadata: {
           style_bible: styleBible,
           full_negative_prompt: fullNegativePrompt,
+          resolved_prompt_config: resolvedConfig,
         },
       });
       await log("info", "Plan step complete. Chaining to keyframes step.");
