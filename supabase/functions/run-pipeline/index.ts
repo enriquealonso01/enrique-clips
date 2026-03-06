@@ -1236,7 +1236,15 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             klingBody.image_tail = endImageUrl;
           }
 
-          await log("debug", `Kling request for scene ${sceneIdx}`, klingBody);
+          await log("debug", `🔵 KLING CALL → POST /v1/videos/image2video scene=${sceneIdx}`, {
+            model_name: klingBody.model_name,
+            mode: klingBody.mode,
+            duration: klingBody.duration,
+            prompt: klingBody.prompt?.substring(0, 300),
+            negative_prompt: klingBody.negative_prompt?.substring(0, 200),
+            has_image: !!klingBody.image,
+            has_image_tail: !!klingBody.image_tail,
+          });
 
           const klingToken = await getKlingToken();
           const createResp = await fetch(`${KLING_API_BASE}/v1/videos/image2video`, {
@@ -1245,6 +1253,8 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             body: JSON.stringify(klingBody),
           });
           const createResult = await createResp.json();
+
+          await log("debug", `🟢 KLING RESP ← scene=${sceneIdx}`, createResult);
 
           if (createResult.code !== 0 || !createResult.data?.task_id) {
             await log("error", `Kling task creation failed for scene ${sceneIdx}: ${createResult.message}`, createResult);
