@@ -232,6 +232,104 @@ export default function ProjectEditor() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Prompt Config JSON Editor */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Prompt Config JSON</CardTitle>
+              <CardDescription>
+                Advanced: override all pipeline prompts, rules, and settings via a single JSON configuration.
+                If empty, the system uses legacy fields above + system defaults.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setPromptConfigText(JSON.stringify(getDefaultPromptConfig(), null, 2));
+                    setPromptConfigErrors([]);
+                  }}
+                >
+                  <RotateCcw className="mr-1 h-3 w-3" /> Reset to Default
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const legacy = legacyFieldsToPromptConfig({
+                      series_prompt: form.series_prompt as string,
+                      series_rules: form.series_rules as string,
+                      negative_prompt: form.negative_prompt as string,
+                    });
+                    const merged = mergePromptConfig(getDefaultPromptConfig(), legacy);
+                    setPromptConfigText(JSON.stringify(merged, null, 2));
+                    setPromptConfigErrors([]);
+                  }}
+                >
+                  <Wand2 className="mr-1 h-3 w-3" /> Generate from Legacy Fields
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    try {
+                      const parsed = JSON.parse(promptConfigText);
+                      setPromptConfigText(JSON.stringify(parsed, null, 2));
+                    } catch (e: any) {
+                      setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
+                    }
+                  }}
+                >
+                  Pretty Print
+                </Button>
+              </div>
+              <Textarea
+                value={promptConfigText}
+                onChange={(e) => {
+                  setPromptConfigText(e.target.value);
+                  setPromptConfigErrors([]);
+                }}
+                placeholder='Paste or edit JSON config here... Leave empty to use legacy fields.'
+                rows={16}
+                className="font-mono text-xs"
+              />
+              {promptConfigErrors.length > 0 && (
+                <div className="text-sm text-destructive space-y-1">
+                  {promptConfigErrors.map((err, i) => (
+                    <p key={i}>⚠ {err}</p>
+                  ))}
+                </div>
+              )}
+
+              {/* Resolved Config Preview */}
+              <Collapsible open={resolvedPreviewOpen} onOpenChange={setResolvedPreviewOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between">
+                    Resolved Config Preview
+                    <ChevronDown className={`h-4 w-4 transition-transform ${resolvedPreviewOpen ? "rotate-180" : ""}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <pre className="mt-2 p-3 bg-muted rounded-md text-xs font-mono overflow-auto max-h-[400px]">
+                    {JSON.stringify(
+                      buildResolvedPromptConfig({
+                        series_prompt: form.series_prompt as string,
+                        series_rules: form.series_rules as string,
+                        negative_prompt: form.negative_prompt as string,
+                        prompt_config_json: promptConfigText.trim()
+                          ? (() => { try { return JSON.parse(promptConfigText); } catch { return null; } })()
+                          : null,
+                      }),
+                      null,
+                      2
+                    )}
+                  </pre>
+                </CollapsibleContent>
+              </Collapsible>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Video Generator Tab */}
