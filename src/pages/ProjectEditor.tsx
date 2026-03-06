@@ -79,6 +79,10 @@ export default function ProjectEditor() {
       if (project.kling_model_name && !KLING_PRESETS.includes(project.kling_model_name)) {
         setCustomKlingModel(true);
       }
+      // Init prompt config text from project
+      const pcj = (project as any).prompt_config_json;
+      setPromptConfigText(pcj ? JSON.stringify(pcj, null, 2) : "");
+      setPromptConfigErrors([]);
     }
   }, [project]);
 
