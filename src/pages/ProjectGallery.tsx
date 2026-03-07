@@ -142,7 +142,7 @@ export default function ProjectGallery() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
           {assets.map((asset) => {
             const url = getPublicUrl(asset.supabase_path);
             const typeInfo = ASSET_TYPE_LABELS[asset.type] || { label: asset.type, icon: Image };
