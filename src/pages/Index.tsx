@@ -119,12 +119,12 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
-          <p className="text-muted-foreground">Manage your AI creator automation projects</p>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Projects</h1>
+          <p className="text-sm text-muted-foreground">Manage your AI creator automation projects</p>
         </div>
-        <Button onClick={() => createProject.mutate()} disabled={createProject.isPending}>
+        <Button onClick={() => createProject.mutate()} disabled={createProject.isPending} className="w-full sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           New Project
         </Button>
