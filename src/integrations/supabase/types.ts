@@ -141,6 +141,7 @@ export type Database = {
           kling_mode: string
           kling_model_name: string
           kling_sound: boolean
+          last_run_at: string | null
           negative_prompt: string | null
           pika_model: string
           pika_resolution: string
@@ -174,6 +175,7 @@ export type Database = {
           kling_mode?: string
           kling_model_name?: string
           kling_sound?: boolean
+          last_run_at?: string | null
           negative_prompt?: string | null
           pika_model?: string
           pika_resolution?: string
@@ -207,6 +209,7 @@ export type Database = {
           kling_mode?: string
           kling_model_name?: string
           kling_sound?: boolean
+          last_run_at?: string | null
           negative_prompt?: string | null
           pika_model?: string
           pika_resolution?: string
