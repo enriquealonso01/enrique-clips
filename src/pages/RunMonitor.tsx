@@ -188,19 +188,19 @@ export default function RunMonitor() {
   const canStop = ["running", "paused", "queued"].includes(run.status);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight">Run Monitor</h1>
-          <div className="flex items-center gap-3 mt-1">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Run Monitor</h1>
+          <div className="flex items-center gap-2 md:gap-3 mt-1 flex-wrap">
             <StatusBadge status={run.status} />
-            <span className="text-sm text-muted-foreground">Step: {run.current_step}</span>
+            <span className="text-xs md:text-sm text-muted-foreground">Step: {run.current_step}</span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1 md:gap-2 shrink-0">
           <Button size="sm" variant="outline" disabled={!canResume} onClick={() => updateStatus("running")}>
             <Play className="h-3 w-3" />
           </Button>
