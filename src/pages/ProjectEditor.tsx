@@ -150,20 +150,20 @@ export default function ProjectEditor() {
 
   return (
     <div className="space-y-4 md:space-y-6 max-w-4xl">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/")} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <Input
             value={form.title || ""}
             onChange={(e) => update("title", e.target.value)}
-            className="text-xl font-bold border-none bg-transparent px-0 h-auto text-foreground"
+            className="text-lg md:text-xl font-bold border-none bg-transparent px-0 h-auto text-foreground"
           />
         </div>
-        <Button onClick={handleSave} disabled={updateProject.isPending}>
-          <Save className="mr-2 h-4 w-4" />
-          Save
+        <Button onClick={handleSave} disabled={updateProject.isPending} size="sm" className="shrink-0">
+          <Save className="mr-1 md:mr-2 h-4 w-4" />
+          <span className="hidden sm:inline">Save</span>
         </Button>
       </div>
 
