@@ -249,48 +249,70 @@ export default function RunMonitor() {
         </CardContent>
       </Card>
 
-      {/* Scenes Table */}
       <Card>
         <CardHeader><CardTitle className="text-base">Scenes</CardTitle></CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-16">#</TableHead>
-                <TableHead>Title</TableHead>
-                <TableHead>Behavior</TableHead>
-                <TableHead>Density</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Kling Prompt</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {scenes?.length ? scenes.map((scene) => (
-                <TableRow key={scene.id}>
-                  <TableCell>{scene.scene_index}</TableCell>
-                  <TableCell>{scene.scene_title || "—"}</TableCell>
-                  <TableCell>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                      {(scene as any).scene_behavior || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs text-muted-foreground">
-                      {(scene as any).activity_density || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell><StatusBadge status={scene.status} /></TableCell>
-                  <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={scene.kling_prompt || ""}>
-                    {scene.kling_prompt || "—"}
-                  </TableCell>
-                </TableRow>
-              )) : (
+          {/* Desktop table */}
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">No scenes yet</TableCell>
+                  <TableHead className="w-16">#</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Behavior</TableHead>
+                  <TableHead>Density</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Prompt</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {scenes?.length ? scenes.map((scene) => (
+                  <TableRow key={scene.id}>
+                    <TableCell>{scene.scene_index}</TableCell>
+                    <TableCell>{scene.scene_title || "—"}</TableCell>
+                    <TableCell>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        {(scene as any).scene_behavior || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xs text-muted-foreground">
+                        {(scene as any).activity_density || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell><StatusBadge status={scene.status} /></TableCell>
+                    <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={scene.kling_prompt || ""}>
+                      {scene.kling_prompt || "—"}
+                    </TableCell>
+                  </TableRow>
+                )) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">No scenes yet</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {scenes?.length ? scenes.map((scene) => (
+              <div key={scene.id} className="border rounded-md p-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">#{scene.scene_index} {scene.scene_title || ""}</span>
+                  <StatusBadge status={scene.status} />
+                </div>
+                <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
+                  <span className="px-1.5 py-0.5 rounded bg-muted font-mono">{(scene as any).scene_behavior || "—"}</span>
+                  <span>{(scene as any).activity_density || "—"}</span>
+                </div>
+                {scene.kling_prompt && (
+                  <p className="text-xs text-muted-foreground line-clamp-2">{scene.kling_prompt}</p>
+                )}
+              </div>
+            )) : (
+              <p className="text-center text-muted-foreground py-4">No scenes yet</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 
