@@ -554,7 +554,47 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
         });
       }
 
-      // ── 1d: AI overlay content generation ──
+      // ── 1d: Insert JSON-defined overlays into DB ──
+      try {
+        const jsonOverlays = resolvedConfig.overlays?.items;
+        if (jsonOverlays && Array.isArray(jsonOverlays) && jsonOverlays.length > 0) {
+          await log("info", `Inserting ${jsonOverlays.length} overlay(s) from prompt config JSON...`);
+
+          // Get current max sort_order for this project
+          const { data: existingOverlays } = await supabase
+            .from("overlays")
+            .select("sort_order")
+            .eq("project_id", project.id)
+            .order("sort_order", { ascending: false })
+            .limit(1);
+          let nextSortOrder = (existingOverlays?.[0]?.sort_order ?? -1) + 1;
+
+          for (const item of jsonOverlays) {
+            await supabase.from("overlays").insert({
+              project_id: project.id,
+              overlay_type: item.overlay_type || "text",
+              content_mode: item.content_mode || "exact",
+              content_text: item.content_text || null,
+              content_prompt: item.content_prompt || null,
+              image_path: item.image_path || null,
+              position: item.position || "bottom_center",
+              style: item.style || "lower_third",
+              start_pct: item.start_pct ?? 0,
+              end_pct: item.end_pct ?? 100,
+              font_size: item.font_size ?? 48,
+              font_color: item.font_color || "#FFFFFF",
+              bg_color: item.bg_color || "rgba(0,0,0,0.5)",
+              z_index: item.z_index ?? 1,
+              sort_order: nextSortOrder++,
+            });
+          }
+          await log("info", `${jsonOverlays.length} JSON overlay(s) inserted into DB`);
+        }
+      } catch (err) {
+        await log("warn", `JSON overlay insertion failed: ${err.message} — continuing with DB overlays only.`);
+      }
+
+      // ── 1e: AI overlay content generation ──
       try {
         const { data: overlays } = await supabase
           .from("overlays")
