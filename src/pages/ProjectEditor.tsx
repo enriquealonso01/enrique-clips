@@ -201,7 +201,7 @@ export default function ProjectEditor() {
                 <Label>Negative Prompt</Label>
                 <Input value={form.negative_prompt || ""} onChange={(e) => update("negative_prompt", e.target.value)} placeholder="What to avoid..." />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Scenes</Label>
                   <Input type="number" value={form.scene_count || 3} onChange={(e) => update("scene_count", parseInt(e.target.value))} min={1} max={20} />
