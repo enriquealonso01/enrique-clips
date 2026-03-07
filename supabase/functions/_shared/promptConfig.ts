@@ -39,9 +39,27 @@ export interface PromptConfigOverlaySlot {
   generation_prompt: string;
 }
 
+export interface PromptConfigOverlayItem {
+  overlay_type: string;
+  content_mode: string;
+  content_text?: string;
+  content_prompt?: string;
+  image_path?: string;
+  position: string;
+  style: string;
+  start_pct: number;
+  end_pct: number;
+  font_size?: number;
+  font_color?: string;
+  bg_color?: string;
+  z_index?: number;
+  sort_order?: number;
+}
+
 export interface PromptConfigOverlays {
   opening: PromptConfigOverlaySlot;
   ending: PromptConfigOverlaySlot;
+  items?: PromptConfigOverlayItem[];
 }
 
 export interface PromptConfigMetadata {

@@ -38,9 +38,27 @@ export interface PromptConfigOverlaySlot {
   generation_prompt: string;
 }
 
+export interface PromptConfigOverlayItem {
+  overlay_type: string;       // "text" | "image"
+  content_mode: string;       // "exact" | "ai_generated"
+  content_text?: string;      // static text (for content_mode=exact)
+  content_prompt?: string;    // AI prompt (for content_mode=ai_generated)
+  image_path?: string;        // storage path for image overlays
+  position: string;           // "top_left" | "top_center" | "top_right" | "center" | "bottom_left" | "bottom_center" | "bottom_right"
+  style: string;              // "lower_third" | "full_width" | "minimal" | "engagement" | etc.
+  start_pct: number;          // 0-100, when overlay appears
+  end_pct: number;            // 0-100, when overlay disappears
+  font_size?: number;         // base font size (540p baseline)
+  font_color?: string;        // e.g. "#FFFFFF"
+  bg_color?: string;          // e.g. "rgba(0,0,0,0.5)"
+  z_index?: number;           // stacking order
+  sort_order?: number;        // render order
+}
+
 export interface PromptConfigOverlays {
   opening: PromptConfigOverlaySlot;
   ending: PromptConfigOverlaySlot;
+  items?: PromptConfigOverlayItem[];
 }
 
 export interface PromptConfigMetadata {
