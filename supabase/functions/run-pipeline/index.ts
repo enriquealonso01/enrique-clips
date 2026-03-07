@@ -1418,6 +1418,22 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
   } catch (err) {
     await log("error", `Pipeline failed: ${err.message}`);
     await updateRun({ status: "failed", error_message: err.message, finished_at: new Date().toISOString() });
+
+    // Send error notification email
+    try {
+      const notifyUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`;
+      await fetch(notifyUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ run_id: runId, type: "error", error_message: err.message }),
+      });
+    } catch (notifyErr) {
+      console.error("Notification send error:", notifyErr);
+    }
+
     return json({ error: err.message }, 500);
   }
 });
