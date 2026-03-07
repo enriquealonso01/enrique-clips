@@ -689,14 +689,14 @@ export default function ProjectEditor() {
                   {runs.map((run) => (
                     <div
                       key={run.id}
-                      className="flex items-center justify-between p-3 rounded-md border border-border hover:bg-muted/50 cursor-pointer transition-colors"
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 rounded-md border border-border hover:bg-muted/50 cursor-pointer transition-colors"
                       onClick={() => navigate(`/runs/${run.id}`)}
                     >
                       <div className="flex items-center gap-3">
                         <StatusBadge status={run.status} />
                         <span className="text-sm text-muted-foreground capitalize">{run.current_step}</span>
                       </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
                         <span>{run.progress_pct}%</span>
                         <span>{new Date(run.created_at).toLocaleString()}</span>
                       </div>
