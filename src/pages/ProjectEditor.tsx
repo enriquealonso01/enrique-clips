@@ -149,34 +149,34 @@ export default function ProjectEditor() {
   if (!project) return <div className="text-center text-muted-foreground py-12">Project not found</div>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
+    <div className="space-y-4 md:space-y-6 max-w-4xl">
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate("/")} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <Input
             value={form.title || ""}
             onChange={(e) => update("title", e.target.value)}
-            className="text-xl font-bold border-none bg-transparent px-0 h-auto text-foreground"
+            className="text-lg md:text-xl font-bold border-none bg-transparent px-0 h-auto text-foreground"
           />
         </div>
-        <Button onClick={handleSave} disabled={updateProject.isPending}>
-          <Save className="mr-2 h-4 w-4" />
-          Save
+        <Button onClick={handleSave} disabled={updateProject.isPending} size="sm" className="shrink-0">
+          <Save className="mr-1 md:mr-2 h-4 w-4" />
+          <span className="hidden sm:inline">Save</span>
         </Button>
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-8">
-          <TabsTrigger value="series">Series</TabsTrigger>
-          <TabsTrigger value="video">Video Gen</TabsTrigger>
-          <TabsTrigger value="overlays">Overlays</TabsTrigger>
-          <TabsTrigger value="publish">Publish</TabsTrigger>
-          <TabsTrigger value="schedule">Schedule</TabsTrigger>
-          <TabsTrigger value="api">API</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
-          <TabsTrigger value="gallery" onClick={() => navigate(`/projects/${projectId}/gallery`)}>
+        <TabsList className="flex flex-wrap h-auto gap-1 p-1">
+          <TabsTrigger value="series" className="text-xs sm:text-sm">Series</TabsTrigger>
+          <TabsTrigger value="video" className="text-xs sm:text-sm">Video</TabsTrigger>
+          <TabsTrigger value="overlays" className="text-xs sm:text-sm">Overlays</TabsTrigger>
+          <TabsTrigger value="publish" className="text-xs sm:text-sm">Publish</TabsTrigger>
+          <TabsTrigger value="schedule" className="text-xs sm:text-sm">Schedule</TabsTrigger>
+          <TabsTrigger value="api" className="text-xs sm:text-sm">API</TabsTrigger>
+          <TabsTrigger value="runs" className="text-xs sm:text-sm">Runs</TabsTrigger>
+          <TabsTrigger value="gallery" className="text-xs sm:text-sm" onClick={() => navigate(`/projects/${projectId}/gallery`)}>
             <ImageIcon className="h-3 w-3 mr-1" /> Gallery
           </TabsTrigger>
         </TabsList>
@@ -201,7 +201,7 @@ export default function ProjectEditor() {
                 <Label>Negative Prompt</Label>
                 <Input value={form.negative_prompt || ""} onChange={(e) => update("negative_prompt", e.target.value)} placeholder="What to avoid..." />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Scenes</Label>
                   <Input type="number" value={form.scene_count || 3} onChange={(e) => update("scene_count", parseInt(e.target.value))} min={1} max={20} />
@@ -663,12 +663,12 @@ export default function ProjectEditor() {
               </div>
               <div className="space-y-2">
                 <Label>Endpoints</Label>
-                <div className="space-y-1 text-sm font-mono text-muted-foreground bg-muted p-3 rounded-md">
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=trigger</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=pause</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=resume</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=stop</p>
-                  <p>GET  /functions/v1/project-control?project_id={projectId}&action=status</p>
+                <div className="space-y-1 text-xs sm:text-sm font-mono text-muted-foreground bg-muted p-3 rounded-md overflow-x-auto">
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=trigger</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=pause</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=resume</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=stop</p>
+                  <p className="whitespace-nowrap">GET  /functions/v1/project-control?project_id={projectId}&action=status</p>
                 </div>
                 <p className="text-xs text-muted-foreground">Include header: <code className="bg-muted px-1 rounded">X-Project-Token: YOUR_TOKEN</code></p>
               </div>
@@ -689,14 +689,14 @@ export default function ProjectEditor() {
                   {runs.map((run) => (
                     <div
                       key={run.id}
-                      className="flex items-center justify-between p-3 rounded-md border border-border hover:bg-muted/50 cursor-pointer transition-colors"
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 rounded-md border border-border hover:bg-muted/50 cursor-pointer transition-colors"
                       onClick={() => navigate(`/runs/${run.id}`)}
                     >
                       <div className="flex items-center gap-3">
                         <StatusBadge status={run.status} />
                         <span className="text-sm text-muted-foreground capitalize">{run.current_step}</span>
                       </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
                         <span>{run.progress_pct}%</span>
                         <span>{new Date(run.created_at).toLocaleString()}</span>
                       </div>

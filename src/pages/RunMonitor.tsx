@@ -188,19 +188,19 @@ export default function RunMonitor() {
   const canStop = ["running", "paused", "queued"].includes(run.status);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight">Run Monitor</h1>
-          <div className="flex items-center gap-3 mt-1">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Run Monitor</h1>
+          <div className="flex items-center gap-2 md:gap-3 mt-1 flex-wrap">
             <StatusBadge status={run.status} />
-            <span className="text-sm text-muted-foreground">Step: {run.current_step}</span>
+            <span className="text-xs md:text-sm text-muted-foreground">Step: {run.current_step}</span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-1 md:gap-2 shrink-0">
           <Button size="sm" variant="outline" disabled={!canResume} onClick={() => updateStatus("running")}>
             <Play className="h-3 w-3" />
           </Button>
@@ -232,65 +232,87 @@ export default function RunMonitor() {
         <CardHeader><CardTitle className="text-base">Pipeline Progress</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <Progress value={run.progress_pct} className="h-2" />
-          <div className="flex justify-between">
+          <div className="flex justify-between overflow-x-auto gap-1 pb-1">
             {STEPS.map((step, i) => (
-              <div key={step} className="flex flex-col items-center gap-1">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+              <div key={step} className="flex flex-col items-center gap-1 min-w-[2.5rem]">
+                <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full flex items-center justify-center text-[10px] md:text-xs font-medium ${
                   i < currentStepIndex ? "bg-success text-success-foreground" :
                   i === currentStepIndex ? "bg-primary text-primary-foreground" :
                   "bg-muted text-muted-foreground"
                 }`}>
                   {i + 1}
                 </div>
-                <span className="text-xs text-muted-foreground capitalize">{step}</span>
+                <span className="text-[10px] md:text-xs text-muted-foreground capitalize">{step}</span>
               </div>
             ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Scenes Table */}
       <Card>
         <CardHeader><CardTitle className="text-base">Scenes</CardTitle></CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-16">#</TableHead>
-                <TableHead>Title</TableHead>
-                <TableHead>Behavior</TableHead>
-                <TableHead>Density</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Kling Prompt</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {scenes?.length ? scenes.map((scene) => (
-                <TableRow key={scene.id}>
-                  <TableCell>{scene.scene_index}</TableCell>
-                  <TableCell>{scene.scene_title || "—"}</TableCell>
-                  <TableCell>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                      {(scene as any).scene_behavior || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-xs text-muted-foreground">
-                      {(scene as any).activity_density || "—"}
-                    </span>
-                  </TableCell>
-                  <TableCell><StatusBadge status={scene.status} /></TableCell>
-                  <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={scene.kling_prompt || ""}>
-                    {scene.kling_prompt || "—"}
-                  </TableCell>
-                </TableRow>
-              )) : (
+          {/* Desktop table */}
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">No scenes yet</TableCell>
+                  <TableHead className="w-16">#</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Behavior</TableHead>
+                  <TableHead>Density</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Prompt</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {scenes?.length ? scenes.map((scene) => (
+                  <TableRow key={scene.id}>
+                    <TableCell>{scene.scene_index}</TableCell>
+                    <TableCell>{scene.scene_title || "—"}</TableCell>
+                    <TableCell>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                        {(scene as any).scene_behavior || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-xs text-muted-foreground">
+                        {(scene as any).activity_density || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell><StatusBadge status={scene.status} /></TableCell>
+                    <TableCell className="text-muted-foreground text-xs max-w-[200px] truncate" title={scene.kling_prompt || ""}>
+                      {scene.kling_prompt || "—"}
+                    </TableCell>
+                  </TableRow>
+                )) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">No scenes yet</TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {scenes?.length ? scenes.map((scene) => (
+              <div key={scene.id} className="border rounded-md p-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">#{scene.scene_index} {scene.scene_title || ""}</span>
+                  <StatusBadge status={scene.status} />
+                </div>
+                <div className="flex gap-2 flex-wrap text-xs text-muted-foreground">
+                  <span className="px-1.5 py-0.5 rounded bg-muted font-mono">{(scene as any).scene_behavior || "—"}</span>
+                  <span>{(scene as any).activity_density || "—"}</span>
+                </div>
+                {scene.kling_prompt && (
+                  <p className="text-xs text-muted-foreground line-clamp-2">{scene.kling_prompt}</p>
+                )}
+              </div>
+            )) : (
+              <p className="text-center text-muted-foreground py-4">No scenes yet</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

@@ -89,21 +89,21 @@ export default function ProjectGallery() {
     path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov");
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(`/projects/${projectId}`)}>
+    <div className="space-y-4 md:space-y-6 max-w-5xl">
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate(`/projects/${projectId}`)} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight">Gallery</h1>
-          <p className="text-sm text-muted-foreground">{project?.title || "Project"}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Gallery</h1>
+          <p className="text-sm text-muted-foreground truncate">{project?.title || "Project"}</p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-44">
+          <SelectTrigger className="w-full sm:w-44">
             <SelectValue placeholder="Asset type" />
           </SelectTrigger>
           <SelectContent>
@@ -117,7 +117,7 @@ export default function ProjectGallery() {
         </Select>
 
         <Select value={runFilter} onValueChange={setRunFilter}>
-          <SelectTrigger className="w-56">
+          <SelectTrigger className="w-full sm:w-56">
             <SelectValue placeholder="Run" />
           </SelectTrigger>
           <SelectContent>
@@ -142,7 +142,7 @@ export default function ProjectGallery() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
           {assets.map((asset) => {
             const url = getPublicUrl(asset.supabase_path);
             const typeInfo = ASSET_TYPE_LABELS[asset.type] || { label: asset.type, icon: Image };
