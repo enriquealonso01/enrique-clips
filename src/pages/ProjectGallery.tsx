@@ -156,8 +156,9 @@ export default function ProjectGallery() {
                     <video
                       src={url}
                       controls
+                      playsInline
                       className="w-full h-full object-cover"
-                      preload="metadata"
+                      preload="auto"
                     />
                   ) : (
                     <img
