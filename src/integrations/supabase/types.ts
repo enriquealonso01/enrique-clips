@@ -429,6 +429,41 @@ export type Database = {
           },
         ]
       }
+      schedules: {
+        Row: {
+          created_at: string
+          id: string
+          is_enabled: boolean
+          last_triggered_at: string | null
+          project_id: string
+          time_utc: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          last_triggered_at?: string | null
+          project_id: string
+          time_utc: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_enabled?: boolean
+          last_triggered_at?: string | null
+          project_id?: string
+          time_utc?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "schedules_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tracks: {
         Row: {
           created_at: string

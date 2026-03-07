@@ -19,25 +19,54 @@ Deno.serve(async (req) => {
   const now = new Date();
 
   try {
-    // Fetch all enabled projects with a schedule configured
-    const { data: projects, error } = await supabase
-      .from("projects")
-      .select("*")
+    // Fetch all enabled schedules with their projects
+    const { data: schedules, error } = await supabase
+      .from("schedules")
+      .select("*, projects!inner(id, title, is_enabled, timezone)")
       .eq("is_enabled", true)
-      .in("posting_frequency_type", ["cron", "interval_hours"]);
+      .eq("projects.is_enabled", true);
 
     if (error) throw error;
-    if (!projects || projects.length === 0) {
-      return json({ status: "no_scheduled_projects" });
+    if (!schedules || schedules.length === 0) {
+      return json({ status: "no_schedules" });
     }
 
     const triggered: string[] = [];
 
-    for (const project of projects) {
-      const shouldRun = await shouldTrigger(project, now);
-      if (!shouldRun) continue;
+    for (const schedule of schedules) {
+      const project = schedule.projects as any;
+      const tz = project.timezone || "America/New_York";
 
-      // Check if there's already an active run for this project
+      // Get current time in project's timezone
+      const localTimeStr = now.toLocaleString("en-US", { timeZone: tz, hour12: false });
+      const localDate = new Date(localTimeStr);
+      const currentHour = localDate.getHours();
+      const currentMinute = localDate.getMinutes();
+
+      // Parse schedule time_utc (stored as HH:MM:SS in project's local time)
+      const [schedHour, schedMinute] = schedule.time_utc.split(":").map(Number);
+
+      if (currentHour !== schedHour || currentMinute !== schedMinute) {
+        continue;
+      }
+
+      // Prevent double-trigger: check if already triggered in this minute
+      if (schedule.last_triggered_at) {
+        const lastLocal = new Date(
+          new Date(schedule.last_triggered_at).toLocaleString("en-US", { timeZone: tz, hour12: false })
+        );
+        if (
+          lastLocal.getFullYear() === localDate.getFullYear() &&
+          lastLocal.getMonth() === localDate.getMonth() &&
+          lastLocal.getDate() === localDate.getDate() &&
+          lastLocal.getHours() === localDate.getHours() &&
+          lastLocal.getMinutes() === localDate.getMinutes()
+        ) {
+          continue; // Already triggered this minute
+        }
+      }
+
+      // Check for active runs on this project
       const { data: activeRuns } = await supabase
         .from("runs")
         .select("id")
@@ -46,7 +75,7 @@ Deno.serve(async (req) => {
         .limit(1);
 
       if (activeRuns && activeRuns.length > 0) {
-        console.log(`Project ${project.id} already has an active run, skipping`);
+        console.log(`Project ${project.id} already has an active run, skipping schedule ${schedule.id}`);
         continue;
       }
 
@@ -62,11 +91,11 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Update last_run_at
-      await supabase
-        .from("projects")
-        .update({ last_run_at: now.toISOString() })
-        .eq("id", project.id);
+      // Update last_triggered_at on schedule and last_run_at on project
+      await Promise.all([
+        supabase.from("schedules").update({ last_triggered_at: now.toISOString() }).eq("id", schedule.id),
+        supabase.from("projects").update({ last_run_at: now.toISOString() }).eq("id", project.id),
+      ]);
 
       // Fire pipeline
       const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/run-pipeline`;
@@ -79,8 +108,8 @@ Deno.serve(async (req) => {
         body: JSON.stringify({ run_id: run.id }),
       }).catch((e) => console.error(`Pipeline invoke error for ${project.id}:`, e));
 
-      triggered.push(project.id);
-      console.log(`Triggered run ${run.id} for project "${project.title}" (${project.id})`);
+      triggered.push(`${project.title} (schedule ${schedule.time_utc})`);
+      console.log(`Triggered run ${run.id} for project "${project.title}" at ${schedule.time_utc}`);
     }
 
     return json({ status: "ok", triggered_count: triggered.length, triggered });
@@ -90,99 +119,9 @@ Deno.serve(async (req) => {
   }
 });
 
-async function shouldTrigger(
-  project: Record<string, any>,
-  now: Date
-): Promise<boolean> {
-  const freqType = project.posting_frequency_type;
-  const lastRunAt = project.last_run_at ? new Date(project.last_run_at) : null;
-
-  if (freqType === "interval_hours") {
-    const intervalHours = project.posting_interval_hours;
-    if (!intervalHours || intervalHours <= 0) return false;
-
-    if (!lastRunAt) return true; // Never run before
-
-    const hoursSinceLastRun = (now.getTime() - lastRunAt.getTime()) / (1000 * 60 * 60);
-    return hoursSinceLastRun >= intervalHours;
-  }
-
-  if (freqType === "cron") {
-    const cronExpr = project.posting_cron;
-    if (!cronExpr) return false;
-
-    // Parse the cron expression and check if current minute matches
-    // Format: minute hour day-of-month month day-of-week
-    const parts = cronExpr.trim().split(/\s+/);
-    if (parts.length < 5) return false;
-
-    const [cronMin, cronHour, cronDom, cronMonth, cronDow] = parts;
-
-    // Convert current time to the project's timezone
-    const tz = project.timezone || "America/New_York";
-    const localTime = new Date(now.toLocaleString("en-US", { timeZone: tz }));
-    const minute = localTime.getMinutes();
-    const hour = localTime.getHours();
-    const dayOfMonth = localTime.getDate();
-    const month = localTime.getMonth() + 1;
-    const dayOfWeek = localTime.getDay(); // 0=Sun
-
-    if (!matchesCronField(cronMin, minute)) return false;
-    if (!matchesCronField(cronHour, hour)) return false;
-    if (!matchesCronField(cronDom, dayOfMonth)) return false;
-    if (!matchesCronField(cronMonth, month)) return false;
-    if (!matchesCronField(cronDow, dayOfWeek)) return false;
-
-    // Prevent double-trigger within the same minute window
-    if (lastRunAt) {
-      const lastLocal = new Date(lastRunAt.toLocaleString("en-US", { timeZone: tz }));
-      if (
-        lastLocal.getFullYear() === localTime.getFullYear() &&
-        lastLocal.getMonth() === localTime.getMonth() &&
-        lastLocal.getDate() === localTime.getDate() &&
-        lastLocal.getHours() === localTime.getHours() &&
-        lastLocal.getMinutes() === localTime.getMinutes()
-      ) {
-        return false; // Already triggered this minute
-      }
-    }
-
-    return true;
-  }
-
-  return false;
-}
-
-function matchesCronField(field: string, value: number): boolean {
-  if (field === "*") return true;
-
-  // Handle */N (step values)
-  if (field.startsWith("*/")) {
-    const step = parseInt(field.slice(2), 10);
-    return !isNaN(step) && step > 0 && value % step === 0;
-  }
-
-  // Handle comma-separated values: 1,5,10
-  const parts = field.split(",");
-  for (const part of parts) {
-    // Handle ranges: 1-5
-    if (part.includes("-")) {
-      const [start, end] = part.split("-").map(Number);
-      if (!isNaN(start) && !isNaN(end) && value >= start && value <= end) return true;
-    } else {
-      if (parseInt(part, 10) === value) return true;
-    }
-  }
-
-  return false;
-}
-
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Content-Type": "application/json",
-    },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }

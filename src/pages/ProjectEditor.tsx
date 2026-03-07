@@ -14,6 +14,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2 } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
+import { ScheduleManager } from "@/components/ScheduleManager";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
@@ -601,39 +602,17 @@ export default function ProjectEditor() {
         <TabsContent value="schedule" className="space-y-4 mt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Schedule</CardTitle>
-              <CardDescription>Configure automated run scheduling</CardDescription>
+              <CardTitle>Timezone</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent>
               <div className="space-y-2">
-                <Label>Frequency</Label>
-                <Select value={form.posting_frequency_type || "manual"} onValueChange={(v: any) => update("posting_frequency_type", v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manual">Manual</SelectItem>
-                    <SelectItem value="interval_hours">Interval (hours)</SelectItem>
-                    <SelectItem value="cron">Cron Expression</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {form.posting_frequency_type === "interval_hours" && (
-                <div className="space-y-2">
-                  <Label>Interval (hours)</Label>
-                  <Input type="number" value={form.posting_interval_hours || ""} onChange={(e) => update("posting_interval_hours", parseInt(e.target.value))} min={1} />
-                </div>
-              )}
-              {form.posting_frequency_type === "cron" && (
-                <div className="space-y-2">
-                  <Label>Cron Expression</Label>
-                  <Input value={form.posting_cron || ""} onChange={(e) => update("posting_cron", e.target.value)} placeholder="0 */6 * * *" />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label>Timezone</Label>
+                <Label>Project Timezone</Label>
                 <Input value={form.timezone || "America/New_York"} onChange={(e) => update("timezone", e.target.value)} />
+                <p className="text-xs text-muted-foreground">Schedule times are interpreted in this timezone.</p>
               </div>
             </CardContent>
           </Card>
+          {projectId && <ScheduleManager projectId={projectId} timezone={form.timezone || "America/New_York"} />}
         </TabsContent>
 
         {/* API Tab */}
