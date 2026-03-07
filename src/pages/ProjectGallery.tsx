@@ -103,7 +103,7 @@ export default function ProjectGallery() {
       {/* Filters */}
       <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-44">
+          <SelectTrigger className="w-full sm:w-44">
             <SelectValue placeholder="Asset type" />
           </SelectTrigger>
           <SelectContent>
