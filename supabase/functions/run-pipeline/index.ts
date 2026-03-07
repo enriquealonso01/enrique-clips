@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
     timeoutMs = 120000,
     retries = 1
   ) {
-    const usedModel = model || "google/gemini-3-flash-preview";
+    const usedModel = model || "google/gemini-2.5-pro";
     const body: any = {
       model: usedModel,
       messages,
