@@ -2141,6 +2141,21 @@ Deno.serve(async (req) => {
     });
     await log("info", "Pipeline completed successfully! 🎉");
 
+    // Send success notification email
+    try {
+      const notifyUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`;
+      await fetch(notifyUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ run_id: runId, type: "completed" }),
+      });
+    } catch (notifyErr) {
+      console.error("Notification send error:", notifyErr);
+    }
+
     return json({ status: "completed", run_id: runId });
   } catch (err) {
     await log("error", `Finalize-video failed: ${err.message}`);
@@ -2149,6 +2164,22 @@ Deno.serve(async (req) => {
       error_message: `Finalize failed: ${err.message}`,
       finished_at: new Date().toISOString(),
     });
+
+    // Send error notification email
+    try {
+      const notifyUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/send-notification`;
+      await fetch(notifyUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ run_id: runId, type: "error", error_message: err.message }),
+      });
+    } catch (notifyErr) {
+      console.error("Notification send error:", notifyErr);
+    }
+
     return json({ error: err.message }, 500);
   }
 });
