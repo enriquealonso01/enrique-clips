@@ -232,17 +232,17 @@ export default function RunMonitor() {
         <CardHeader><CardTitle className="text-base">Pipeline Progress</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <Progress value={run.progress_pct} className="h-2" />
-          <div className="flex justify-between">
+          <div className="flex justify-between overflow-x-auto gap-1 pb-1">
             {STEPS.map((step, i) => (
-              <div key={step} className="flex flex-col items-center gap-1">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+              <div key={step} className="flex flex-col items-center gap-1 min-w-[2.5rem]">
+                <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full flex items-center justify-center text-[10px] md:text-xs font-medium ${
                   i < currentStepIndex ? "bg-success text-success-foreground" :
                   i === currentStepIndex ? "bg-primary text-primary-foreground" :
                   "bg-muted text-muted-foreground"
                 }`}>
                   {i + 1}
                 </div>
-                <span className="text-xs text-muted-foreground capitalize">{step}</span>
+                <span className="text-[10px] md:text-xs text-muted-foreground capitalize">{step}</span>
               </div>
             ))}
           </div>
