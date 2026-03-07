@@ -117,7 +117,7 @@ export default function ProjectGallery() {
         </Select>
 
         <Select value={runFilter} onValueChange={setRunFilter}>
-          <SelectTrigger className="w-56">
+          <SelectTrigger className="w-full sm:w-56">
             <SelectValue placeholder="Run" />
           </SelectTrigger>
           <SelectContent>
