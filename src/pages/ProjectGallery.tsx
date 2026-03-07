@@ -89,14 +89,14 @@ export default function ProjectGallery() {
     path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov");
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(`/projects/${projectId}`)}>
+    <div className="space-y-4 md:space-y-6 max-w-5xl">
+      <div className="flex items-center gap-2 md:gap-4">
+        <Button variant="ghost" size="icon" onClick={() => navigate(`/projects/${projectId}`)} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold tracking-tight">Gallery</h1>
-          <p className="text-sm text-muted-foreground">{project?.title || "Project"}</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl md:text-2xl font-bold tracking-tight">Gallery</h1>
+          <p className="text-sm text-muted-foreground truncate">{project?.title || "Project"}</p>
         </div>
       </div>
 
