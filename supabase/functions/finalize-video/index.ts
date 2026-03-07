@@ -1681,7 +1681,8 @@ Deno.serve(async (req) => {
                   const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -c:v libx264 -preset fast -crf 23 -an -movflags +faststart {{out_1}}`;
+                  // Keep original clip audio when no replacement music track is selected
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${videoInputIdx}:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
                 }
               } else if (hasSelectedTrack && selectedTrackUrl) {
                 // No overlays, just audio merge
