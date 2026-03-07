@@ -663,12 +663,12 @@ export default function ProjectEditor() {
               </div>
               <div className="space-y-2">
                 <Label>Endpoints</Label>
-                <div className="space-y-1 text-sm font-mono text-muted-foreground bg-muted p-3 rounded-md">
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=trigger</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=pause</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=resume</p>
-                  <p>POST /functions/v1/project-control?project_id={projectId}&action=stop</p>
-                  <p>GET  /functions/v1/project-control?project_id={projectId}&action=status</p>
+                <div className="space-y-1 text-xs sm:text-sm font-mono text-muted-foreground bg-muted p-3 rounded-md overflow-x-auto">
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=trigger</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=pause</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=resume</p>
+                  <p className="whitespace-nowrap">POST /functions/v1/project-control?project_id={projectId}&action=stop</p>
+                  <p className="whitespace-nowrap">GET  /functions/v1/project-control?project_id={projectId}&action=status</p>
                 </div>
                 <p className="text-xs text-muted-foreground">Include header: <code className="bg-muted px-1 rounded">X-Project-Token: YOUR_TOKEN</code></p>
               </div>
