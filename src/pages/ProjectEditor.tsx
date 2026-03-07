@@ -168,15 +168,15 @@ export default function ProjectEditor() {
       </div>
 
       <Tabs defaultValue="series">
-        <TabsList className="grid w-full grid-cols-8">
-          <TabsTrigger value="series">Series</TabsTrigger>
-          <TabsTrigger value="video">Video Gen</TabsTrigger>
-          <TabsTrigger value="overlays">Overlays</TabsTrigger>
-          <TabsTrigger value="publish">Publish</TabsTrigger>
-          <TabsTrigger value="schedule">Schedule</TabsTrigger>
-          <TabsTrigger value="api">API</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
-          <TabsTrigger value="gallery" onClick={() => navigate(`/projects/${projectId}/gallery`)}>
+        <TabsList className="flex flex-wrap h-auto gap-1 p-1">
+          <TabsTrigger value="series" className="text-xs sm:text-sm">Series</TabsTrigger>
+          <TabsTrigger value="video" className="text-xs sm:text-sm">Video</TabsTrigger>
+          <TabsTrigger value="overlays" className="text-xs sm:text-sm">Overlays</TabsTrigger>
+          <TabsTrigger value="publish" className="text-xs sm:text-sm">Publish</TabsTrigger>
+          <TabsTrigger value="schedule" className="text-xs sm:text-sm">Schedule</TabsTrigger>
+          <TabsTrigger value="api" className="text-xs sm:text-sm">API</TabsTrigger>
+          <TabsTrigger value="runs" className="text-xs sm:text-sm">Runs</TabsTrigger>
+          <TabsTrigger value="gallery" className="text-xs sm:text-sm" onClick={() => navigate(`/projects/${projectId}/gallery`)}>
             <ImageIcon className="h-3 w-3 mr-1" /> Gallery
           </TabsTrigger>
         </TabsList>
