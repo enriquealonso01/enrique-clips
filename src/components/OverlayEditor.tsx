@@ -29,6 +29,7 @@ interface Overlay {
   bg_color: string | null;
   image_path: string | null;
   sort_order: number;
+  source: string;
 }
 
 const STYLES = [
@@ -178,6 +179,9 @@ export function OverlayEditor({ projectId }: OverlayEditorProps) {
                     <span className="text-sm font-medium flex-1 truncate">
                       {ov.content_text || (ov.content_mode === "ai_generated" ? "AI-generated content" : "Empty overlay")}
                     </span>
+                    {(ov as any).source === "json_config" && (
+                      <span className="text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded font-mono">JSON</span>
+                    )}
                     <span className="text-xs text-muted-foreground capitalize">
                       {ov.style.replace("_", " ")} · {ov.position.replace("_", " ")}
                     </span>

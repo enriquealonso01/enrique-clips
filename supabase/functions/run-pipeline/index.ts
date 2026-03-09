@@ -554,13 +554,20 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
         });
       }
 
-      // ── 1d: Insert JSON-defined overlays into DB ──
+      // ── 1d: Sync JSON-defined overlays into DB ──
       try {
+        // First, remove stale JSON-sourced overlays from previous runs
+        await supabase
+          .from("overlays")
+          .delete()
+          .eq("project_id", project.id)
+          .eq("source", "json_config");
+
         const jsonOverlays = resolvedConfig.overlays?.items;
         if (jsonOverlays && Array.isArray(jsonOverlays) && jsonOverlays.length > 0) {
           await log("info", `Inserting ${jsonOverlays.length} overlay(s) from prompt config JSON...`);
 
-          // Get current max sort_order for this project
+          // Get current max sort_order for manual overlays
           const { data: existingOverlays } = await supabase
             .from("overlays")
             .select("sort_order")
@@ -572,6 +579,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           for (const item of jsonOverlays) {
             await supabase.from("overlays").insert({
               project_id: project.id,
+              source: "json_config",
               overlay_type: item.overlay_type || "text",
               content_mode: item.content_mode || "exact",
               content_text: item.content_text || null,
@@ -588,10 +596,10 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
               sort_order: nextSortOrder++,
             });
           }
-          await log("info", `${jsonOverlays.length} JSON overlay(s) inserted into DB`);
+          await log("info", `${jsonOverlays.length} JSON overlay(s) synced into DB`);
         }
       } catch (err) {
-        await log("warn", `JSON overlay insertion failed: ${err.message} — continuing with DB overlays only.`);
+        await log("warn", `JSON overlay sync failed: ${err.message} — continuing with manual overlays only.`);
       }
 
       // ── 1e: AI overlay content generation ──
