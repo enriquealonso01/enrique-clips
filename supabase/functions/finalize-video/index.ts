@@ -2132,11 +2132,11 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
             .eq("id", runId)
             .single();
           const metadata = (freshRun?.generated_metadata as any) || {};
-          const title = metadata.title || project.title || "Untitled Video";
-          const description = metadata.description || "";
-          const hashtags = metadata.hashtags || [];
-          const hashtagStr = hashtags.map((h: string) => `#${h}`).join(" ");
-          const fullDescription = description + (hashtagStr ? `\n\n${hashtagStr}` : "");
+          const platformMetadata = metadata.platform_metadata || {};
+          // Fallback for backward compatibility
+          const fallbackTitle = metadata.title || project.title || "Untitled Video";
+          const fallbackDescription = metadata.description || "";
+          const fallbackHashtags = metadata.hashtags || [];
 
           const platforms = project.publish_platforms as Record<string, boolean>;
           const enabledPlatforms = Object.entries(platforms)
@@ -2154,58 +2154,109 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
               .single();
 
             const apiKey = project.uploadpost_api_key_encrypted!;
-            const formData = new FormData();
-            formData.append("video", videoUrl);
-            formData.append("title", title);
-            formData.append("description", fullDescription);
-            formData.append("async_upload", "true");
 
-            if (project.uploadpost_profile_username) {
-              formData.append("user", project.uploadpost_profile_username);
-            }
+            // Build per-platform metadata, falling back to generic if platform-specific not available
+            const getPlatformMeta = (platform: string) => {
+              const pm = platformMetadata[platform];
+              if (pm) {
+                const hashtags = (pm.hashtags || []).map((h: string) => `#${h}`).join(" ");
+                return {
+                  title: pm.title || fallbackTitle,
+                  description: (pm.description || fallbackDescription) + (hashtags ? `\n\n${hashtags}` : ""),
+                };
+              }
+              const hashtagStr = fallbackHashtags.map((h: string) => `#${h}`).join(" ");
+              return {
+                title: fallbackTitle,
+                description: fallbackDescription + (hashtagStr ? `\n\n${hashtagStr}` : ""),
+              };
+            };
 
-            for (const platform of enabledPlatforms) {
-              formData.append("platform[]", platform);
-            }
+            // If all platforms share the same Upload-Post request, we use the first platform's metadata
+            // But since Upload-Post accepts one title/description, we send separate requests per platform
+            // for truly personalized metadata. Group platforms with identical metadata to minimize API calls.
+            const metaByPlatform = enabledPlatforms.map(p => ({ platform: p, ...getPlatformMeta(p) }));
 
-            for (const platform of enabledPlatforms) {
-              const defaults = publishDefaults[platform] || {};
-              for (const [key, value] of Object.entries(defaults)) {
-                if (value !== undefined && value !== null && value !== "") {
-                  formData.append(key, String(value));
-                }
+            // Group platforms by identical title+description to batch API calls
+            const metaGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
+            for (const pm of metaByPlatform) {
+              const key = `${pm.title}|||${pm.description}`;
+              if (metaGroups.has(key)) {
+                metaGroups.get(key)!.platforms.push(pm.platform);
+              } else {
+                metaGroups.set(key, { title: pm.title, description: pm.description, platforms: [pm.platform] });
               }
             }
 
-            await log("info", `Publishing to: ${enabledPlatforms.join(", ")}`, { videoUrl, title });
+            await log("info", `Publishing to ${enabledPlatforms.length} platforms in ${metaGroups.size} batch(es)`, {
+              videoUrl,
+              groups: [...metaGroups.values()].map(g => ({ platforms: g.platforms, title: g.title.substring(0, 80) })),
+            });
 
-            const uploadResp = await withRetry(() =>
-              fetch("https://api.upload-post.com/api/upload", {
-                method: "POST",
-                headers: { Authorization: `Apikey ${apiKey}` },
-                body: formData,
-              })
-            );
+            let lastRequestId: string | null = null;
+            let lastJobId: string | null = null;
+            let anySuccess = false;
 
-            const uploadResult = await uploadResp.json();
-            await log("info", "Upload-Post response", uploadResult);
+            for (const group of metaGroups.values()) {
+              const formData = new FormData();
+              formData.append("video", videoUrl);
+              formData.append("title", group.title);
+              formData.append("description", group.description);
+              formData.append("async_upload", "true");
 
-            if (uploadResp.ok && uploadResult.request_id) {
+              if (project.uploadpost_profile_username) {
+                formData.append("user", project.uploadpost_profile_username);
+              }
+
+              for (const platform of group.platforms) {
+                formData.append("platform[]", platform);
+              }
+
+              for (const platform of group.platforms) {
+                const defaults = publishDefaults[platform] || {};
+                for (const [key, value] of Object.entries(defaults)) {
+                  if (value !== undefined && value !== null && value !== "") {
+                    formData.append(key, String(value));
+                  }
+                }
+              }
+
+              const uploadResp = await withRetry(() =>
+                fetch("https://api.upload-post.com/api/upload", {
+                  method: "POST",
+                  headers: { Authorization: `Apikey ${apiKey}` },
+                  body: formData,
+                })
+              );
+
+              const uploadResult = await uploadResp.json();
+              await log("info", `Upload-Post response for [${group.platforms.join(",")}]`, uploadResult);
+
+              if (uploadResp.ok && uploadResult.request_id) {
+                lastRequestId = uploadResult.request_id;
+                lastJobId = uploadResult.job_id || null;
+                anySuccess = true;
+              } else {
+                await log("error", `Upload-Post failed for [${group.platforms.join(",")}]: ${JSON.stringify(uploadResult)}`);
+              }
+            }
+
+            if (anySuccess && lastRequestId) {
               await supabase
                 .from("publish_jobs")
                 .update({
-                  uploadpost_request_id: uploadResult.request_id,
-                  uploadpost_job_id: uploadResult.job_id || null,
+                  uploadpost_request_id: lastRequestId,
+                  uploadpost_job_id: lastJobId,
                   status: "polling" as const,
                 })
                 .eq("id", publishJob!.id);
-              await log("info", `Upload-Post submitted: ${uploadResult.request_id}`);
+              await log("info", `Upload-Post submitted: ${lastRequestId}`);
             } else {
               await supabase
                 .from("publish_jobs")
-                .update({ status: "failed" as const, platform_results: uploadResult })
+                .update({ status: "failed" as const, platform_results: { error: "All platform submissions failed" } })
                 .eq("id", publishJob!.id);
-              await log("error", `Upload-Post failed: ${JSON.stringify(uploadResult)}`);
+              await log("error", "All Upload-Post submissions failed.");
             }
           }
         }
