@@ -1615,7 +1615,9 @@ Deno.serve(async (req) => {
 
               // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
               const sortedInputKeys = Object.keys(inputFiles).sort();
-              const getInputIndex = (key: string): number => sortedInputKeys.indexOf(key);
+              // Media inputs exclude font (font is referenced via fontfile=, not -i)
+              const mediaInputKeys = sortedInputKeys.filter((k) => k !== "in_font");
+              const getInputIndex = (key: string): number => mediaInputKeys.indexOf(key);
               const videoInputIdx = getInputIndex("in_video");
 
               // Build FFmpeg filter_complex
