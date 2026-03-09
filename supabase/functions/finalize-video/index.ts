@@ -1901,9 +1901,8 @@ Deno.serve(async (req) => {
         await log("warn", `Thumbnail generation failed: ${err.message}`);
       }
 
-      // AI metadata generation
+      // AI per-platform metadata generation
       try {
-        // Retrieve resolved prompt config from run metadata (snapshotted at pipeline start)
         const runMetadata = (run.generated_metadata as any) || {};
         const resolvedConfig: PromptConfig = runMetadata.resolved_prompt_config || buildResolvedPromptConfig(project);
         const metaConfig = resolvedConfig.metadata;
@@ -1917,21 +1916,105 @@ Deno.serve(async (req) => {
         const scenesSummary =
           scenes?.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n") || "";
 
+        const conceptPrompt = resolvedConfig.global.concept_prompt || project.series_prompt || project.title;
+
+        const enabledPlatforms = Object.entries((project.publish_platforms as Record<string, boolean>) || {})
+          .filter(([_, enabled]) => enabled)
+          .map(([platform]) => platform);
+
+        // Platform-specific metadata guidelines
+        const platformGuidelines: Record<string, string> = {
+          instagram: `INSTAGRAM REELS metadata rules:
+- The "title" field IS the first line of the caption (the hook). Max 125 characters. Make it curiosity-driven or outcome-focused. Use keywords naturally (IG search indexes captions).
+- Good hook structures: curiosity ("Nobody tells you this about..."), result ("How I..."), problem ("If your... aren't working, do this").
+- The "description" is the caption body. Use 2-3 short paragraphs. Include search keywords naturally. End with a CTA ("Follow for more", "Save this for later").
+- Hashtags: 3-8 total. Mix: 2 niche, 2 medium, 1-2 broad. NO #fyp #viral #explore.
+- Total caption (title + description + hashtags) should be 100-200 characters ideally.`,
+
+          tiktok: `TIKTOK metadata rules:
+- The "title" IS the first line of the caption. Include the exact search phrase users would type. Use question or problem-solution style.
+- TikTok SEO ranks videos by: caption keywords, on-screen text, voice transcription. Keywords are critical.
+- The "description" is the rest of the caption. Keep it short (80-150 chars total). Use natural keyword phrases.
+- Hashtags: 3-5 max. Mix: 1 niche, 1 industry, 1 broad, optionally 1 trending. NO #fyp #viral #xyzbca — these no longer boost reach.`,
+
+          youtube: `YOUTUBE SHORTS metadata rules:
+- The "title" is a formal title field. 40-60 characters. Include the main search keyword. Make it curiosity-driven.
+- Good formats: "3 AI Tools That Save You Hours", "The Truth About...", "How I Made..."
+- Avoid generic titles like "Watch This!!" or "Crazy Video".
+- The "description" helps search indexing. Write 1-2 sentences. Include the main keyword again.
+- Hashtags: 3-5. Always include #shorts.
+- YouTube reads: video transcript, title keywords, engagement signals.`,
+
+          facebook: `FACEBOOK REELS metadata rules:
+- The "title" is the first line. Be clear and descriptive (not cryptic). Include topic keywords.
+- Example: "3 mistakes people make when buying their first house"
+- The "description" should be 1-2 sentences explaining the reel. Include keywords Facebook search can index.
+- Hashtags: 3-5.
+- Facebook prioritizes watch time, shares, and comments. Metadata helps classification, not virality.`,
+        };
+
+        const UNIVERSAL_RULES = `
+CRITICAL RULES FOR ALL PLATFORMS:
+- NEVER include anything that makes the content seem AI-generated. No mentions of AI, algorithms, prompts, or generated content.
+- Write as a human creator sharing authentic content.
+- First line = hook. Put the keyword at the beginning. Shorter is always better.
+- Use the viral caption formula: HOOK → CONTEXT → CTA.
+- Hook formats that work: Question, Mistake, Secret, List, Result.
+- Each platform's metadata must feel native to that platform — NOT copy-pasted across platforms.`;
+
+        const platformsToGenerate = enabledPlatforms.length > 0
+          ? enabledPlatforms
+          : ["instagram", "tiktok", "youtube", "facebook"];
+
+        const platformProperties: Record<string, any> = {};
+        for (const p of platformsToGenerate) {
+          platformProperties[p] = {
+            type: "object",
+            properties: {
+              title: { type: "string", description: `Platform-optimized title/hook for ${p}` },
+              description: { type: "string", description: `Platform-optimized description/caption body for ${p}` },
+              hashtags: { type: "array", items: { type: "string" }, description: `Hashtags without # prefix for ${p}` },
+            },
+            required: ["title", "description", "hashtags"],
+          };
+        }
+
+        const perPlatformGuidelines = platformsToGenerate
+          .map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`)
+          .join("\n\n");
+
+        // Also allow custom metadata prompts from config to augment (not replace) the platform rules
+        const customInstructions = [
+          metaConfig.title_prompt ? `Additional title guidance: ${metaConfig.title_prompt}` : "",
+          metaConfig.description_prompt ? `Additional description guidance: ${metaConfig.description_prompt}` : "",
+          metaConfig.hashtag_prompt ? `Additional hashtag guidance: ${metaConfig.hashtag_prompt}` : "",
+        ].filter(Boolean).join("\n");
+
         const metadataPromptMessages = [
           {
             role: "system",
-            content:
-              "You are a social media content expert. Generate engaging metadata for a short-form video post.",
+            content: `You are an elite social media content strategist who writes platform-native metadata. You write as a human creator — never as AI. Your captions feel authentic, engaging, and perfectly tuned for each platform's algorithm and culture.${UNIVERSAL_RULES}`,
           },
           {
             role: "user",
-            content: `Generate a title, description, and hashtags for this video:\n\nSeries: ${
-              resolvedConfig.global.concept_prompt || project.series_prompt || project.title
-            }\nScenes:\n${scenesSummary}\n\nTitle instructions: ${metaConfig.title_prompt}\nDescription instructions: ${metaConfig.description_prompt}\nHashtag instructions: ${metaConfig.hashtag_prompt}`,
+            content: `Generate platform-specific metadata for this video. Each platform MUST get uniquely optimized content — do NOT reuse the same text across platforms.
+
+VIDEO CONCEPT: ${conceptPrompt}
+
+SCENES:
+${scenesSummary}
+
+=== PLATFORM-SPECIFIC GUIDELINES ===
+${perPlatformGuidelines}
+
+${customInstructions ? `=== ADDITIONAL INSTRUCTIONS ===\n${customInstructions}` : ""}
+
+Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           },
         ];
 
-        await log("debug", "🔵 AI CALL → model=google/gemini-2.5-flash, tool=generate_metadata", {
+        await log("debug", "🔵 AI CALL → model=google/gemini-2.5-flash, tool=generate_platform_metadata", {
+          platforms: platformsToGenerate,
           messages: metadataPromptMessages.map(m => ({
             role: m.role,
             content: m.content.length > 500 ? m.content.substring(0, 500) + "…[truncated]" : m.content,
@@ -1952,29 +2035,18 @@ Deno.serve(async (req) => {
                 {
                   type: "function",
                   function: {
-                    name: "generate_metadata",
-                    description: "Generate video post metadata",
+                    name: "generate_platform_metadata",
+                    description: "Generate per-platform video post metadata",
                     parameters: {
                       type: "object",
-                      properties: {
-                        title: { type: "string", description: "Catchy video title (max 100 chars)" },
-                        description: {
-                          type: "string",
-                          description: "Engaging video description (max 500 chars)",
-                        },
-                        hashtags: {
-                          type: "array",
-                          items: { type: "string" },
-                          description: "Relevant hashtags without # prefix",
-                        },
-                      },
-                      required: ["title", "description", "hashtags"],
+                      properties: platformProperties,
+                      required: platformsToGenerate,
                       additionalProperties: false,
                     },
                   },
                 },
               ],
-              tool_choice: { type: "function", function: { name: "generate_metadata" } },
+              tool_choice: { type: "function", function: { name: "generate_platform_metadata" } },
             }),
           })
         );
@@ -1985,17 +2057,27 @@ Deno.serve(async (req) => {
         await log("debug", "🟢 AI RESP ← model=google/gemini-2.5-flash", {
           tool_call: metaToolCall ? {
             name: metaToolCall.function?.name,
-            args_preview: metaToolCall.function?.arguments?.substring(0, 500),
+            args_preview: metaToolCall.function?.arguments?.substring(0, 800),
           } : null,
           finish_reason: metaResult?.choices?.[0]?.finish_reason,
           usage: metaResult?.usage,
         });
 
         if (metaToolCall) {
-          const metadata = JSON.parse(metaToolCall.function.arguments);
-          // Preserve resolved_prompt_config when updating metadata
-          await updateRun({ generated_metadata: { ...runMetadata, ...metadata } });
-          await log("info", "Metadata generated", metadata);
+          const platformMetadata = JSON.parse(metaToolCall.function.arguments);
+          // Store per-platform metadata AND keep a fallback title/description from the first platform
+          const firstPlatform = platformsToGenerate[0];
+          const fallback = platformMetadata[firstPlatform] || {};
+          await updateRun({
+            generated_metadata: {
+              ...runMetadata,
+              title: fallback.title || project.title,
+              description: fallback.description || "",
+              hashtags: fallback.hashtags || [],
+              platform_metadata: platformMetadata,
+            },
+          });
+          await log("info", "Per-platform metadata generated", { platforms: Object.keys(platformMetadata) });
         }
       } catch (err) {
         await log("warn", `Metadata generation failed: ${err.message}`);
