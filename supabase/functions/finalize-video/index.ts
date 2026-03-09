@@ -1593,9 +1593,15 @@ Deno.serve(async (req) => {
                 in_video: tempVideoUrl.publicUrl,
               };
 
-              // Collect image overlay inputs
+              // Add Montserrat Bold font for text overlays
+              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FMontserrat-Bold.ttf";
+              if (textOverlays.length > 0) {
+                inputFiles["in_font"] = FONT_URL;
+              }
+
               let imgInputIdx = 0;
               for (const imgOv of imageOverlays) {
+                if (!imgOv.image_path) continue;
                 const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
                 const key = `in_img${imgInputIdx}`;
                 inputFiles[key] = imgUrl.publicUrl;
