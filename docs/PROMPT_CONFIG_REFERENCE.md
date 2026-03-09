@@ -440,3 +440,7 @@ These are configured on the project itself, not in the JSON:
 9. **The video generators (Kling/Pika/Vidu) have a ~10 second max clip duration.** Don't expect a single scene to cover complex multi-step actions.
 
 10. **The merge behavior**: JSON values override defaults. Empty strings and empty arrays are ignored (defaults preserved). Non-empty arrays fully replace the default array.
+
+11. **Metadata is generated per-platform automatically.** The system produces uniquely optimized titles, descriptions, and hashtags for Instagram, TikTok, YouTube Shorts, and Facebook — following each platform's 2026 best practices. The `title_prompt`, `description_prompt`, and `hashtag_prompt` fields in `metadata` are *additional guidance* that augments (not replaces) the built-in platform rules.
+
+12. **Content must NEVER appear AI-generated.** All metadata, captions, overlay text, and descriptions are written to sound like authentic human-created content. Never mention AI, algorithms, prompts, or generation tools in any user-facing text.
