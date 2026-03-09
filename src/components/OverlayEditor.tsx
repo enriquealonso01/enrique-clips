@@ -29,6 +29,7 @@ interface Overlay {
   bg_color: string | null;
   image_path: string | null;
   sort_order: number;
+  source: string;
 }
 
 const STYLES = [
