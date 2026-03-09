@@ -1593,9 +1593,15 @@ Deno.serve(async (req) => {
                 in_video: tempVideoUrl.publicUrl,
               };
 
-              // Collect image overlay inputs
+              // Add Montserrat Bold font for text overlays
+              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FMontserrat-Bold.ttf";
+              if (textOverlays.length > 0) {
+                inputFiles["in_font"] = FONT_URL;
+              }
+
               let imgInputIdx = 0;
               for (const imgOv of imageOverlays) {
+                if (!imgOv.image_path) continue;
                 const { data: imgUrl } = supabase.storage.from("project-assets").getPublicUrl(imgOv.image_path);
                 const key = `in_img${imgInputIdx}`;
                 inputFiles[key] = imgUrl.publicUrl;
@@ -1609,7 +1615,9 @@ Deno.serve(async (req) => {
 
               // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
               const sortedInputKeys = Object.keys(inputFiles).sort();
-              const getInputIndex = (key: string): number => sortedInputKeys.indexOf(key);
+              // Media inputs exclude font (font is referenced via fontfile=, not -i)
+              const mediaInputKeys = sortedInputKeys.filter((k) => k !== "in_font");
+              const getInputIndex = (key: string): number => mediaInputKeys.indexOf(key);
               const videoInputIdx = getInputIndex("in_video");
 
               // Build FFmpeg filter_complex
@@ -1662,8 +1670,11 @@ Deno.serve(async (req) => {
 
                 const scaledBoxBorder = Math.round(10 * resScale);
 
+                // Reference font file input for Montserrat Bold
+                const fontFileRef = `fontfile={{in_font}}`;
+
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
@@ -1671,7 +1682,7 @@ Deno.serve(async (req) => {
 
               // Build the full FFmpeg command
               let ffmpegCmd: string;
-              const inputArgs = sortedInputKeys
+              const inputArgs = mediaInputKeys
                 .map((k) => `-i {{${k}}}`)
                 .join(" ");
 
