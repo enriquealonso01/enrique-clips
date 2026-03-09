@@ -78,6 +78,7 @@ export type Database = {
           position: string
           project_id: string
           sort_order: number
+          source: string
           start_pct: number
           style: string
           z_index: number
@@ -97,6 +98,7 @@ export type Database = {
           position?: string
           project_id: string
           sort_order?: number
+          source?: string
           start_pct?: number
           style?: string
           z_index?: number
@@ -116,6 +118,7 @@ export type Database = {
           position?: string
           project_id?: string
           sort_order?: number
+          source?: string
           start_pct?: number
           style?: string
           z_index?: number

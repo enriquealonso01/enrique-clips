@@ -1,0 +1,1 @@
+ALTER TABLE public.overlays ADD COLUMN source text NOT NULL DEFAULT 'manual';
