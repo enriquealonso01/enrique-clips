@@ -1668,8 +1668,12 @@ Deno.serve(async (req) => {
 
                 const scaledBoxBorder = Math.round(10 * resScale);
 
+                // Reference font file input for Montserrat Bold
+                const fontInputIdx = getInputIndex("in_font");
+                const fontFileRef = `fontfile={{in_font}}`;
+
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
