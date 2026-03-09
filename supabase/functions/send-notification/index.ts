@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const NOTIFICATION_EMAIL = "proven.solved@gmail.com";
+const NOTIFICATION_EMAIL = "social.controlhub@gmail.com";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -22,10 +22,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   let body: { run_id: string; type: "completed" | "error"; error_message?: string };
   try {
@@ -41,11 +38,7 @@ Deno.serve(async (req) => {
 
   try {
     // Fetch run + project data
-    const { data: run } = await supabase
-      .from("runs")
-      .select("*")
-      .eq("id", run_id)
-      .single();
+    const { data: run } = await supabase.from("runs").select("*").eq("id", run_id).single();
 
     if (!run) {
       return new Response(JSON.stringify({ error: "Run not found" }), {
@@ -54,11 +47,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: project } = await supabase
-      .from("projects")
-      .select("*")
-      .eq("id", run.project_id)
-      .single();
+    const { data: project } = await supabase.from("projects").select("*").eq("id", run.project_id).single();
 
     const projectName = project?.title || "Untitled Project";
     const metadata = (run.generated_metadata as Record<string, any>) || {};
@@ -100,13 +89,14 @@ Deno.serve(async (req) => {
         .limit(1)
         .single();
 
-      const publishStatus = publishJob
-        ? `Published (status: ${publishJob.status})`
-        : "Not published";
+      const publishStatus = publishJob ? `Published (status: ${publishJob.status})` : "Not published";
 
       const platforms = project?.publish_platforms as Record<string, boolean> | null;
       const enabledPlatforms = platforms
-        ? Object.entries(platforms).filter(([_, v]) => v).map(([k]) => k).join(", ")
+        ? Object.entries(platforms)
+            .filter(([_, v]) => v)
+            .map(([k]) => k)
+            .join(", ")
         : "None";
 
       subject = `✅ ${projectName} — Run Completed & Posted`;
@@ -131,11 +121,15 @@ Deno.serve(async (req) => {
         <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #6b7280;">Description</td>
         <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px;">${escapeHtml(description)}</td>
       </tr>
-      ${hashtags.length > 0 ? `
+      ${
+        hashtags.length > 0
+          ? `
       <tr>
         <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #6b7280;">Hashtags</td>
-        <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px;">${escapeHtml(hashtags.map(h => `#${h}`).join(" "))}</td>
-      </tr>` : ""}
+        <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px;">${escapeHtml(hashtags.map((h) => `#${h}`).join(" "))}</td>
+      </tr>`
+          : ""
+      }
       <tr>
         <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; color: #6b7280;">Platforms</td>
         <td style="padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px;">${escapeHtml(enabledPlatforms)}</td>
@@ -150,10 +144,14 @@ Deno.serve(async (req) => {
       </tr>
     </table>
 
-    ${videoLink ? `
+    ${
+      videoLink
+        ? `
     <div style="text-align: center; margin-top: 24px;">
       <a href="${videoLink}" style="display: inline-block; background: #2563eb; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">Watch Video</a>
-    </div>` : ""}
+    </div>`
+        : ""
+    }
   </div>
 
   <p style="text-align: center; font-size: 12px; color: #9ca3af; margin-top: 16px;">AI Creator Pipeline Notification</p>
@@ -162,7 +160,7 @@ Deno.serve(async (req) => {
     } else {
       // Error notification
       const errMsg = error_message || run.error_message || "Unknown error";
-      
+
       // Get recent error logs
       const { data: errorLogs } = await supabase
         .from("run_logs")
@@ -173,13 +171,15 @@ Deno.serve(async (req) => {
         .limit(10);
 
       const logEntries = (errorLogs || [])
-        .map(l => `<tr>
+        .map(
+          (l) => `<tr>
           <td style="padding: 6px 8px; font-size: 12px; color: #6b7280; border-bottom: 1px solid #f0f0f0; white-space: nowrap;">${new Date(l.created_at).toLocaleTimeString()}</td>
           <td style="padding: 6px 8px; font-size: 12px; border-bottom: 1px solid #f0f0f0;">
-            <span style="display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; ${l.level === 'error' ? 'background: #fef2f2; color: #dc2626;' : 'background: #fffbeb; color: #d97706;'}">${l.level}</span>
+            <span style="display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; ${l.level === "error" ? "background: #fef2f2; color: #dc2626;" : "background: #fffbeb; color: #d97706;"}">${l.level}</span>
           </td>
           <td style="padding: 6px 8px; font-size: 13px; border-bottom: 1px solid #f0f0f0;">${escapeHtml(l.message)}</td>
-        </tr>`)
+        </tr>`,
+        )
         .join("");
 
       subject = `❌ ${projectName} — Run Failed`;
@@ -200,11 +200,15 @@ Deno.serve(async (req) => {
       <p style="margin: 8px 0 0; font-size: 14px; color: #7f1d1d; word-break: break-word;">${escapeHtml(errMsg)}</p>
     </div>
 
-    ${logEntries ? `
+    ${
+      logEntries
+        ? `
     <h2 style="font-size: 15px; margin: 0 0 12px; color: #374151;">Recent Logs</h2>
     <table style="width: 100%; border-collapse: collapse;">
       ${logEntries}
-    </table>` : ""}
+    </table>`
+        : ""
+    }
 
     <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
       <tr>
