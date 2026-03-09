@@ -65,6 +65,11 @@ export interface PromptConfigMetadata {
   title_prompt: string;
   description_prompt: string;
   hashtag_prompt: string;
+  per_platform_prompts?: Record<string, {
+    title_prompt?: string;
+    description_prompt?: string;
+    hashtag_prompt?: string;
+  }>;
 }
 
 export interface PromptConfigAudio {
