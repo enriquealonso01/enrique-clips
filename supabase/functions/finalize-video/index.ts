@@ -1681,7 +1681,9 @@ Deno.serve(async (req) => {
 
               // Build the full FFmpeg command
               let ffmpegCmd: string;
-              const inputArgs = sortedInputKeys
+              // Exclude font from -i inputs (it's referenced via fontfile= in drawtext)
+              const mediaInputKeys = sortedInputKeys.filter((k) => k !== "in_font");
+              const inputArgs = mediaInputKeys
                 .map((k) => `-i {{${k}}}`)
                 .join(" ");
 
