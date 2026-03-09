@@ -219,15 +219,47 @@ This is where you define specific overlays with complete parameter control. **Th
 - **Engagement overlays** work best at `start_pct: 85, end_pct: 100` — appearing in the final moments to drive comments.
 - **Use `content_mode: "ai_generated"` with a `content_prompt`** for dynamic text that adapts to whatever the AI planner decides to create. The prompt should describe the *type* of text you want, not the literal text.
 
-### 3.6 `metadata` — Post Copy Generation
+### 3.6 `metadata` — Per-Platform Post Metadata
 
-Controls how the title, description, and hashtags are generated for the published post.
+The system generates **platform-specific metadata** automatically. Each enabled platform (Instagram, TikTok, YouTube Shorts, Facebook) receives uniquely optimized titles, descriptions, and hashtags following 2026 best practices. The AI never produces content that appears AI-generated.
+
+#### Platform-Specific Behavior (Automatic)
+| Platform | Title Style | Description Style | Hashtags |
+|----------|------------|-------------------|----------|
+| **Instagram** | Hook in first 125 chars, curiosity/outcome-driven | 2-3 short paragraphs, keywords, CTA at end | 3-8 (niche + medium + broad) |
+| **TikTok** | Exact search phrase, question/problem style | Short (80-150 chars), natural keywords | 3-5 (niche + industry + broad) |
+| **YouTube Shorts** | 40-60 chars, search keyword, curiosity-driven | 1-2 sentences, keyword repeated | 3-5 (always includes #shorts) |
+| **Facebook** | Clear and descriptive, topic keywords | 1-2 sentences explaining the reel | 3-5 |
+
+#### Fields
 
 | Field | Type | Purpose | When to Override |
 |-------|------|---------|-----------------|
-| `title_prompt` | string | Instructions for title generation. | Override for platform-specific style: `"Generate a YouTube Shorts title with emoji, under 60 chars"`. |
-| `description_prompt` | string | Instructions for description generation. | Override for brand voice: `"Write in first person, casual tone, include 'Link in bio'"`. |
-| `hashtag_prompt` | string | Instructions for hashtag generation. | Override for niche targeting: `"Generate 5 architecture hashtags and 5 trending general hashtags"`. |
+| `title_prompt` | string | Additional instructions for title generation (augments platform rules). | Override to add brand voice or specific constraints. |
+| `description_prompt` | string | Additional instructions for description generation. | Override for brand voice: `"Write in first person, casual tone, include 'Link in bio'"`. |
+| `hashtag_prompt` | string | Additional instructions for hashtag generation. | Override for niche targeting: `"Always include #architecture and #design"`. |
+| `per_platform_prompts` | object | Per-platform overrides for title/description/hashtag prompts. | Use to give platform-specific additional instructions beyond the automatic rules. |
+
+#### Per-Platform Prompt Example
+```json
+{
+  "metadata": {
+    "title_prompt": "Always mention the city name",
+    "per_platform_prompts": {
+      "tiktok": {
+        "title_prompt": "Use Gen-Z slang and trending phrases",
+        "hashtag_prompt": "Include at least one trending TikTok hashtag"
+      },
+      "youtube": {
+        "title_prompt": "Make the title SEO-optimized for search",
+        "hashtag_prompt": "Always include #shorts"
+      }
+    }
+  }
+}
+```
+
+> **Important**: The `title_prompt`, `description_prompt`, and `hashtag_prompt` fields are *additional guidance* that augments the built-in platform-specific best practices — they do NOT replace them. The system already knows the optimal format for each platform.
 
 ### 3.7 `audio` — Sound Configuration
 
@@ -408,3 +440,7 @@ These are configured on the project itself, not in the JSON:
 9. **The video generators (Kling/Pika/Vidu) have a ~10 second max clip duration.** Don't expect a single scene to cover complex multi-step actions.
 
 10. **The merge behavior**: JSON values override defaults. Empty strings and empty arrays are ignored (defaults preserved). Non-empty arrays fully replace the default array.
+
+11. **Metadata is generated per-platform automatically.** The system produces uniquely optimized titles, descriptions, and hashtags for Instagram, TikTok, YouTube Shorts, and Facebook — following each platform's 2026 best practices. The `title_prompt`, `description_prompt`, and `hashtag_prompt` fields in `metadata` are *additional guidance* that augments (not replaces) the built-in platform rules.
+
+12. **Content must NEVER appear AI-generated.** All metadata, captions, overlay text, and descriptions are written to sound like authentic human-created content. Never mention AI, algorithms, prompts, or generation tools in any user-facing text.
