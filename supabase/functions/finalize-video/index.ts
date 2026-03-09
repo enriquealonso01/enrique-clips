@@ -1671,7 +1671,6 @@ Deno.serve(async (req) => {
                 const scaledBoxBorder = Math.round(10 * resScale);
 
                 // Reference font file input for Montserrat Bold
-                const fontInputIdx = getInputIndex("in_font");
                 const fontFileRef = `fontfile={{in_font}}`;
 
                 filterParts.push(
