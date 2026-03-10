@@ -18,6 +18,7 @@ export interface PromptConfigPlanning {
   viral_pacing_rules: string[];
   scene_progression_rules: string[];
   start_state_rules: string[];
+  behavior_assignment_rules: string[];
 }
 
 export interface PromptConfigKeyframes {
