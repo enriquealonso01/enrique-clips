@@ -6,7 +6,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const NOTIFICATION_EMAIL = "social.controlhub@gmail.com";
+const NOTIFICATION_EMAIL = "proven.solved@gmail.com";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
