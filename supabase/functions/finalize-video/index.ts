@@ -1593,8 +1593,8 @@ Deno.serve(async (req) => {
                 in_video: tempVideoUrl.publicUrl,
               };
 
-              // Add Montserrat Bold font for text overlays
-              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FMontserrat-Bold.ttf";
+              // Add Anton font for text overlays (condensed bold, social-media / game-style)
+              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FAnton-Regular.ttf";
               if (textOverlays.length > 0) {
                 inputFiles["in_font"] = FONT_URL;
               }
