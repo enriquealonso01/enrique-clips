@@ -243,7 +243,7 @@ export function validatePromptConfig(
       errors.push("'global.rules' must be an array.");
   }
   if (c.planning) {
-    for (const field of ["first_scene_hook_rules", "viral_pacing_rules", "scene_progression_rules", "start_state_rules"]) {
+    for (const field of ["first_scene_hook_rules", "viral_pacing_rules", "scene_progression_rules", "start_state_rules", "behavior_assignment_rules"]) {
       if (c.planning[field] !== undefined && !Array.isArray(c.planning[field]))
         errors.push(`'planning.${field}' must be an array.`);
     }
