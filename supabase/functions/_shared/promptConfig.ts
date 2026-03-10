@@ -18,6 +18,7 @@ export interface PromptConfigPlanning {
   viral_pacing_rules: string[];
   scene_progression_rules: string[];
   start_state_rules: string[];
+  behavior_assignment_rules: string[];
 }
 
 export interface PromptConfigKeyframes {
@@ -128,6 +129,14 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
       "The world begins in its natural, untouched state before any process starts.",
       "Scene 1 should show ONLY the initial environment with no signs of the upcoming transformation.",
       "Human elements, tools, or construction materials should emerge gradually, not appear instantly.",
+    ],
+    behavior_assignment_rules: [
+      "If the scene involves construction, city growth, farming, manufacturing, or building processes → timelapse_build",
+      "If the scene is an opening landscape, establishing shot, or calm environment → environment_idle",
+      "If the scene involves character dialogue or interaction → conversation",
+      "If the scene involves travel, walking through spaces, or discovery → exploration",
+      "If the scene is a final payoff, big reveal, or dramatic unveiling → reveal",
+      "For dramatic character moments, action sequences, or story beats → cinematic_action",
     ],
   },
   keyframes: {

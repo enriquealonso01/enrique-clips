@@ -469,12 +469,7 @@ Each scene MUST be assigned a scene_behavior from: environment_idle, cinematic_a
 The behavior determines the motion grammar for camera and subject action in the kling_prompt.
 
 BEHAVIOR ASSIGNMENT RULES:
-- If the scene involves construction, city growth, farming, manufacturing, or building processes → timelapse_build
-- If the scene is an opening landscape, establishing shot, or calm environment → environment_idle
-- If the scene involves character dialogue or interaction → conversation
-- If the scene involves travel, walking through spaces, or discovery → exploration
-- If the scene is a final payoff, big reveal, or dramatic unveiling → reveal
-- For dramatic character moments, action sequences, or story beats → cinematic_action
+${resolvedConfig.planning.behavior_assignment_rules.map(r => `- ${r}`).join("\n")}
 
 === MOTION GRAMMAR PER BEHAVIOR ===
 The kling_prompt MUST follow the motion rules for its assigned behavior:

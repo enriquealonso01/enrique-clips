@@ -17,6 +17,7 @@ export interface PromptConfigPlanning {
   viral_pacing_rules: string[];
   scene_progression_rules: string[];
   start_state_rules: string[];
+  behavior_assignment_rules: string[];
 }
 
 export interface PromptConfigKeyframes {
@@ -130,6 +131,14 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
       "Scene 1 should show ONLY the initial environment with no signs of the upcoming transformation.",
       "Human elements, tools, or construction materials should emerge gradually, not appear instantly.",
     ],
+    behavior_assignment_rules: [
+      "If the scene involves construction, city growth, farming, manufacturing, or building processes → timelapse_build",
+      "If the scene is an opening landscape, establishing shot, or calm environment → environment_idle",
+      "If the scene involves character dialogue or interaction → conversation",
+      "If the scene involves travel, walking through spaces, or discovery → exploration",
+      "If the scene is a final payoff, big reveal, or dramatic unveiling → reveal",
+      "For dramatic character moments, action sequences, or story beats → cinematic_action",
+    ],
   },
   keyframes: {
     prompt_template:
@@ -234,7 +243,7 @@ export function validatePromptConfig(
       errors.push("'global.rules' must be an array.");
   }
   if (c.planning) {
-    for (const field of ["first_scene_hook_rules", "viral_pacing_rules", "scene_progression_rules", "start_state_rules"]) {
+    for (const field of ["first_scene_hook_rules", "viral_pacing_rules", "scene_progression_rules", "start_state_rules", "behavior_assignment_rules"]) {
       if (c.planning[field] !== undefined && !Array.isArray(c.planning[field]))
         errors.push(`'planning.${field}' must be an array.`);
     }
