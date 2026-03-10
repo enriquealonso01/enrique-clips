@@ -1593,8 +1593,8 @@ Deno.serve(async (req) => {
                 in_video: tempVideoUrl.publicUrl,
               };
 
-              // Add Montserrat Bold font for text overlays
-              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FMontserrat-Bold.ttf";
+              // Add Anton font for text overlays (condensed bold, social-media / game-style)
+              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FAnton-Regular.ttf";
               if (textOverlays.length > 0) {
                 inputFiles["in_font"] = FONT_URL;
               }
@@ -1670,12 +1670,13 @@ Deno.serve(async (req) => {
 
                 const scaledBoxBorder = Math.round(10 * resScale);
 
-                // Reference font file input for Montserrat Bold
+                // Reference Anton font file — thick black outline, white fill (game/social style)
                 const fontFileRef = `fontfile={{in_font}}`;
 
-                const borderW = Math.max(1, Math.round(2 * resScale));
+                // Thick black outline scaled to resolution (≈6px at 540p)
+                const borderW = Math.max(3, Math.round(6 * resScale));
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=${fontColor}:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
