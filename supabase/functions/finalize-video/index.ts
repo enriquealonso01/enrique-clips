@@ -1632,13 +1632,24 @@ Deno.serve(async (req) => {
                 const endSec = (imgOv.end_pct / 100) * videoDurationSec;
                 const imageInputIdx = getInputIndex(`in_img${i}`);
                 const outLabel = `v${filterIdx}`;
+                const scaledImgLabel = `img_s${i}`;
 
                 // Position mapping for image overlays
                 const pos = getFFmpegOverlayPosition(imgOv.position, resScale);
 
-                filterParts.push(
-                  `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
-                );
+                // Scale image overlay proportionally to resolution (authored at 540p baseline)
+                if (resScale !== 1) {
+                  filterParts.push(
+                    `[${imageInputIdx}:v]scale=iw*${resScale.toFixed(2)}:ih*${resScale.toFixed(2)}:flags=lanczos[${scaledImgLabel}]`
+                  );
+                  filterParts.push(
+                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  );
+                } else {
+                  filterParts.push(
+                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  );
+                }
                 currentVideoLabel = outLabel;
                 filterIdx++;
               }
