@@ -112,7 +112,61 @@ Deno.serve(async (req) => {
       console.log(`Triggered run ${run.id} for project "${project.title}" at ${schedule.time_utc}`);
     }
 
-    return json({ status: "ok", triggered_count: triggered.length, triggered });
+    // ── Stuck-run watchdog ──
+    // Detect runs stuck in "running" for >5 min with no recent log activity
+    // This catches edge-function crashes that kill a run mid-step without re-chaining
+    const stuckResults: string[] = [];
+    try {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: stuckRuns } = await supabase
+        .from("runs")
+        .select("id, project_id, current_step, progress_pct, started_at")
+        .eq("status", "running")
+        .lt("started_at", fiveMinAgo);
+
+      if (stuckRuns && stuckRuns.length > 0) {
+        for (const stuck of stuckRuns) {
+          // Check last log timestamp — if >5 min old, run is truly stuck
+          const { data: recentLogs } = await supabase
+            .from("run_logs")
+            .select("created_at")
+            .eq("run_id", stuck.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+
+          const lastLogAt = recentLogs?.[0]?.created_at;
+          if (lastLogAt && new Date(lastLogAt).getTime() > Date.now() - 5 * 60 * 1000) {
+            continue; // Had recent activity, not stuck
+          }
+
+          console.log(`Watchdog: re-triggering stuck run ${stuck.id} (step=${stuck.current_step}, progress=${stuck.progress_pct}%)`);
+
+          // Log watchdog action
+          await supabase.from("run_logs").insert({
+            run_id: stuck.id,
+            level: "warn" as any,
+            message: `Watchdog: run appeared stuck at step="${stuck.current_step}" (no logs for >5 min). Re-triggering pipeline.`,
+          });
+
+          // Re-invoke pipeline
+          const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/run-pipeline`;
+          fetch(fnUrl, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ run_id: stuck.id }),
+          }).catch((e) => console.error(`Watchdog pipeline invoke error for ${stuck.id}:`, e));
+
+          stuckResults.push(`${stuck.id} (step=${stuck.current_step})`);
+        }
+      }
+    } catch (watchdogErr) {
+      console.error("Watchdog error:", watchdogErr);
+    }
+
+    return json({ status: "ok", triggered_count: triggered.length, triggered, watchdog_retried: stuckResults });
   } catch (err) {
     console.error("Scheduler error:", err);
     return json({ error: err.message }, 500);
