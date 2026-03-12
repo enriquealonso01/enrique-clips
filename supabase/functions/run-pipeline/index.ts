@@ -1035,105 +1035,19 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
           return json({ error: "All submissions failed" }, 500);
         }
 
-        // Inline poll — up to ~8 min, then client-side poll-vidu-direct takes over
-        const POLL_INTERVAL_MS = 15000;
-        const MAX_POLLS = 32; // ~8 minutes
-        for (let poll = 0; poll < MAX_POLLS; poll++) {
-          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-          const currentStatus = await checkRunStatus();
-          if (currentStatus !== "running") return json({ status: "halted" });
-
-          let allDone = true;
-          let completedInline = 0;
-
-          for (const taskId of viduTaskIds) {
-            try {
-              let statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}/creations`, {
-                headers: { "Authorization": `Token ${VIDU_API_KEY}` },
-              });
-
-              // Backward-compatible fallback in case account/region still serves legacy task route
-              if (statusResp.status === 404) {
-                statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
-                  headers: { "Authorization": `Token ${VIDU_API_KEY}` },
-                });
-              }
-
-              if (!statusResp.ok) {
-                allDone = false;
-                continue;
-              }
-
-              const statusData = await statusResp.json();
-              const taskState = statusData.state || statusData.status;
-
-              if (taskState === "success") {
-                // Check if already downloaded
-                const { data: existing } = await supabase.from("assets")
-                  .select("supabase_path")
-                  .eq("run_id", runId)
-                  .eq("type", "clip")
-                  .filter("metadata->>vidu_task_id", "eq", taskId)
-                  .single();
-                if (existing && !existing.supabase_path.startsWith("pending-")) {
-                  completedInline++;
-                  continue;
-                }
-
-                // Download video from result payload
-                const videoUrl = statusData.creations?.[0]?.url || statusData.video_url || statusData.url;
-                if (videoUrl) {
-                  const videoResp = await fetch(videoUrl);
-                  if (videoResp.ok) {
-                    const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
-                    const storagePath = `${project.id}/clips/${runId}/vidu-${taskId}.mp4`;
-                    await supabase.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
-                    await supabase.from("assets")
-                      .update({ supabase_path: storagePath, metadata: { vidu_task_id: taskId, status: "completed", generator: "vidu_direct" } })
-                      .eq("run_id", runId)
-                      .eq("type", "clip")
-                      .filter("metadata->>vidu_task_id", "eq", taskId);
-                    await log("info", `Vidu Direct clip ${taskId} downloaded and stored`);
-                    completedInline++;
-                  }
-                } else {
-                  await log("error", `No video URL in Vidu Direct result for ${taskId}`, statusData);
-                  await supabase.from("assets")
-                    .update({ metadata: { vidu_task_id: taskId, status: "failed", generator: "vidu_direct" } })
-                    .eq("run_id", runId).eq("type", "clip")
-                    .filter("metadata->>vidu_task_id", "eq", taskId);
-                  completedInline++;
-                }
-              } else if (taskState === "failed") {
-                await log("error", `Vidu Direct task ${taskId} failed`, statusData);
-                await supabase.from("assets")
-                  .update({ metadata: { vidu_task_id: taskId, status: "failed", generator: "vidu_direct" } })
-                  .eq("run_id", runId).eq("type", "clip")
-                  .filter("metadata->>vidu_task_id", "eq", taskId);
-                completedInline++;
-              } else {
-                allDone = false;
-                await log("debug", `Vidu Direct task ${taskId}: ${taskState || "unknown"}`);
-              }
-            } catch (pollErr) {
-              await log("warn", `Vidu Direct poll error ${taskId}: ${pollErr.message}`);
-              allDone = false;
-            }
-          }
-
-          if (allDone) {
-            await log("info", `All ${viduTaskIds.length} Vidu Direct clips completed.`);
-            await updateRun({ current_step: "stitch", progress_pct: 70 });
-            chainNextStep();
-            return json({ status: "vidu_direct_complete", run_id: runId });
-          }
-
-          const progress = 40 + Math.round(30 * (completedInline / viduTaskIds.length));
-          await updateRun({ progress_pct: Math.min(progress, 69) });
-        }
-
-        await log("info", "Inline Vidu Direct polling timed out — client-side poll-vidu-direct will continue.");
-        return json({ status: "vidu_direct_polling_timeout", run_id: runId });
+        // Off-peak mode: pause the run and let the scheduled sweeper handle completion
+        await log("info", `All ${viduTaskIds.length} Vidu Direct off-peak clips submitted. Pausing run for background polling.`);
+        await updateRun({
+          status: "paused",
+          progress_pct: 45,
+          generated_metadata: {
+            ...(run.generated_metadata as any || {}),
+            waiting_for: "vidu_off_peak",
+            vidu_task_ids: viduTaskIds,
+            off_peak_submitted_at: new Date().toISOString(),
+          },
+        });
+        return json({ status: "vidu_off_peak_paused", run_id: runId, tasks: viduTaskIds.length });
       }
 
       // ══════════════════════════════════════════════════════
