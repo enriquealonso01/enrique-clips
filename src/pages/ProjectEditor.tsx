@@ -346,11 +346,12 @@ export default function ProjectEditor() {
                 <Select value={(form as any).video_generator || "kling"} onValueChange={(v) => update("video_generator" as any, v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="kling">Kling AI</SelectItem>
-                    <SelectItem value="pika">Pika 2.2 (via fal.ai)</SelectItem>
-                    <SelectItem value="vidu">Vidu Q3 Turbo (via fal.ai)</SelectItem>
-                  </SelectContent>
-                </Select>
+                     <SelectItem value="kling">Kling AI</SelectItem>
+                     <SelectItem value="pika">Pika 2.2 (via fal.ai)</SelectItem>
+                     <SelectItem value="vidu">Vidu Q3 Turbo (via fal.ai)</SelectItem>
+                     <SelectItem value="vidu_direct">Vidu Q3 Turbo (Direct API)</SelectItem>
+                   </SelectContent>
+                 </Select>
               </div>
             </CardContent>
           </Card>
