@@ -36,6 +36,7 @@ export default function RunMonitor() {
   });
 
   const isActive = run?.status === "running" || run?.status === "queued" || run?.status === "paused";
+  const isWaitingForOffPeak = run?.status === "paused" && (run?.generated_metadata as any)?.waiting_for === "vidu_off_peak";
   const isKlingStep = run?.current_step === "kling" && run?.status === "running";
   const isPikaPolling = run?.current_step === "kling" && run?.status === "running";
 
@@ -257,6 +258,12 @@ export default function RunMonitor() {
         <CardHeader><CardTitle className="text-base">Pipeline Progress</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <Progress value={run.progress_pct} className="h-2" />
+          {isWaitingForOffPeak && (
+            <div className="flex items-center gap-2 p-2 rounded-md bg-muted text-muted-foreground text-sm">
+              <span className="animate-pulse">⏳</span>
+              <span>Waiting for off-peak Vidu clips (up to 48h). The pipeline will auto-resume when all clips are ready.</span>
+            </div>
+          )}
           <div className="flex justify-between overflow-x-auto gap-1 pb-1">
             {STEPS.map((step, i) => (
               <div key={step} className="flex flex-col items-center gap-1 min-w-[2.5rem]">
