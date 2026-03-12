@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.poll-pika]
 verify_jwt = false
+
+[functions.poll-vidu-direct]
+verify_jwt = false

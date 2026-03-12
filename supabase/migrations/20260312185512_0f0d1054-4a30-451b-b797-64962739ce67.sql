@@ -1,0 +1,1 @@
+ALTER TYPE public.video_generator ADD VALUE IF NOT EXISTS 'vidu_direct';

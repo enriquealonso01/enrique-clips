@@ -546,7 +546,7 @@ export type Database = {
         | "clip_requested"
         | "clip_ready"
         | "failed"
-      video_generator: "kling" | "pika" | "vidu"
+      video_generator: "kling" | "pika" | "vidu" | "vidu_direct"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -724,7 +724,7 @@ export const Constants = {
         "clip_ready",
         "failed",
       ],
-      video_generator: ["kling", "pika", "vidu"],
+      video_generator: ["kling", "pika", "vidu", "vidu_direct"],
     },
   },
 } as const

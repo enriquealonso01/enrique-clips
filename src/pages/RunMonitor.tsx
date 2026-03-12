@@ -87,6 +87,31 @@ export default function RunMonitor() {
     return () => clearInterval(interval);
   }, [isPikaPolling, runId, queryClient]);
 
+  // Auto-poll Vidu Direct tasks when in kling step
+  const isViduDirectPolling = run?.current_step === "kling" && run?.status === "running";
+  useEffect(() => {
+    if (!isViduDirectPolling || !runId) return;
+
+    const pollViduDirect = async () => {
+      try {
+        const { data } = await supabase.functions.invoke("poll-vidu-direct", {
+          body: { run_id: runId },
+        });
+        if (data) {
+          queryClient.invalidateQueries({ queryKey: ["run", runId] });
+          queryClient.invalidateQueries({ queryKey: ["scenes", runId] });
+          queryClient.invalidateQueries({ queryKey: ["run-logs", runId] });
+        }
+      } catch (err) {
+        console.error("Poll-vidu-direct error:", err);
+      }
+    };
+
+    pollViduDirect();
+    const interval = setInterval(pollViduDirect, 15000);
+    return () => clearInterval(interval);
+  }, [isViduDirectPolling, runId, queryClient]);
+
   // Fallback: invoke finalize-video once when step reaches stitch/metadata/publish
   // Only fallback-invoke for metadata/publish — stitch is handled by the pipeline chain.
   // Including "stitch" here caused duplicate execution that overwrote correct results.

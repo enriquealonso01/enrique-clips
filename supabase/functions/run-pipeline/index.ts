@@ -918,7 +918,214 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
       }
 
       // ══════════════════════════════════════════════════════
-      // FAL.AI PATH (Pika / Vidu)
+      // VIDU DIRECT API PATH
+      // ══════════════════════════════════════════════════════
+      if (videoGenerator === "vidu_direct") {
+        const VIDU_API_KEY = Deno.env.get("VIDU_API_KEY");
+        if (!VIDU_API_KEY) {
+          await log("error", "VIDU_API_KEY not configured");
+          await updateRun({ status: "failed", error_message: "VIDU_API_KEY not configured" });
+          return json({ error: "VIDU_API_KEY not configured" }, 500);
+        }
+
+        const viduResolution = (project as any).pika_resolution || "720p";
+        const enableAudio = (project as any).kling_sound || false;
+        const viduModel = "viduq3-turbo";
+        const clipDuration = Math.min(Math.max(project.clip_duration_sec || 5, 1), 16);
+
+        // Build consecutive start→end image pairs
+        const imageUrls: string[] = [];
+        if (runInitialImageUrl) imageUrls.push(runInitialImageUrl);
+        for (const scene of scenes) {
+          if (sceneKeyframes[scene.scene_index]) imageUrls.push(sceneKeyframes[scene.scene_index]);
+        }
+
+        if (imageUrls.length < 2) {
+          await log("error", "Vidu Direct needs at least 2 keyframe images for start→end transitions");
+          await updateRun({ status: "failed", error_message: "Not enough keyframes for Vidu Direct" });
+          return json({ error: "Not enough keyframes" }, 500);
+        }
+
+        const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
+        for (let i = 0; i < imageUrls.length - 1; i++) {
+          const scene = scenes[i] || scenes[scenes.length - 1];
+          pairs.push({
+            start: imageUrls[i], end: imageUrls[i + 1],
+            sceneIndex: scene.scene_index,
+            prompt: scene.kling_prompt || conceptPrompt || "smooth cinematic transition",
+          });
+        }
+
+        await log("info", `Vidu Direct: submitting ${pairs.length} clip(s), model=${viduModel}, duration=${clipDuration}s, resolution=${viduResolution}`);
+
+        const viduTaskIds: string[] = [];
+        const viduStartTime = Date.now();
+
+        for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+          if (Date.now() - viduStartTime > 100_000) {
+            await log("info", `Time budget reached after ${clipIdx} Vidu Direct submissions. Re-chaining.`);
+            break;
+          }
+          const pair = pairs[clipIdx];
+
+          // Vidu direct API only accepts 1 image as start frame
+          const viduBody: Record<string, any> = {
+            model: viduModel,
+            images: [pair.start],
+            prompt: pair.prompt,
+            duration: clipDuration,
+            resolution: viduResolution,
+            audio: enableAudio,
+            movement_amplitude: "auto",
+          };
+
+          await log("debug", `Vidu Direct clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
+            start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
+          });
+
+          try {
+            const resp = await fetch("https://api.vidu.com/ent/v2/img2video", {
+              method: "POST",
+              headers: {
+                "Authorization": `Token ${VIDU_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(viduBody),
+            });
+
+            if (!resp.ok) {
+              const errText = await resp.text();
+              await log("error", `Vidu Direct API error for clip ${clipIdx + 1}: ${resp.status} ${errText}`);
+              continue;
+            }
+
+            const result = await resp.json();
+            const taskId = result.task_id;
+            if (!taskId) {
+              await log("error", `No task_id for Vidu Direct clip ${clipIdx + 1}`, result);
+              continue;
+            }
+
+            viduTaskIds.push(taskId);
+            await log("info", `Vidu Direct clip ${clipIdx + 1} submitted: task_id=${taskId}, credits=${result.credits || "?"}`);
+
+            const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
+            await supabase.from("assets").insert({
+              supabase_path: `pending-vidu-direct/${runId}/clip-${clipIdx}`,
+              type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
+              metadata: {
+                vidu_task_id: taskId,
+                clip_index: clipIdx,
+                scene_index: pair.sceneIndex,
+                status: "submitted",
+                generator: "vidu_direct",
+                model: viduModel,
+              },
+            });
+          } catch (submitErr) {
+            await log("error", `Vidu Direct clip ${clipIdx + 1} submit error: ${submitErr.message}`);
+          }
+        }
+
+        if (viduTaskIds.length === 0) {
+          await log("error", "No Vidu Direct tasks submitted successfully");
+          await updateRun({ status: "failed", error_message: "All Vidu Direct submissions failed" });
+          return json({ error: "All submissions failed" }, 500);
+        }
+
+        // Inline poll — up to ~8 min, then client-side poll-vidu-direct takes over
+        const POLL_INTERVAL_MS = 15000;
+        const MAX_POLLS = 32; // ~8 minutes
+        for (let poll = 0; poll < MAX_POLLS; poll++) {
+          await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+          const currentStatus = await checkRunStatus();
+          if (currentStatus !== "running") return json({ status: "halted" });
+
+          let allDone = true;
+          let completedInline = 0;
+
+          for (const taskId of viduTaskIds) {
+            try {
+              const statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
+                headers: { "Authorization": `Token ${VIDU_API_KEY}` },
+              });
+              if (!statusResp.ok) {
+                allDone = false;
+                continue;
+              }
+              const statusData = await statusResp.json();
+
+              if (statusData.state === "success") {
+                // Check if already downloaded
+                const { data: existing } = await supabase.from("assets")
+                  .select("supabase_path")
+                  .eq("run_id", runId)
+                  .eq("type", "clip")
+                  .filter("metadata->>vidu_task_id", "eq", taskId)
+                  .single();
+                if (existing && !existing.supabase_path.startsWith("pending-")) {
+                  completedInline++;
+                  continue;
+                }
+
+                // Download video from creations array
+                const videoUrl = statusData.creations?.[0]?.url;
+                if (videoUrl) {
+                  const videoResp = await fetch(videoUrl);
+                  if (videoResp.ok) {
+                    const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
+                    const storagePath = `${project.id}/clips/${runId}/vidu-${taskId}.mp4`;
+                    await supabase.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
+                    await supabase.from("assets")
+                      .update({ supabase_path: storagePath, metadata: { vidu_task_id: taskId, status: "completed", generator: "vidu_direct" } })
+                      .eq("run_id", runId)
+                      .eq("type", "clip")
+                      .filter("metadata->>vidu_task_id", "eq", taskId);
+                    await log("info", `Vidu Direct clip ${taskId} downloaded and stored`);
+                    completedInline++;
+                  }
+                } else {
+                  await log("error", `No video URL in Vidu Direct result for ${taskId}`, statusData);
+                  await supabase.from("assets")
+                    .update({ metadata: { vidu_task_id: taskId, status: "failed", generator: "vidu_direct" } })
+                    .eq("run_id", runId).eq("type", "clip")
+                    .filter("metadata->>vidu_task_id", "eq", taskId);
+                  completedInline++;
+                }
+              } else if (statusData.state === "failed") {
+                await log("error", `Vidu Direct task ${taskId} failed`, statusData);
+                await supabase.from("assets")
+                  .update({ metadata: { vidu_task_id: taskId, status: "failed", generator: "vidu_direct" } })
+                  .eq("run_id", runId).eq("type", "clip")
+                  .filter("metadata->>vidu_task_id", "eq", taskId);
+                completedInline++;
+              } else {
+                allDone = false;
+                await log("debug", `Vidu Direct task ${taskId}: ${statusData.state}`);
+              }
+            } catch (pollErr) {
+              await log("warn", `Vidu Direct poll error ${taskId}: ${pollErr.message}`);
+              allDone = false;
+            }
+          }
+
+          if (allDone) {
+            await log("info", `All ${viduTaskIds.length} Vidu Direct clips completed.`);
+            await updateRun({ current_step: "stitch", progress_pct: 70 });
+            chainNextStep();
+            return json({ status: "vidu_direct_complete", run_id: runId });
+          }
+
+          const progress = 40 + Math.round(30 * (completedInline / viduTaskIds.length));
+          await updateRun({ progress_pct: Math.min(progress, 69) });
+        }
+
+        await log("info", "Inline Vidu Direct polling timed out — client-side poll-vidu-direct will continue.");
+        return json({ status: "vidu_direct_polling_timeout", run_id: runId });
+      }
+
+      // ══════════════════════════════════════════════════════
+      // FAL.AI PATH (Pika / Vidu via fal.ai)
       // ══════════════════════════════════════════════════════
       if (videoGenerator === "pika" || videoGenerator === "vidu") {
         const FAL_KEY = Deno.env.get("FAL_KEY");
