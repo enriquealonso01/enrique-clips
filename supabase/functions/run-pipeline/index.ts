@@ -968,10 +968,10 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
           }
           const pair = pairs[clipIdx];
 
-          // Vidu direct API only accepts 1 image as start frame
+          // Vidu start-end2video API accepts 2 images: [start_frame, end_frame]
           const viduBody: Record<string, any> = {
             model: viduModel,
-            images: [pair.start],
+            images: [pair.start, pair.end],
             prompt: pair.prompt,
             duration: clipDuration,
             resolution: viduResolution,
@@ -981,10 +981,11 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
 
           await log("debug", `Vidu Direct clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
             start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
+            end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
           });
 
           try {
-            const resp = await fetch("https://api.vidu.com/ent/v2/img2video", {
+            const resp = await fetch("https://api.vidu.com/ent/v2/start-end2video", {
               method: "POST",
               headers: {
                 "Authorization": `Token ${VIDU_API_KEY}`,
