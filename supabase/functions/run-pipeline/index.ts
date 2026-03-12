@@ -977,6 +977,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
             resolution: viduResolution,
             audio: enableAudio,
             movement_amplitude: "auto",
+            off_peak: true,
           };
 
           await log("debug", `Vidu Direct clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
