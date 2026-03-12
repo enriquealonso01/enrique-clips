@@ -464,36 +464,75 @@ export default function ProjectEditor() {
             onSelect={(id) => update("selected_track_id" as any, id)}
           />
 
-          {/* Vidu Settings */}
-          {((form as any).video_generator || "kling") === "vidu" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Vidu Q3 Turbo</CardTitle>
-                <CardDescription>Image-to-video generation via fal.ai</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Resolution</Label>
-                  <Select value={(form as any).pika_resolution || "720p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="360p">360p</SelectItem>
-                      <SelectItem value="540p">540p</SelectItem>
-                      <SelectItem value="720p">720p</SelectItem>
-                      <SelectItem value="1080p">1080p</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Switch checked={(form as any).kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
-                  <Label>Enable Audio</Label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Vidu Q3 Turbo generates a 5s video from each keyframe image. Supports audio generation with dialogue and sound effects.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+           {/* Vidu Settings (fal.ai) */}
+           {((form as any).video_generator || "kling") === "vidu" && (
+             <Card>
+               <CardHeader>
+                 <CardTitle>Vidu Q3 Turbo</CardTitle>
+                 <CardDescription>Image-to-video generation via fal.ai</CardDescription>
+               </CardHeader>
+               <CardContent className="space-y-4">
+                 <div className="space-y-2">
+                   <Label>Resolution</Label>
+                   <Select value={(form as any).pika_resolution || "720p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
+                     <SelectTrigger><SelectValue /></SelectTrigger>
+                     <SelectContent>
+                       <SelectItem value="360p">360p</SelectItem>
+                       <SelectItem value="540p">540p</SelectItem>
+                       <SelectItem value="720p">720p</SelectItem>
+                       <SelectItem value="1080p">1080p</SelectItem>
+                     </SelectContent>
+                   </Select>
+                 </div>
+                 <div className="flex items-center gap-3">
+                   <Switch checked={(form as any).kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
+                   <Label>Enable Audio</Label>
+                 </div>
+                 <p className="text-xs text-muted-foreground">
+                   Vidu Q3 Turbo generates a 5s video from each keyframe image. Supports audio generation with dialogue and sound effects.
+                 </p>
+               </CardContent>
+             </Card>
+           )}
+
+           {/* Vidu Direct API Settings */}
+           {((form as any).video_generator || "kling") === "vidu_direct" && (
+             <Card>
+               <CardHeader>
+                 <CardTitle>Vidu Q3 Turbo (Direct API)</CardTitle>
+                 <CardDescription>Image-to-video via platform.vidu.com — cheaper than fal.ai</CardDescription>
+               </CardHeader>
+               <CardContent className="space-y-4">
+                 <div className="space-y-2">
+                   <Label>Resolution</Label>
+                   <Select value={(form as any).pika_resolution || "720p"} onValueChange={(v) => update("pika_resolution" as any, v)}>
+                     <SelectTrigger><SelectValue /></SelectTrigger>
+                     <SelectContent>
+                       <SelectItem value="540p">540p</SelectItem>
+                       <SelectItem value="720p">720p</SelectItem>
+                       <SelectItem value="1080p">1080p</SelectItem>
+                     </SelectContent>
+                   </Select>
+                 </div>
+                 <div className="space-y-2">
+                   <Label>Clip Duration (1–16s)</Label>
+                   <Input
+                     type="number"
+                     value={form.clip_duration_sec || 5}
+                     onChange={(e) => update("clip_duration_sec", Math.min(16, Math.max(1, parseInt(e.target.value) || 5)))}
+                     min={1} max={16}
+                   />
+                 </div>
+                 <div className="flex items-center gap-3">
+                   <Switch checked={(form as any).kling_sound || false} onCheckedChange={(v) => update("kling_sound", v)} />
+                   <Label>Enable Audio (dialogue + sound effects)</Label>
+                 </div>
+                 <p className="text-xs text-muted-foreground">
+                   Uses viduq3-turbo model directly via Vidu API. $0.04/second (off-peak) or $0.08/second. Supports 1–16s clips at up to 1080p.
+                 </p>
+               </CardContent>
+             </Card>
+           )}
         </TabsContent>
 
         {/* Overlays Tab */}
