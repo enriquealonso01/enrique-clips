@@ -84,9 +84,16 @@ Deno.serve(async (req) => {
       const taskId = meta.vidu_task_id;
 
       try {
-        const statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
+        let statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}/creations`, {
           headers: { "Authorization": `Token ${VIDU_API_KEY}` },
         });
+
+        // Backward-compatible fallback in case account/region still serves legacy task route
+        if (statusResp.status === 404) {
+          statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
+            headers: { "Authorization": `Token ${VIDU_API_KEY}` },
+          });
+        }
 
         if (!statusResp.ok) {
           allDone = false;
@@ -95,9 +102,10 @@ Deno.serve(async (req) => {
         }
 
         const statusData = await statusResp.json();
+        const taskState = statusData.state || statusData.status;
 
-        if (statusData.state === "success") {
-          const videoUrl = statusData.creations?.[0]?.url;
+        if (taskState === "success") {
+          const videoUrl = statusData.creations?.[0]?.url || statusData.video_url || statusData.url;
           if (videoUrl) {
             const videoResp = await fetch(videoUrl);
             if (videoResp.ok) {
@@ -109,7 +117,7 @@ Deno.serve(async (req) => {
               });
               await supabase.from("assets").update({
                 supabase_path: storagePath,
-                metadata: { vidu_task_id: taskId, status: "completed", generator: "vidu_direct" },
+                metadata: { ...meta, status: "completed", generator: "vidu_direct" },
               }).eq("id", asset.id);
               await log("info", `Vidu Direct video downloaded and stored: ${taskId}`);
               completedCount++;
@@ -121,7 +129,7 @@ Deno.serve(async (req) => {
             }).eq("id", asset.id);
             completedCount++;
           }
-        } else if (statusData.state === "failed") {
+        } else if (taskState === "failed") {
           await log("error", `Vidu Direct task ${taskId} failed`, statusData);
           await supabase.from("assets").update({
             metadata: { ...meta, status: "failed" },
@@ -129,7 +137,7 @@ Deno.serve(async (req) => {
           completedCount++;
         } else {
           allDone = false;
-          await log("debug", `Vidu Direct task ${taskId} status: ${statusData.state}`);
+          await log("debug", `Vidu Direct task ${taskId} status: ${taskState || "unknown"}`);
         }
       } catch (err) {
         await log("warn", `Error polling Vidu Direct ${taskId}: ${err.message}`);

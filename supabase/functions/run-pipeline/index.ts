@@ -1046,16 +1046,26 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
 
           for (const taskId of viduTaskIds) {
             try {
-              const statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
+              let statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}/creations`, {
                 headers: { "Authorization": `Token ${VIDU_API_KEY}` },
               });
+
+              // Backward-compatible fallback in case account/region still serves legacy task route
+              if (statusResp.status === 404) {
+                statusResp = await fetch(`https://api.vidu.com/ent/v2/tasks/${taskId}`, {
+                  headers: { "Authorization": `Token ${VIDU_API_KEY}` },
+                });
+              }
+
               if (!statusResp.ok) {
                 allDone = false;
                 continue;
               }
-              const statusData = await statusResp.json();
 
-              if (statusData.state === "success") {
+              const statusData = await statusResp.json();
+              const taskState = statusData.state || statusData.status;
+
+              if (taskState === "success") {
                 // Check if already downloaded
                 const { data: existing } = await supabase.from("assets")
                   .select("supabase_path")
@@ -1068,8 +1078,8 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
                   continue;
                 }
 
-                // Download video from creations array
-                const videoUrl = statusData.creations?.[0]?.url;
+                // Download video from result payload
+                const videoUrl = statusData.creations?.[0]?.url || statusData.video_url || statusData.url;
                 if (videoUrl) {
                   const videoResp = await fetch(videoUrl);
                   if (videoResp.ok) {
@@ -1092,7 +1102,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
                     .filter("metadata->>vidu_task_id", "eq", taskId);
                   completedInline++;
                 }
-              } else if (statusData.state === "failed") {
+              } else if (taskState === "failed") {
                 await log("error", `Vidu Direct task ${taskId} failed`, statusData);
                 await supabase.from("assets")
                   .update({ metadata: { vidu_task_id: taskId, status: "failed", generator: "vidu_direct" } })
@@ -1101,7 +1111,7 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
                 completedInline++;
               } else {
                 allDone = false;
-                await log("debug", `Vidu Direct task ${taskId}: ${statusData.state}`);
+                await log("debug", `Vidu Direct task ${taskId}: ${taskState || "unknown"}`);
               }
             } catch (pollErr) {
               await log("warn", `Vidu Direct poll error ${taskId}: ${pollErr.message}`);
