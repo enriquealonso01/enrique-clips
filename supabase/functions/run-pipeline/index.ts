@@ -769,8 +769,9 @@ ${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o
       let generatedCount = 0;
       const stepStartTime = Date.now();
       for (const scene of pendingScenes) {
-        // Time-budget guard: if we've used >100s, re-chain to avoid edge function timeout
-        if (Date.now() - stepStartTime > 100_000) {
+        // Time-budget guard: if we've used >80s, re-chain to avoid edge function timeout
+        // (reduced from 100s — a single AI image call can take 60s+, so 100s left no margin)
+        if (Date.now() - stepStartTime > 80_000) {
           await log("info", `Time budget reached after ${generatedCount} keyframes. Re-chaining for remaining ${pendingScenes.length - generatedCount} scenes.`);
           chainNextStep();
           return json({ status: "keyframes_time_budget", generated: generatedCount, remaining: pendingScenes.length - generatedCount });
