@@ -36,6 +36,7 @@ export default function RunMonitor() {
   });
 
   const isActive = run?.status === "running" || run?.status === "queued" || run?.status === "paused";
+  const isWaitingForOffPeak = run?.status === "paused" && (run?.generated_metadata as any)?.waiting_for === "vidu_off_peak";
   const isKlingStep = run?.current_step === "kling" && run?.status === "running";
   const isPikaPolling = run?.current_step === "kling" && run?.status === "running";
 
