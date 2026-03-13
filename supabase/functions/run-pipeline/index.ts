@@ -607,12 +607,18 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           .order("sort_order");
 
         if (overlays && overlays.length > 0) {
-          await log("info", `Generating AI content for ${overlays.length} overlays...`);
+          await log("info", `Generating AI content for ${overlays.length} overlay(s)...`);
+
+          // Build a simple prompt that returns JSON directly (no function calling — more reliable across models)
+          const overlayDescriptions = overlays.map((o: any, i: number) =>
+            `Overlay ${i} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_prompt || "Generate appropriate content"}`
+          ).join("\n");
+
           const overlayGenResult = await callAI(
             [
               {
                 role: "system",
-                content: `You are a video overlay content writer. Given a series concept, scene plan, and overlay descriptions, generate compelling text content for each overlay. Keep text concise and impactful — suitable for on-screen display.`,
+                content: `You are a video overlay content writer. Given a series concept and overlay descriptions, generate compelling SHORT text for each overlay. Return ONLY a JSON array of objects with "index" (0-based) and "content" (the text). Example: [{"index":0,"content":"SECRET BUNKER"}]. No markdown fences, no explanation — just the JSON array.`,
               },
               {
                 role: "user",
@@ -620,52 +626,54 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
 Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
-${overlays.map((o: any, i: number) => `Overlay ${i + 1} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_prompt || o.content_text || "Generate appropriate content"}`).join("\n")}`,
+${overlayDescriptions}`,
               },
             ],
-            [
-              {
-                type: "function",
-                function: {
-                  name: "set_overlay_content",
-                  description: "Set the text content for each overlay",
-                  parameters: {
-                    type: "object",
-                    properties: {
-                      overlays: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            index: { type: "number", description: "0-based index of the overlay" },
-                            content: { type: "string", description: "The generated text content for display" },
-                          },
-                          required: ["index", "content"],
-                          additionalProperties: false,
-                        },
-                      },
-                    },
-                    required: ["overlays"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-            ],
-            { type: "function", function: { name: "set_overlay_content" } }
+            undefined, // no tools — plain text response
+            undefined, // no tool_choice
+            "openai/gpt-5-mini" // reliable for structured JSON output
           );
 
-          const overlayToolCall = overlayGenResult.choices?.[0]?.message?.tool_calls?.[0];
-          if (overlayToolCall) {
-            const generated = JSON.parse(overlayToolCall.function.arguments);
-            for (const gen of generated.overlays) {
-              if (gen.index >= 0 && gen.index < overlays.length) {
+          // Parse the AI response — it should be a JSON array in the text content
+          const responseText = overlayGenResult.choices?.[0]?.message?.content || "";
+          await log("debug", "AI overlay raw response", { responseText });
+
+          let generated: Array<{ index: number; content: string }> = [];
+          try {
+            // Try parsing directly
+            const cleaned = responseText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+            generated = JSON.parse(cleaned);
+          } catch {
+            // Try extracting JSON array from the response
+            const match = responseText.match(/\[[\s\S]*\]/);
+            if (match) {
+              try { generated = JSON.parse(match[0]); } catch { /* will log below */ }
+            }
+          }
+
+          if (generated.length > 0) {
+            for (const gen of generated) {
+              if (gen.index >= 0 && gen.index < overlays.length && gen.content) {
                 await supabase
                   .from("overlays")
                   .update({ content_text: gen.content })
                   .eq("id", overlays[gen.index].id);
+                await log("info", `Overlay ${gen.index} content set: "${gen.content}"`);
               }
             }
-            await log("info", "AI overlay content generated", generated);
+            await log("info", `AI overlay content generated for ${generated.length} overlay(s)`);
+          } else {
+            await log("warn", `AI overlay generation returned no parseable content. Raw: ${responseText.substring(0, 200)}`);
+            // Fallback: use the content_prompt as literal text if short enough
+            for (const ov of overlays) {
+              if (ov.content_prompt && ov.content_prompt.length <= 40) {
+                await supabase
+                  .from("overlays")
+                  .update({ content_text: ov.content_prompt })
+                  .eq("id", ov.id);
+                await log("info", `Overlay fallback: used prompt as text for ${ov.id}`);
+              }
+            }
           }
         }
       } catch (err) {
