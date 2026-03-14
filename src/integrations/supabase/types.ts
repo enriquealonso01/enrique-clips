@@ -133,6 +133,42 @@ export type Database = {
           },
         ]
       }
+      project_tracks: {
+        Row: {
+          created_at: string
+          id: string
+          project_id: string
+          track_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          project_id: string
+          track_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          project_id?: string
+          track_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_tracks_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_tracks_track_id_fkey"
+            columns: ["track_id"]
+            isOneToOne: false
+            referencedRelation: "tracks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       projects: {
         Row: {
           aspect_ratio: string
