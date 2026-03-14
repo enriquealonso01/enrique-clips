@@ -1827,7 +1827,14 @@ Deno.serve(async (req) => {
               }
 
               if (ffmpegCmd) {
-                await log("info", `Rendi FFmpeg command: ${ffmpegCmd.substring(0, 200)}...`);
+                // Log full command in chunks to avoid truncation
+                await log("info", `Rendi FFmpeg command (${ffmpegCmd.length} chars): ${ffmpegCmd.substring(0, 500)}`);
+                if (ffmpegCmd.length > 500) {
+                  await log("debug", `Rendi FFmpeg command (cont): ${ffmpegCmd.substring(500, 1500)}`);
+                }
+                if (ffmpegCmd.length > 1500) {
+                  await log("debug", `Rendi FFmpeg command (end): ${ffmpegCmd.substring(1500)}`);
+                }
 
                 try {
                   // Submit to Rendi
