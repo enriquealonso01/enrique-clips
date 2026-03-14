@@ -1708,7 +1708,11 @@ Deno.serve(async (req) => {
                 const rawText = (textOv.content_text || "");
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
-                const text = wrappedText.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, "\\n");
+                // FFmpeg drawtext needs literal %{eol} for line breaks (\\n can be swallowed by shell/API)
+                const text = wrappedText
+                  .replace(/'/g, "\\'")
+                  .replace(/:/g, "\\:")
+                  .replace(/\n/g, "%{eol}");
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
