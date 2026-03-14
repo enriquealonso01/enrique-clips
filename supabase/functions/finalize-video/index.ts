@@ -1705,7 +1705,10 @@ Deno.serve(async (req) => {
 
               // Text overlays: use drawtext filter (no external files needed)
               for (const textOv of textOverlays) {
-                const text = (textOv.content_text || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+                const rawText = (textOv.content_text || "");
+                const fontSize = Math.round((textOv.font_size || 48) * resScale);
+                const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
+                const text = wrappedText.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, "\\n");
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
