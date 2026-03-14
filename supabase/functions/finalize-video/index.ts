@@ -1539,7 +1539,26 @@ Deno.serve(async (req) => {
             await log("debug", `Downloaded batch ${Math.floor(i / 3) + 1}/${Math.ceil(completedClips.length / 3)}`);
           }
 
-          const hasSelectedTrack = !!(project as any).selected_track_id;
+          // Check for tracks via project_tracks junction table (multi-track, random per run)
+          const { data: projectTracks } = await supabase
+            .from("project_tracks")
+            .select("track_id")
+            .eq("project_id", project.id);
+          
+          // Fall back to legacy selected_track_id if no project_tracks entries
+          const trackCandidates = (projectTracks && projectTracks.length > 0)
+            ? projectTracks.map((pt: any) => pt.track_id)
+            : ((project as any).selected_track_id ? [(project as any).selected_track_id] : []);
+          
+          // Pick one randomly
+          const chosenTrackId = trackCandidates.length > 0
+            ? trackCandidates[Math.floor(Math.random() * trackCandidates.length)]
+            : null;
+          const hasSelectedTrack = !!chosenTrackId;
+          
+          if (trackCandidates.length > 1) {
+            await log("info", `Randomly selected track from ${trackCandidates.length} candidates`);
+          }
           
           let finalVideo: Uint8Array;
           if (clipBuffers.length === 1) {
@@ -1574,7 +1593,7 @@ Deno.serve(async (req) => {
             const { data: track } = await supabase
               .from("tracks")
               .select("supabase_path, title")
-              .eq("id", (project as any).selected_track_id)
+              .eq("id", chosenTrackId)
               .single();
             if (!track) {
               throw new Error("Selected track not found.");
@@ -1939,7 +1958,7 @@ Deno.serve(async (req) => {
                 source_clips: completedClips.map((c: any) => c.supabase_path),
                 size_bytes: finalVideo.length,
                 concat_method: clipBuffers.length > 1 ? "mp4_remux" : "single_clip",
-                music_track: hasSelectedTrack ? (project as any).selected_track_id : null,
+                music_track: hasSelectedTrack ? chosenTrackId : null,
               },
             });
             await log("info", "Final video uploaded successfully.");

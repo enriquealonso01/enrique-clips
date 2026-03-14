@@ -459,10 +459,7 @@ export default function ProjectEditor() {
           )}
 
           {/* Background Music */}
-          <TrackSelector
-            selectedTrackId={(form as any).selected_track_id || null}
-            onSelect={(id) => update("selected_track_id" as any, id)}
-          />
+          <TrackSelector projectId={projectId!} />
 
            {/* Vidu Settings (fal.ai) */}
            {((form as any).video_generator || "kling") === "vidu" && (
