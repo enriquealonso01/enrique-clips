@@ -712,7 +712,8 @@ ${overlayDescriptions}`,
         }
 
         // ── 1e-ii: AI Sequence overlays (content_mode = 'ai_sequence') ──
-        const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence");
+        // Skip overlays that already have content_text (resumability)
+        const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence" && !o.content_text);
         if (seqOverlays.length > 0) {
            await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
           const scenesList = scenesForOverlay.map((s: any, i: number) =>
@@ -720,6 +721,12 @@ ${overlayDescriptions}`,
           ).join("\n");
 
           for (const seqOv of seqOverlays) {
+            // Time-budget guard inside sequence loop
+            if (Date.now() - planStartTime > 120_000) {
+              await log("info", "Plan step time budget reached during sequence generation. Re-chaining.");
+              chainNextStep();
+              return json({ status: "plan_rechaining_during_sequences", run_id: runId });
+            }
             try {
               const seqResult = await callAI(
                 [
