@@ -667,7 +667,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
               {
                 role: "user",
                 content: `Series: ${conceptPrompt || project.title}
-Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
+Scenes: ${scenesForOverlay.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
 ${overlayDescriptions}`,
