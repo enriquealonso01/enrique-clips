@@ -443,6 +443,15 @@ Deno.serve(async (req) => {
         if (sbToolCall) {
           styleBible = JSON.parse(sbToolCall.function.arguments);
           await log("info", "Style Bible generated", styleBible);
+          // Save style bible immediately so it survives edge function timeouts
+          await updateRun({
+            progress_pct: 8,
+            generated_metadata: {
+              style_bible: styleBible,
+              full_negative_prompt: fullNegativePrompt,
+              resolved_prompt_config: resolvedConfig,
+            },
+          });
         }
       } catch (err) {
         await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
