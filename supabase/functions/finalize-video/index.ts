@@ -1618,12 +1618,20 @@ Deno.serve(async (req) => {
 
             const imageOverlays = (overlays || []).filter((o: any) => o.overlay_type === "image" && o.image_path);
             // Explode ai_sequence overlays into individual text overlay entries
-            const rawTextOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_mode !== "ai_sequence" && o.content_text);
-            const seqOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_mode === "ai_sequence" && o.content_text);
+            const allTextRaw = (overlays || []).filter((o: any) => o.overlay_type === "text");
+            await log("info", `Overlay breakdown: ${allTextRaw.length} text total, ${imageOverlays.length} image. Modes: ${allTextRaw.map((o: any) => `${o.content_mode}(content_text=${o.content_text ? 'yes' : 'NULL'})`).join(', ')}`);
+            
+            const rawTextOverlays = allTextRaw.filter((o: any) => o.content_mode !== "ai_sequence" && o.content_text);
+            const seqOverlays = allTextRaw.filter((o: any) => o.content_mode === "ai_sequence" && o.content_text);
+            const skippedSeqOverlays = allTextRaw.filter((o: any) => o.content_mode === "ai_sequence" && !o.content_text);
+            if (skippedSeqOverlays.length > 0) {
+              await log("warn", `${skippedSeqOverlays.length} ai_sequence overlay(s) skipped — content_text is NULL (sequence generation likely failed)`);
+            }
             const explodedSeqOverlays: any[] = [];
             for (const seqOv of seqOverlays) {
               try {
                 const frames: Array<{ text: string; start_pct: number; end_pct: number }> = JSON.parse(seqOv.content_text);
+                await log("info", `AI sequence overlay ${seqOv.id}: parsed ${frames.length} frames`);
                 for (const frame of frames) {
                   if (frame.text && typeof frame.start_pct === "number" && typeof frame.end_pct === "number") {
                     explodedSeqOverlays.push({
@@ -1634,11 +1642,12 @@ Deno.serve(async (req) => {
                     });
                   }
                 }
-              } catch {
-                // If content_text isn't valid JSON, skip this overlay
+              } catch (e) {
+                await log("warn", `Failed to parse ai_sequence content_text for overlay ${seqOv.id}: ${e.message}`);
               }
             }
             const textOverlays = [...rawTextOverlays, ...explodedSeqOverlays];
+            await log("info", `Final overlay counts: ${rawTextOverlays.length} static text + ${explodedSeqOverlays.length} sequence frames = ${textOverlays.length} total text, ${imageOverlays.length} image`);
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
             const resScale = getResolutionScale((project as any).pika_resolution || "540p");
             const needsPostProd = hasOverlays || hasSelectedTrack;
