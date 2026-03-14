@@ -569,6 +569,15 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
         });
       }
 
+      } // end if (!scenesAlreadyCreated)
+
+      // Time-budget guard: if we've used >80s on plan, save and re-chain
+      if (Date.now() - planStartTime > 80_000) {
+        await log("info", "Plan step time budget reached after scene creation. Re-chaining for overlay generation.");
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_overlays", run_id: runId });
+      }
+
       // ── 1d: Sync JSON-defined overlays into DB ──
       try {
         // First, remove stale JSON-sourced overlays from previous runs
