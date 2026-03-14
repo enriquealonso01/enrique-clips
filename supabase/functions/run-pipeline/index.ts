@@ -356,7 +356,21 @@ Deno.serve(async (req) => {
     // STEP: plan — initial image + style bible + scene plan
     // ═══════════════════════════════════════════════════════
     if (step === "plan" || run.status === "queued") {
+      const planStartTime = Date.now();
       await log("info", "Step 1: Generating initial image, style bible, and scene plan...");
+
+      // Check if scenes already exist (resumability after timeout)
+      const { data: existingScenes } = await supabase
+        .from("scenes")
+        .select("id")
+        .eq("run_id", runId)
+        .limit(1);
+      const scenesAlreadyCreated = (existingScenes?.length || 0) > 0;
+
+      // Recover style bible from metadata if resuming
+      let styleBible: Record<string, any> = (run.generated_metadata as any)?.style_bible || {};
+
+      if (!scenesAlreadyCreated) {
 
       // ── 1a: Generate initial consistency image ──
       try {
@@ -388,9 +402,6 @@ Deno.serve(async (req) => {
         await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
         await updateRun({ progress_pct: 5 });
       }
-
-      // ── 1b: Generate Style Bible ──
-      let styleBible: Record<string, any> = {};
       try {
         const styleBibleResult = await callAI(
           [
@@ -432,6 +443,15 @@ Deno.serve(async (req) => {
         if (sbToolCall) {
           styleBible = JSON.parse(sbToolCall.function.arguments);
           await log("info", "Style Bible generated", styleBible);
+          // Save style bible immediately so it survives edge function timeouts
+          await updateRun({
+            progress_pct: 8,
+            generated_metadata: {
+              style_bible: styleBible,
+              full_negative_prompt: fullNegativePrompt,
+              resolved_prompt_config: resolvedConfig,
+            },
+          });
         }
       } catch (err) {
         await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
@@ -549,6 +569,15 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
         });
       }
 
+      } // end if (!scenesAlreadyCreated)
+
+      // Time-budget guard: if we've used >80s on plan, save and re-chain
+      if (Date.now() - planStartTime > 80_000) {
+        await log("info", "Plan step time budget reached after scene creation. Re-chaining for overlay generation.");
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_overlays", run_id: runId });
+      }
+
       // ── 1d: Sync JSON-defined overlays into DB ──
       try {
         // First, remove stale JSON-sourced overlays from previous runs
@@ -598,7 +627,21 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
       }
 
       // ── 1e: AI overlay content generation ──
+      // Time-budget guard before starting AI overlay calls
+      if (Date.now() - planStartTime > 100_000) {
+        await log("info", "Plan step time budget reached before overlay AI. Re-chaining.");
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_overlay_ai", run_id: runId });
+      }
       try {
+        // Fetch scenes from DB (needed for overlay AI whether fresh or resumed)
+        const { data: dbScenes } = await supabase
+          .from("scenes")
+          .select("*")
+          .eq("run_id", runId)
+          .order("scene_index");
+        const scenesForOverlay = dbScenes || [];
+
         const { data: overlays } = await supabase
           .from("overlays")
           .select("*")
@@ -606,7 +649,8 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           .order("sort_order");
 
         // ── 1e-i: Single-text AI overlays (content_mode = 'ai_generated') ──
-        const aiGenOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_generated");
+        // Skip overlays that already have content_text (resumability)
+        const aiGenOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_generated" && !o.content_text);
         if (aiGenOverlays.length > 0) {
           await log("info", `Generating AI content for ${aiGenOverlays.length} overlay(s)...`);
 
@@ -623,7 +667,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
               {
                 role: "user",
                 content: `Series: ${conceptPrompt || project.title}
-Scenes: ${scenePlan.scenes.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
+Scenes: ${scenesForOverlay.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
 ${overlayDescriptions}`,
@@ -668,14 +712,21 @@ ${overlayDescriptions}`,
         }
 
         // ── 1e-ii: AI Sequence overlays (content_mode = 'ai_sequence') ──
-        const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence");
+        // Skip overlays that already have content_text (resumability)
+        const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence" && !o.content_text);
         if (seqOverlays.length > 0) {
-          await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
-          const scenesList = scenePlan.scenes.map((s: any, i: number) =>
+           await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
+          const scenesList = scenesForOverlay.map((s: any, i: number) =>
             `Scene ${i + 1}: ${s.scene_title} — ${s.scene_description}`
           ).join("\n");
 
           for (const seqOv of seqOverlays) {
+            // Time-budget guard inside sequence loop
+            if (Date.now() - planStartTime > 120_000) {
+              await log("info", "Plan step time budget reached during sequence generation. Re-chaining.");
+              chainNextStep();
+              return json({ status: "plan_rechaining_during_sequences", run_id: runId });
+            }
             try {
               const seqResult = await callAI(
                 [
