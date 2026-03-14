@@ -641,7 +641,8 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           .order("sort_order");
 
         // ── 1e-i: Single-text AI overlays (content_mode = 'ai_generated') ──
-        const aiGenOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_generated");
+        // Skip overlays that already have content_text (resumability)
+        const aiGenOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_generated" && !o.content_text);
         if (aiGenOverlays.length > 0) {
           await log("info", `Generating AI content for ${aiGenOverlays.length} overlay(s)...`);
 
