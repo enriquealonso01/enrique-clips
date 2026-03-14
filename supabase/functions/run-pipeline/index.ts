@@ -356,7 +356,21 @@ Deno.serve(async (req) => {
     // STEP: plan — initial image + style bible + scene plan
     // ═══════════════════════════════════════════════════════
     if (step === "plan" || run.status === "queued") {
+      const planStartTime = Date.now();
       await log("info", "Step 1: Generating initial image, style bible, and scene plan...");
+
+      // Check if scenes already exist (resumability after timeout)
+      const { data: existingScenes } = await supabase
+        .from("scenes")
+        .select("id")
+        .eq("run_id", runId)
+        .limit(1);
+      const scenesAlreadyCreated = (existingScenes?.length || 0) > 0;
+
+      // Recover style bible from metadata if resuming
+      let styleBible: Record<string, any> = (run.generated_metadata as any)?.style_bible || {};
+
+      if (!scenesAlreadyCreated) {
 
       // ── 1a: Generate initial consistency image ──
       try {
@@ -388,9 +402,6 @@ Deno.serve(async (req) => {
         await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
         await updateRun({ progress_pct: 5 });
       }
-
-      // ── 1b: Generate Style Bible ──
-      let styleBible: Record<string, any> = {};
       try {
         const styleBibleResult = await callAI(
           [
