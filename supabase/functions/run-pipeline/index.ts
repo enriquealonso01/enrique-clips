@@ -634,6 +634,14 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
         return json({ status: "plan_rechaining_for_overlay_ai", run_id: runId });
       }
       try {
+        // Fetch scenes from DB (needed for overlay AI whether fresh or resumed)
+        const { data: dbScenes } = await supabase
+          .from("scenes")
+          .select("*")
+          .eq("run_id", runId)
+          .order("scene_index");
+        const scenesForOverlay = dbScenes || [];
+
         const { data: overlays } = await supabase
           .from("overlays")
           .select("*")
