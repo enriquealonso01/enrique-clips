@@ -1570,7 +1570,28 @@ Deno.serve(async (req) => {
               .order("sort_order");
 
             const imageOverlays = (overlays || []).filter((o: any) => o.overlay_type === "image" && o.image_path);
-            const textOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_text);
+            // Explode ai_sequence overlays into individual text overlay entries
+            const rawTextOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_mode !== "ai_sequence" && o.content_text);
+            const seqOverlays = (overlays || []).filter((o: any) => o.overlay_type === "text" && o.content_mode === "ai_sequence" && o.content_text);
+            const explodedSeqOverlays: any[] = [];
+            for (const seqOv of seqOverlays) {
+              try {
+                const frames: Array<{ text: string; start_pct: number; end_pct: number }> = JSON.parse(seqOv.content_text);
+                for (const frame of frames) {
+                  if (frame.text && typeof frame.start_pct === "number" && typeof frame.end_pct === "number") {
+                    explodedSeqOverlays.push({
+                      ...seqOv,
+                      content_text: frame.text,
+                      start_pct: frame.start_pct,
+                      end_pct: frame.end_pct,
+                    });
+                  }
+                }
+              } catch {
+                // If content_text isn't valid JSON, skip this overlay
+              }
+            }
+            const textOverlays = [...rawTextOverlays, ...explodedSeqOverlays];
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
             const resScale = getResolutionScale((project as any).pika_resolution || "540p");
             const needsPostProd = hasOverlays || hasSelectedTrack;
