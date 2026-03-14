@@ -1958,7 +1958,7 @@ Deno.serve(async (req) => {
                 source_clips: completedClips.map((c: any) => c.supabase_path),
                 size_bytes: finalVideo.length,
                 concat_method: clipBuffers.length > 1 ? "mp4_remux" : "single_clip",
-                music_track: hasSelectedTrack ? (project as any).selected_track_id : null,
+                music_track: hasSelectedTrack ? chosenTrackId : null,
               },
             });
             await log("info", "Final video uploaded successfully.");
