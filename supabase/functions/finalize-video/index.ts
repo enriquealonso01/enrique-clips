@@ -1703,27 +1703,19 @@ Deno.serve(async (req) => {
                 filterIdx++;
               }
 
-              // Text overlays: use drawtext filter (no external files needed)
+              // Text overlays: use one drawtext per LINE to avoid newline escaping issues
+              // (%{eol} is not a valid FFmpeg token and \n gets swallowed by Rendi API)
               for (const textOv of textOverlays) {
                 const rawText = (textOv.content_text || "");
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
-                // FFmpeg drawtext needs literal %{eol} for line breaks (\\n can be swallowed by shell/API)
-                const text = wrappedText
-                  .replace(/'/g, "\\'")
-                  .replace(/:/g, "\\:")
-                  .replace(/\n/g, "%{eol}");
+                const lines = wrappedText.split("\n");
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
-                const outLabel = `v${filterIdx}`;
-
-                // Position mapping for drawtext
-                const posStr = getFFmpegPosition(textOv.position, fontSize, resScale);
 
                 // Build drawtext with background box
                 const bgColor = textOv.bg_color || "rgba(0,0,0,0.5)";
-                // Convert rgba to ffmpeg box color format
                 let boxColor = "black@0.5";
                 const rgbaMatch = bgColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
                 if (rgbaMatch) {
@@ -1735,18 +1727,45 @@ Deno.serve(async (req) => {
                 }
 
                 const scaledBoxBorder = Math.round(10 * resScale);
-
-                // Reference Anton font file — thick black outline, white fill (game/social style)
                 const fontFileRef = `fontfile={{in_font}}`;
-
-                // Thick black outline scaled to resolution (≈6px at 540p)
                 const borderW = Math.max(3, Math.round(6 * resScale));
-                const lineSpacing = Math.round(fontSize * 0.15);
-                filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':expansion=normal:${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:line_spacing=${lineSpacing}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
-                );
-                currentVideoLabel = outLabel;
-                filterIdx++;
+                const lineHeight = Math.round(fontSize * 1.15); // font size + 15% spacing
+
+                // Calculate total block height for vertical positioning
+                const totalBlockHeight = lines.length * lineHeight;
+                const pad = Math.round(20 * resScale);
+                const topPad = Math.round(160 * resScale);
+
+                // Determine base Y from position
+                const pos = textOv.position || "bottom_center";
+                // X expression (same for all lines)
+                let xExpr: string;
+                if (pos.includes("left")) xExpr = `${pad}`;
+                else if (pos.includes("right")) xExpr = `w-text_w-${pad}`;
+                else xExpr = `(w-text_w)/2`;
+
+                // Base Y for the first line
+                let baseYExpr: string;
+                if (pos.startsWith("top")) baseYExpr = `${topPad}`;
+                else if (pos === "center") baseYExpr = `(h-${totalBlockHeight})/2`;
+                else baseYExpr = `h-${totalBlockHeight}-${pad}`; // bottom
+
+                for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+                  const lineText = lines[lineIdx]
+                    .replace(/'/g, "\\'")
+                    .replace(/:/g, "\\:");
+                  const yOffset = lineIdx * lineHeight;
+                  const yExpr = baseYExpr === `${topPad}` || baseYExpr === `h-${totalBlockHeight}-${pad}`
+                    ? `${baseYExpr}+${yOffset}`
+                    : `${baseYExpr}+${yOffset}`;
+                  const outLabel = `v${filterIdx}`;
+
+                  filterParts.push(
+                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  );
+                  currentVideoLabel = outLabel;
+                  filterIdx++;
+                }
               }
 
               // Build the full FFmpeg command
