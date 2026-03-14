@@ -1741,8 +1741,9 @@ Deno.serve(async (req) => {
 
                 // Thick black outline scaled to resolution (≈6px at 540p)
                 const borderW = Math.max(3, Math.round(6 * resScale));
+                const lineSpacing = Math.round(fontSize * 0.15);
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':expansion=normal:${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:line_spacing=${lineSpacing}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
