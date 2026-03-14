@@ -17,6 +17,34 @@ function getResolutionScale(pikaResolution: string): number {
   return targetHeight / 540;
 }
 
+// Wrap text to fit within ~70% of a 9:16 frame width
+// Estimates chars per line based on font size vs frame width (assumes 540p baseline width = 304px for 9:16)
+function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
+  const frameWidth = Math.round(304 * scale); // 9:16 at 540p height
+  const maxWidth = frameWidth * 0.70;
+  // Approximate: each uppercase char in Anton ≈ 0.6 * fontSize width
+  const charWidth = fontSize * 0.6;
+  const maxChars = Math.max(8, Math.floor(maxWidth / charWidth));
+  
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let currentLine = "";
+  
+  for (const word of words) {
+    if (currentLine.length === 0) {
+      currentLine = word;
+    } else if ((currentLine + " " + word).length <= maxChars) {
+      currentLine += " " + word;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  
+  return lines.join("\n");
+}
+
 // Map overlay position to FFmpeg drawtext x/y
 function getFFmpegPosition(position: string, fontSize: number, scale = 1): string {
   const pad = Math.round(20 * scale);
@@ -1677,8 +1705,10 @@ Deno.serve(async (req) => {
 
               // Text overlays: use drawtext filter (no external files needed)
               for (const textOv of textOverlays) {
-                const text = (textOv.content_text || "").replace(/'/g, "\\'").replace(/:/g, "\\:");
+                const rawText = (textOv.content_text || "");
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
+                const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
+                const text = wrappedText.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, "\\n");
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;

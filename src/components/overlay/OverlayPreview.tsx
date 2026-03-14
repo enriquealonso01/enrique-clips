@@ -42,13 +42,14 @@ export function OverlayPreview({ overlays }: Props) {
               return (
                 <div
                   key={ov.id}
-                  className="absolute px-2 py-1 rounded text-center max-w-[80%]"
+                  className="absolute px-2 py-1 rounded text-center max-w-[60%]"
                   style={{
                     ...posStyles,
                     fontSize: Math.max(8, (ov.font_size || 48) / 4),
                     color: ov.font_color || "#FFFFFF",
                     backgroundColor: ov.bg_color || "rgba(0,0,0,0.5)",
                     zIndex: ov.z_index,
+                    wordBreak: "break-word",
                   }}
                 >
                   {frames[0].text}
@@ -62,13 +63,14 @@ export function OverlayPreview({ overlays }: Props) {
             return (
               <div
                 key={ov.id}
-                className="absolute px-2 py-1 rounded text-center max-w-[80%]"
+                className="absolute px-2 py-1 rounded text-center max-w-[60%]"
                 style={{
                   ...posStyles,
                   fontSize: Math.max(8, (ov.font_size || 48) / 4),
                   color: ov.font_color || "#FFFFFF",
                   backgroundColor: ov.bg_color || "rgba(0,0,0,0.5)",
                   zIndex: ov.z_index,
+                  wordBreak: "break-word",
                 }}
               >
                 {ov.content_text}
