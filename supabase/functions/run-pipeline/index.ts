@@ -603,14 +603,14 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
           .from("overlays")
           .select("*")
           .eq("project_id", project.id)
-          .eq("content_mode", "ai_generated")
           .order("sort_order");
 
-        if (overlays && overlays.length > 0) {
-          await log("info", `Generating AI content for ${overlays.length} overlay(s)...`);
+        // ── 1e-i: Single-text AI overlays (content_mode = 'ai_generated') ──
+        const aiGenOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_generated");
+        if (aiGenOverlays.length > 0) {
+          await log("info", `Generating AI content for ${aiGenOverlays.length} overlay(s)...`);
 
-          // Build a simple prompt that returns JSON directly (no function calling — more reliable across models)
-          const overlayDescriptions = overlays.map((o: any, i: number) =>
+          const overlayDescriptions = aiGenOverlays.map((o: any, i: number) =>
             `Overlay ${i} (${o.style}, appears ${o.start_pct}%-${o.end_pct}%): ${o.content_prompt || "Generate appropriate content"}`
           ).join("\n");
 
@@ -629,50 +629,116 @@ Generate content for these overlays:
 ${overlayDescriptions}`,
               },
             ],
-            undefined, // no tools — plain text response
-            undefined, // no tool_choice
-            "openai/gpt-5-mini" // reliable for structured JSON output
+            undefined, undefined,
+            "openai/gpt-5-mini"
           );
 
-          // Parse the AI response — it should be a JSON array in the text content
           const responseText = overlayGenResult.choices?.[0]?.message?.content || "";
           await log("debug", "AI overlay raw response", { responseText });
 
           let generated: Array<{ index: number; content: string }> = [];
           try {
-            // Try parsing directly
             const cleaned = responseText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
             generated = JSON.parse(cleaned);
           } catch {
-            // Try extracting JSON array from the response
             const match = responseText.match(/\[[\s\S]*\]/);
             if (match) {
-              try { generated = JSON.parse(match[0]); } catch { /* will log below */ }
+              try { generated = JSON.parse(match[0]); } catch {}
             }
           }
 
           if (generated.length > 0) {
             for (const gen of generated) {
-              if (gen.index >= 0 && gen.index < overlays.length && gen.content) {
+              if (gen.index >= 0 && gen.index < aiGenOverlays.length && gen.content) {
                 await supabase
                   .from("overlays")
                   .update({ content_text: gen.content })
-                  .eq("id", overlays[gen.index].id);
+                  .eq("id", aiGenOverlays[gen.index].id);
                 await log("info", `Overlay ${gen.index} content set: "${gen.content}"`);
               }
             }
-            await log("info", `AI overlay content generated for ${generated.length} overlay(s)`);
           } else {
             await log("warn", `AI overlay generation returned no parseable content. Raw: ${responseText.substring(0, 200)}`);
-            // Fallback: use the content_prompt as literal text if short enough
-            for (const ov of overlays) {
+            for (const ov of aiGenOverlays) {
               if (ov.content_prompt && ov.content_prompt.length <= 40) {
+                await supabase.from("overlays").update({ content_text: ov.content_prompt }).eq("id", ov.id);
+              }
+            }
+          }
+        }
+
+        // ── 1e-ii: AI Sequence overlays (content_mode = 'ai_sequence') ──
+        const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence");
+        if (seqOverlays.length > 0) {
+          await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
+          const scenesList = scenePlan.scenes.map((s: any, i: number) =>
+            `Scene ${i + 1}: ${s.scene_title} — ${s.scene_description}`
+          ).join("\n");
+
+          for (const seqOv of seqOverlays) {
+            try {
+              const seqResult = await callAI(
+                [
+                  {
+                    role: "system",
+                    content: `You are a dynamic video overlay sequencer. Given a video concept, its scenes, and a user prompt describing the desired overlay sequence, generate a JSON array of timed text frames. Each frame has: "text" (short ALL CAPS overlay text), "start_pct" (number 0-100), "end_pct" (number 0-100). The frames must tile the overlay's time window (${seqOv.start_pct}%-${seqOv.end_pct}%) without gaps or overlaps. Return ONLY the JSON array — no markdown, no explanation.`,
+                  },
+                  {
+                    role: "user",
+                    content: `Video concept: ${conceptPrompt || project.title}
+Total scenes: ${scenePlan.scenes.length}
+
+Scenes:
+${scenesList}
+
+Overlay time window: ${seqOv.start_pct}% to ${seqOv.end_pct}% of video.
+
+User prompt for this sequence:
+${seqOv.content_prompt || "Generate contextually appropriate text that changes throughout the video based on the scene progression."}
+
+Generate the timed text frames.`,
+                  },
+                ],
+                undefined, undefined,
+                "openai/gpt-5-mini"
+              );
+
+              const seqText = seqResult.choices?.[0]?.message?.content || "";
+              await log("debug", "AI sequence raw response", { seqText: seqText.substring(0, 500) });
+
+              let frames: Array<{ text: string; start_pct: number; end_pct: number }> = [];
+              try {
+                const cleaned = seqText.replace(/```json?\s*/g, "").replace(/```/g, "").trim();
+                frames = JSON.parse(cleaned);
+              } catch {
+                const match = seqText.match(/\[[\s\S]*\]/);
+                if (match) {
+                  try { frames = JSON.parse(match[0]); } catch {}
+                }
+              }
+
+              if (Array.isArray(frames) && frames.length > 0) {
+                // Validate and clamp frames within the overlay's time window
+                const validFrames = frames
+                  .filter(f => f.text && typeof f.start_pct === "number" && typeof f.end_pct === "number")
+                  .map(f => ({
+                    text: String(f.text).toUpperCase(),
+                    start_pct: Math.max(seqOv.start_pct, Math.min(seqOv.end_pct, f.start_pct)),
+                    end_pct: Math.max(seqOv.start_pct, Math.min(seqOv.end_pct, f.end_pct)),
+                  }))
+                  .filter(f => f.end_pct > f.start_pct);
+
+                // Store as JSON string in content_text
                 await supabase
                   .from("overlays")
-                  .update({ content_text: ov.content_prompt })
-                  .eq("id", ov.id);
-                await log("info", `Overlay fallback: used prompt as text for ${ov.id}`);
+                  .update({ content_text: JSON.stringify(validFrames) })
+                  .eq("id", seqOv.id);
+                await log("info", `AI sequence generated ${validFrames.length} frames for overlay ${seqOv.id}: ${validFrames.map(f => f.text).join(" → ")}`);
+              } else {
+                await log("warn", `AI sequence returned no parseable frames for overlay ${seqOv.id}`);
               }
+            } catch (seqErr) {
+              await log("warn", `AI sequence generation failed for overlay ${seqOv.id}: ${seqErr.message}`);
             }
           }
         }
