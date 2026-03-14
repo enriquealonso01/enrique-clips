@@ -627,6 +627,12 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
       }
 
       // ── 1e: AI overlay content generation ──
+      // Time-budget guard before starting AI overlay calls
+      if (Date.now() - planStartTime > 100_000) {
+        await log("info", "Plan step time budget reached before overlay AI. Re-chaining.");
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_overlay_ai", run_id: runId });
+      }
       try {
         const { data: overlays } = await supabase
           .from("overlays")
