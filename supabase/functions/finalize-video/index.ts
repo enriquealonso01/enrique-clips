@@ -1708,7 +1708,11 @@ Deno.serve(async (req) => {
                 const rawText = (textOv.content_text || "");
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
-                const text = wrappedText.replace(/'/g, "\\'").replace(/:/g, "\\:").replace(/\n/g, "\\n");
+                // FFmpeg drawtext needs literal %{eol} for line breaks (\\n can be swallowed by shell/API)
+                const text = wrappedText
+                  .replace(/'/g, "\\'")
+                  .replace(/:/g, "\\:")
+                  .replace(/\n/g, "%{eol}");
                 const fontColor = textOv.font_color || "#FFFFFF";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
@@ -1737,8 +1741,9 @@ Deno.serve(async (req) => {
 
                 // Thick black outline scaled to resolution (≈6px at 540p)
                 const borderW = Math.max(3, Math.round(6 * resScale));
+                const lineSpacing = Math.round(fontSize * 0.15);
                 filterParts.push(
-                  `[${currentVideoLabel}]drawtext=text='${text}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                  `[${currentVideoLabel}]drawtext=text='${text}':expansion=normal:${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:${posStr}:line_spacing=${lineSpacing}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                 );
                 currentVideoLabel = outLabel;
                 filterIdx++;
