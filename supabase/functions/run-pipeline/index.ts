@@ -714,8 +714,8 @@ ${overlayDescriptions}`,
         // ── 1e-ii: AI Sequence overlays (content_mode = 'ai_sequence') ──
         const seqOverlays = (overlays || []).filter((o: any) => o.content_mode === "ai_sequence");
         if (seqOverlays.length > 0) {
-          await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
-          const scenesList = scenePlan.scenes.map((s: any, i: number) =>
+           await log("info", `Generating AI sequences for ${seqOverlays.length} overlay(s)...`);
+          const scenesList = scenesForOverlay.map((s: any, i: number) =>
             `Scene ${i + 1}: ${s.scene_title} — ${s.scene_description}`
           ).join("\n");
 
