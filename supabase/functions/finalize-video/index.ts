@@ -1593,7 +1593,7 @@ Deno.serve(async (req) => {
             const { data: track } = await supabase
               .from("tracks")
               .select("supabase_path, title")
-              .eq("id", (project as any).selected_track_id)
+              .eq("id", chosenTrackId)
               .single();
             if (!track) {
               throw new Error("Selected track not found.");
