@@ -37,6 +37,29 @@ Deno.serve(async (req) => {
   const { run_id, type, error_message } = body;
 
   try {
+    // Deduplication: check if we already sent this notification type for this run
+    const { data: existingNotif } = await supabase
+      .from("run_logs")
+      .select("id")
+      .eq("run_id", run_id)
+      .eq("message", `notification_sent:${type}`)
+      .limit(1);
+
+    if (existingNotif && existingNotif.length > 0) {
+      console.log(`Notification '${type}' already sent for run ${run_id}, skipping duplicate.`);
+      return new Response(JSON.stringify({ skipped: true, reason: "duplicate" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Mark notification as sent BEFORE sending to prevent race conditions
+    await supabase.from("run_logs").insert({
+      run_id: run_id,
+      level: "info",
+      message: `notification_sent:${type}`,
+    });
+
     // Fetch run + project data
     const { data: run } = await supabase.from("runs").select("*").eq("id", run_id).single();
 
