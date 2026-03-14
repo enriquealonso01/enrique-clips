@@ -1646,8 +1646,14 @@ Deno.serve(async (req) => {
                 await log("warn", `Failed to parse ai_sequence content_text for overlay ${seqOv.id}: ${e.message}`);
               }
             }
-            const textOverlays = [...rawTextOverlays, ...explodedSeqOverlays];
+              const textOverlays = [...rawTextOverlays, ...explodedSeqOverlays];
             await log("info", `Final overlay counts: ${rawTextOverlays.length} static text + ${explodedSeqOverlays.length} sequence frames = ${textOverlays.length} total text, ${imageOverlays.length} image`);
+            
+            // Log each text overlay detail for debugging
+            for (let i = 0; i < textOverlays.length; i++) {
+              const tov = textOverlays[i];
+              await log("debug", `Text overlay [${i}]: "${(tov.content_text || '').substring(0, 60)}" pos=${tov.position} time=${tov.start_pct}%-${tov.end_pct}% fontSize=${tov.font_size} bgColor=${tov.bg_color} fontColor=${tov.font_color} mode=${tov.content_mode}`);
+            }
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
             const resScale = getResolutionScale((project as any).pika_resolution || "540p");
             const needsPostProd = hasOverlays || hasSelectedTrack;
