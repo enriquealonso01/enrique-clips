@@ -1,20 +1,19 @@
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Play, Pause, Music } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Play, Pause, Music, Shuffle } from "lucide-react";
 
 interface TrackSelectorProps {
-  selectedTrackId: string | null;
-  onSelect: (trackId: string | null) => void;
+  projectId: string;
 }
 
-export function TrackSelector({ selectedTrackId, onSelect }: TrackSelectorProps) {
+export function TrackSelector({ projectId }: TrackSelectorProps) {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const queryClient = useQueryClient();
 
   const { data: tracks } = useQuery({
     queryKey: ["tracks"],
@@ -25,6 +24,41 @@ export function TrackSelector({ selectedTrackId, onSelect }: TrackSelectorProps)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
+    },
+  });
+
+  const { data: selectedTrackIds = [] } = useQuery({
+    queryKey: ["project-tracks", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("project_tracks")
+        .select("track_id")
+        .eq("project_id", projectId);
+      if (error) throw error;
+      return data.map((r) => r.track_id);
+    },
+    enabled: !!projectId,
+  });
+
+  const toggleTrack = useMutation({
+    mutationFn: async (trackId: string) => {
+      const isSelected = selectedTrackIds.includes(trackId);
+      if (isSelected) {
+        const { error } = await supabase
+          .from("project_tracks")
+          .delete()
+          .eq("project_id", projectId)
+          .eq("track_id", trackId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("project_tracks")
+          .insert({ project_id: projectId, track_id: trackId });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["project-tracks", projectId] });
     },
   });
 
@@ -43,72 +77,67 @@ export function TrackSelector({ selectedTrackId, onSelect }: TrackSelectorProps)
     setPlayingId(trackId);
   };
 
-  const selectedTrack = tracks?.find((t) => t.id === selectedTrackId);
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Background Music</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <Shuffle className="h-4 w-4" />
+          Background Music
+        </CardTitle>
         <CardDescription>
-          Select a music track to replace the generated audio. Upload tracks in Settings.
+          Select one or more tracks. On each run, one will be chosen randomly. Upload tracks in Settings.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Label>Music Track</Label>
-          <Select
-            value={selectedTrackId || "none"}
-            onValueChange={(v) => onSelect(v === "none" ? null : v)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="No music track" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">No music (keep original audio)</SelectItem>
-              {tracks?.map((track) => (
-                <SelectItem key={track.id} value={track.id}>
-                  <span className="flex items-center gap-2">
-                    <Music className="h-3 w-3" />
-                    {track.title}
-                    {track.duration_sec && (
-                      <span className="text-muted-foreground">
-                        ({Math.floor(Number(track.duration_sec) / 60)}:{String(Math.floor(Number(track.duration_sec) % 60)).padStart(2, "0")})
-                      </span>
-                    )}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {selectedTrack && (
-          <div className="flex items-center gap-3 p-3 rounded-md border border-border bg-muted/50">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => togglePlay(selectedTrack.supabase_path, selectedTrack.id)}
-            >
-              {playingId === selectedTrack.id ? (
-                <Pause className="h-4 w-4" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-            </Button>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">{selectedTrack.title}</p>
-              <p className="text-xs text-muted-foreground">
-                {selectedTrack.duration_sec
-                  ? `${Math.floor(Number(selectedTrack.duration_sec) / 60)}:${String(Math.floor(Number(selectedTrack.duration_sec) % 60)).padStart(2, "0")}`
-                  : "Unknown duration"}
-              </p>
-            </div>
-          </div>
-        )}
-
+      <CardContent className="space-y-2">
         {(!tracks || tracks.length === 0) && (
           <p className="text-xs text-muted-foreground">
             No tracks available. Go to Settings to upload MP3 files.
+          </p>
+        )}
+
+        {tracks?.map((track) => {
+          const isSelected = selectedTrackIds.includes(track.id);
+          return (
+            <div
+              key={track.id}
+              className={`flex items-center gap-3 p-3 rounded-md border transition-colors ${
+                isSelected ? "border-primary bg-primary/5" : "border-border bg-muted/30"
+              }`}
+            >
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={() => toggleTrack.mutate(track.id)}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={() => togglePlay(track.supabase_path, track.id)}
+              >
+                {playingId === track.id ? (
+                  <Pause className="h-4 w-4" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+              </Button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium flex items-center gap-1.5">
+                  <Music className="h-3 w-3 text-muted-foreground" />
+                  {track.title}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {track.duration_sec
+                    ? `${Math.floor(Number(track.duration_sec) / 60)}:${String(Math.floor(Number(track.duration_sec) % 60)).padStart(2, "0")}`
+                    : "Unknown duration"}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+
+        {selectedTrackIds.length > 0 && (
+          <p className="text-xs text-muted-foreground pt-2">
+            {selectedTrackIds.length} track{selectedTrackIds.length !== 1 ? "s" : ""} selected — one will be picked randomly per run.
           </p>
         )}
       </CardContent>
