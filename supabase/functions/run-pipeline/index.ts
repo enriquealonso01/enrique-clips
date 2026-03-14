@@ -737,7 +737,7 @@ ${overlayDescriptions}`,
                   {
                     role: "user",
                     content: `Video concept: ${conceptPrompt || project.title}
-Total scenes: ${scenePlan.scenes.length}
+Total scenes: ${scenesForOverlay.length}
 
 Scenes:
 ${scenesList}
