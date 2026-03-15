@@ -276,6 +276,32 @@ The system generates **platform-specific metadata** automatically. Each enabled 
 |-------|------|---------|
 | `use_legacy_fallbacks` | boolean | Whether to read from legacy fields (`series_prompt`, `series_rules`, `negative_prompt`) as fallbacks. Keep `true` unless you're fully migrated to JSON. |
 
+### 3.9 `memory` — Series Memory (Topic History)
+
+Controls whether the planner receives memory of past video topics for this project. When enabled, the pipeline fetches the last N `topic_summary` values from completed runs and injects them into the planner's system prompt.
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `enabled` | boolean | `false` | Whether to activate series memory. When `false`, no history is fetched or injected. |
+| `instruction` | string | `""` | How the planner should use the memory. Examples: `"Do not repeat the construction landmarks shown in the last videos"`, `"Continue the theme from the last video"`, `"Each video must feature a different country"`. |
+| `lookback_count` | number | `30` | How many past video topics to include (1-100). |
+
+#### How It Works
+1. After each run's scene plan is generated, a short `topic_summary` is automatically saved to the run record.
+2. On the next run, if memory is enabled, the pipeline fetches the last N topic summaries and appends them to the planner's system prompt as a `=== SERIES MEMORY ===` block.
+3. The `instruction` field tells the planner what to do with that history.
+
+#### Example Configuration
+```json
+{
+  "memory": {
+    "enabled": true,
+    "instruction": "Do not repeat any landmark that appears in the previous videos. Always pick a new, different famous landmark from world history.",
+    "lookback_count": 30
+  }
+}
+```
+
 ---
 
 ## 4. Scene Behaviors Reference
