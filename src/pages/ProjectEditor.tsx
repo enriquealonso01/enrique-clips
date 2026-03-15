@@ -794,6 +794,11 @@ export default function ProjectEditor() {
                         <StatusBadge status={run.status} />
                         <span className="text-sm text-muted-foreground capitalize">{run.current_step}</span>
                       </div>
+                      {(run as any).topic_summary && (
+                        <p className="text-xs text-muted-foreground truncate max-w-[300px]" title={(run as any).topic_summary}>
+                          📝 {(run as any).topic_summary}
+                        </p>
+                      )}
                       <div className="flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
                         <span>{run.progress_pct}%</span>
                         <span>{new Date(run.created_at).toLocaleString()}</span>
