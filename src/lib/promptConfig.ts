@@ -82,6 +82,12 @@ export interface PromptConfigPipeline {
   use_legacy_fallbacks: boolean;
 }
 
+export interface PromptConfigMemory {
+  enabled: boolean;
+  instruction: string;
+  lookback_count: number;
+}
+
 export interface PromptConfig {
   version: number;
   global: PromptConfigGlobal;
@@ -92,6 +98,7 @@ export interface PromptConfig {
   metadata: PromptConfigMetadata;
   audio: PromptConfigAudio;
   pipeline: PromptConfigPipeline;
+  memory: PromptConfigMemory;
 }
 
 // ── Default Template ──────────────────────────────────────
