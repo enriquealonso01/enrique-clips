@@ -234,6 +234,88 @@ export default function ProjectEditor() {
             </CardContent>
           </Card>
 
+          {/* Series Memory */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                Series Memory
+                <Switch
+                  checked={(() => {
+                    try {
+                      const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
+                      return pcj?.memory?.enabled || false;
+                    } catch { return false; }
+                  })()}
+                  onCheckedChange={(checked) => {
+                    try {
+                      const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
+                      if (!pcj.memory) pcj.memory = { enabled: false, instruction: "", lookback_count: 30 };
+                      pcj.memory.enabled = checked;
+                      if (!pcj.version) pcj.version = 1;
+                      setPromptConfigText(JSON.stringify(pcj, null, 2));
+                    } catch {}
+                  }}
+                />
+              </CardTitle>
+              <CardDescription>
+                Feed the planner with memory of past videos to avoid repetition or continue themes. When enabled, the last N topic summaries are injected into the planning prompt.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(() => {
+                let memoryEnabled = false;
+                let memoryInstruction = "";
+                let lookbackCount = 30;
+                try {
+                  const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
+                  memoryEnabled = pcj?.memory?.enabled || false;
+                  memoryInstruction = pcj?.memory?.instruction || "";
+                  lookbackCount = pcj?.memory?.lookback_count || 30;
+                } catch {}
+
+                if (!memoryEnabled) return <p className="text-sm text-muted-foreground">Enable the toggle above to configure memory.</p>;
+
+                return (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Memory Instruction</Label>
+                      <Textarea
+                        value={memoryInstruction}
+                        onChange={(e) => {
+                          try {
+                            const pcj = JSON.parse(promptConfigText || "{}");
+                            pcj.memory.instruction = e.target.value;
+                            setPromptConfigText(JSON.stringify(pcj, null, 2));
+                          } catch {}
+                        }}
+                        placeholder="e.g. Do not repeat the construction landmarks shown in the last videos. Pick a different famous landmark each time."
+                        rows={3}
+                      />
+                      <p className="text-xs text-muted-foreground">Tell the planner how to use the memory of past videos.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Lookback Count</Label>
+                      <Input
+                        type="number"
+                        value={lookbackCount}
+                        onChange={(e) => {
+                          try {
+                            const pcj = JSON.parse(promptConfigText || "{}");
+                            pcj.memory.lookback_count = parseInt(e.target.value) || 30;
+                            setPromptConfigText(JSON.stringify(pcj, null, 2));
+                          } catch {}
+                        }}
+                        min={1}
+                        max={100}
+                      />
+                      <p className="text-xs text-muted-foreground">How many past video topics to include (max 100).</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
           {/* Prompt Config JSON Editor */}
           <Card>
             <CardHeader>
