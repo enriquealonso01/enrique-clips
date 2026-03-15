@@ -21,10 +21,10 @@ function getResolutionScale(pikaResolution: string): number {
 // Estimates chars per line based on font size vs frame width (assumes 540p baseline width = 304px for 9:16)
 function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
   const frameWidth = Math.round(304 * scale); // 9:16 at 540p height
-  const maxWidth = frameWidth * 0.70;
-  // Approximate: each uppercase char in Anton ≈ 0.6 * fontSize width
-  const charWidth = fontSize * 0.6;
-  const maxChars = Math.max(8, Math.floor(maxWidth / charWidth));
+  const maxWidth = frameWidth * 0.85; // allow text to use up to 85% of frame width
+  // Approximate: each uppercase char in Anton ≈ 0.52 * fontSize width (Anton is condensed)
+  const charWidth = fontSize * 0.52;
+  const maxChars = Math.max(12, Math.floor(maxWidth / charWidth));
   
   const words = text.split(/\s+/);
   const lines: string[] = [];
@@ -1726,11 +1726,11 @@ Deno.serve(async (req) => {
                     `[${imageInputIdx}:v]scale=iw*${resScale.toFixed(2)}:ih*${resScale.toFixed(2)}:flags=lanczos[${scaledImgLabel}]`
                   );
                   filterParts.push(
-                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
                   );
                 } else {
                   filterParts.push(
-                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
                   );
                 }
                 currentVideoLabel = outLabel;
@@ -1795,7 +1795,7 @@ Deno.serve(async (req) => {
                   const outLabel = `v${filterIdx}`;
 
                   filterParts.push(
-                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
                   );
                   currentVideoLabel = outLabel;
                   filterIdx++;
