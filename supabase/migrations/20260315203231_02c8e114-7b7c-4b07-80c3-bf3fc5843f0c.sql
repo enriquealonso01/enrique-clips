@@ -1,0 +1,1 @@
+ALTER TABLE public.runs ADD COLUMN topic_summary text DEFAULT NULL;

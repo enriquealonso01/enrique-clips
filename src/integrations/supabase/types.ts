@@ -377,6 +377,7 @@ export type Database = {
           project_id: string
           started_at: string | null
           status: Database["public"]["Enums"]["run_status"]
+          topic_summary: string | null
         }
         Insert: {
           created_at?: string
@@ -389,6 +390,7 @@ export type Database = {
           project_id: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["run_status"]
+          topic_summary?: string | null
         }
         Update: {
           created_at?: string
@@ -401,6 +403,7 @@ export type Database = {
           project_id?: string
           started_at?: string | null
           status?: Database["public"]["Enums"]["run_status"]
+          topic_summary?: string | null
         }
         Relationships: [
           {
