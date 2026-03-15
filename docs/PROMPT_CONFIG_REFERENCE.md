@@ -93,6 +93,12 @@ The `prompt_config_json` is stored on the project and merged with system default
 
   "pipeline": {
     "use_legacy_fallbacks": true     // Whether to fall back to legacy fields
+  },
+
+  "memory": {
+    "enabled": false,                // Whether to inject past video topics into planner
+    "instruction": "",               // How the planner should use the memory
+    "lookback_count": 30             // How many past topics to include (1-100)
   }
 }
 ```
