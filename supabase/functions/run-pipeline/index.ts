@@ -367,6 +367,29 @@ Deno.serve(async (req) => {
         .limit(1);
       const scenesAlreadyCreated = (existingScenes?.length || 0) > 0;
 
+      // ── Fetch run memory (past topic summaries) if enabled ──
+      let memoryBlock = "";
+      if (resolvedConfig.memory?.enabled) {
+        const lookback = resolvedConfig.memory.lookback_count || 30;
+        const { data: pastRuns } = await supabase
+          .from("runs")
+          .select("topic_summary, created_at")
+          .eq("project_id", project.id)
+          .neq("id", runId)
+          .not("topic_summary", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(lookback);
+
+        if (pastRuns && pastRuns.length > 0) {
+          const memoryInstruction = resolvedConfig.memory.instruction || "Use this history to avoid repeating topics and ensure variety.";
+          const topicList = pastRuns.map((r: any, i: number) => `${i + 1}. ${r.topic_summary}`).join("\n");
+          memoryBlock = `\n\n=== SERIES MEMORY (last ${pastRuns.length} videos) ===\nINSTRUCTION: ${memoryInstruction}\n\nPrevious video topics:\n${topicList}\n`;
+          await log("info", `Memory loaded: ${pastRuns.length} past topic(s) injected into planner.`);
+        } else {
+          await log("info", "Memory enabled but no past topics found yet.");
+        }
+      }
+
       // Recover style bible from metadata if resuming
       let styleBible: Record<string, any> = (run.generated_metadata as any)?.style_bible || {};
 
