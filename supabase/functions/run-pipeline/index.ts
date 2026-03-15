@@ -529,7 +529,7 @@ Each scene must also specify activity_density (low, medium, high):
 ${resolvedConfig.planning.scene_progression_rules.map(r => `- ${r}`).join("\n")}
 
 === START STATE RULES ===
-${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}`,
+${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memoryBlock}`,
           },
           {
             role: "user",
