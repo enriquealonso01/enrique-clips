@@ -193,6 +193,11 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
   pipeline: {
     use_legacy_fallbacks: true,
   },
+  memory: {
+    enabled: false,
+    instruction: "",
+    lookback_count: 30,
+  },
 };
 
 // ── Helper Functions ──────────────────────────────────────
