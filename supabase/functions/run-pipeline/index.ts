@@ -592,6 +592,18 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         });
       }
 
+      // ── Generate topic summary for this run ──
+      try {
+        const sceneDescriptions = scenePlan.scenes.map((s: any) => s.scene_title + ": " + s.scene_description).join("; ");
+        const topicSummary = `${conceptPrompt || project.title} — ${scenePlan.scenes.map((s: any) => s.scene_title).join(", ")}`;
+        // Keep it concise (max ~200 chars)
+        const trimmedSummary = topicSummary.length > 200 ? topicSummary.substring(0, 197) + "..." : topicSummary;
+        await supabase.from("runs").update({ topic_summary: trimmedSummary }).eq("id", runId);
+        await log("info", `Topic summary saved: "${trimmedSummary}"`);
+      } catch (err) {
+        await log("warn", `Topic summary generation failed: ${err.message}`);
+      }
+
       } // end if (!scenesAlreadyCreated)
 
       // Time-budget guard: if we've used >80s on plan, save and re-chain
