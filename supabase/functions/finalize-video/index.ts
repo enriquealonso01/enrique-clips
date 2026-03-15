@@ -1795,7 +1795,7 @@ Deno.serve(async (req) => {
                   const outLabel = `v${filterIdx}`;
 
                   filterParts.push(
-                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
                   );
                   currentVideoLabel = outLabel;
                   filterIdx++;
