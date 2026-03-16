@@ -395,93 +395,8 @@ Deno.serve(async (req) => {
 
       if (!scenesAlreadyCreated) {
 
-      // ── 1a: Generate initial consistency image ──
-      try {
-      const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
-      const initialImagePrompt = conceptPrompt
-          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: If the series describes a transformation or construction process, show ONLY the untouched, unmodified starting environment with NO activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
-          : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
-
-        const imageResult = await callAI(
-          [{ role: "user", content: initialImagePrompt }],
-          undefined, undefined,
-          "google/gemini-3-pro-image-preview",
-          ["image", "text"]
-        );
-
-        const assetId = await extractAndUploadImage(
-          imageResult,
-          `${project.id}/initial-image/${runId}/reference`,
-          "initial_image",
-          { run_id: runId, purpose: "run_consistency_anchor" }
-        );
-        if (assetId) {
-          await log("info", "Initial consistency image generated and saved");
-        } else {
-          await log("warn", "Could not extract image from AI response — continuing without initial image");
-        }
-        await updateRun({ progress_pct: 5 });
-      } catch (err) {
-        await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
-        await updateRun({ progress_pct: 5 });
-      }
-      try {
-        const styleBibleResult = await callAI(
-          [
-            {
-              role: "system",
-              content: `You are a visual consistency director. Given a series concept, produce a structured "Style Bible" that will be appended to every image and video prompt to maintain perfect consistency across all scenes.`,
-            },
-            {
-              role: "user",
-              content: `Series concept: ${conceptPrompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible.`,
-            },
-          ],
-          [
-            {
-              type: "function",
-              function: {
-                name: "create_style_bible",
-                description: "Output a structured style bible for visual consistency",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    character_identity: { type: "string", description: "Detailed description of main character/subject" },
-                    outfit_description: { type: "string", description: "Exact clothing/outfit description" },
-                    environment_layout: { type: "string", description: "Setting, background elements, spatial layout" },
-                    lighting_palette: { type: "string", description: "Lighting style, color palette, mood" },
-                    camera_constraints: { type: "string", description: "Default camera distance, angle, lens" },
-                    do_not_change: { type: "array", items: { type: "string" }, description: "Elements that must remain identical" },
-                    art_style: { type: "string", description: "Overall art/rendering style" },
-                  },
-                  required: ["character_identity", "outfit_description", "environment_layout", "lighting_palette", "camera_constraints", "do_not_change", "art_style"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          ],
-          { type: "function", function: { name: "create_style_bible" } }
-        );
-        const sbToolCall = styleBibleResult.choices?.[0]?.message?.tool_calls?.[0];
-        if (sbToolCall) {
-          styleBible = JSON.parse(sbToolCall.function.arguments);
-          await log("info", "Style Bible generated", styleBible);
-          // Save style bible immediately so it survives edge function timeouts
-          await updateRun({
-            progress_pct: 8,
-            generated_metadata: {
-              style_bible: styleBible,
-              full_negative_prompt: fullNegativePrompt,
-              resolved_prompt_config: resolvedConfig,
-            },
-          });
-        }
-      } catch (err) {
-        await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
-      }
-
-      // ── 1c: Generate Scene Plan ──
-      const styleBibleText = Object.entries(styleBible)
+      // ── 1a: Generate Scene Plan FIRST (so we know which landmark was chosen) ──
+      const styleBibleTextForPlan = Object.entries(styleBible)
         .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
         .join("\n");
 
@@ -494,8 +409,7 @@ The series has ${project.scene_count} scenes, each ${project.clip_duration_sec} 
 ${resolvedConfig.global.rules.length ? `Rules:\n${resolvedConfig.global.rules.map(r => `- ${r}`).join("\n")}` : ""}
 ${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}
 
-=== STYLE BIBLE (must be followed for ALL scenes) ===
-${styleBibleText || "No style bible available."}
+${styleBibleTextForPlan ? `=== STYLE BIBLE (must be followed for ALL scenes) ===\n${styleBibleTextForPlan}` : ""}
 
 === FIRST SCENE HOOK RULES ===
 ${resolvedConfig.planning.first_scene_hook_rules.map(r => `- ${r}`).join("\n")}
@@ -533,7 +447,11 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
           },
           {
             role: "user",
-            content: `Create a ${project.scene_count}-scene plan for: ${conceptPrompt || "A visually stunning short video"}`,
+            content: resolvedConfig.planning.planner_user_prompt_template
+              ? resolvedConfig.planning.planner_user_prompt_template
+                  .replace("{scene_count}", String(project.scene_count))
+                  .replace("{concept_prompt}", conceptPrompt || "A visually stunning short video")
+              : `Create a ${project.scene_count}-scene plan for: ${conceptPrompt || "A visually stunning short video"}`,
           },
         ],
         [
@@ -545,6 +463,9 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
               parameters: {
                 type: "object",
                 properties: {
+                  landmark_name: { type: "string", description: "The exact name of the chosen landmark/subject" },
+                  landmark_location: { type: "string", description: "The real location/city/country of the landmark" },
+                  landmark_era: { type: "string", description: "The historical era and approximate construction years" },
                   scenes: {
                     type: "array",
                     items: {
@@ -563,7 +484,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
                     },
                   },
                 },
-                required: ["scenes"],
+                required: ["landmark_name", "landmark_location", "landmark_era", "scenes"],
                 additionalProperties: false,
               },
             },
@@ -576,8 +497,12 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
       if (!toolCall) throw new Error("No tool call in plan response");
 
       const scenePlan = JSON.parse(toolCall.function.arguments);
-      await log("info", `Generated plan with ${scenePlan.scenes.length} scenes`, scenePlan);
+      const landmarkName = scenePlan.landmark_name || "";
+      const landmarkLocation = scenePlan.landmark_location || "";
+      const landmarkEra = scenePlan.landmark_era || "";
+      await log("info", `Planner chose: ${landmarkName} (${landmarkLocation}, ${landmarkEra}) — ${scenePlan.scenes.length} scenes`, scenePlan);
 
+      // Save scenes to DB
       for (const scene of scenePlan.scenes) {
         await supabase.from("scenes").insert({
           run_id: runId,
@@ -591,17 +516,128 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
           status: "pending" as const,
         });
       }
+      await updateRun({ progress_pct: 10 });
 
       // ── Generate topic summary for this run ──
       try {
-        const sceneDescriptions = scenePlan.scenes.map((s: any) => s.scene_title + ": " + s.scene_description).join("; ");
-        const topicSummary = `${conceptPrompt || project.title} — ${scenePlan.scenes.map((s: any) => s.scene_title).join(", ")}`;
-        // Keep it concise (max ~200 chars)
+        const topicSummary = landmarkName
+          ? `${landmarkName} (${landmarkLocation}, ${landmarkEra})`
+          : `${conceptPrompt || project.title} — ${scenePlan.scenes.map((s: any) => s.scene_title).join(", ")}`;
         const trimmedSummary = topicSummary.length > 200 ? topicSummary.substring(0, 197) + "..." : topicSummary;
         await supabase.from("runs").update({ topic_summary: trimmedSummary }).eq("id", runId);
         await log("info", `Topic summary saved: "${trimmedSummary}"`);
       } catch (err) {
         await log("warn", `Topic summary generation failed: ${err.message}`);
+      }
+
+      // ── 1b: Generate initial consistency image (now using the SPECIFIC landmark) ──
+      // Time-budget guard
+      if (Date.now() - planStartTime > 60_000) {
+        await log("info", "Plan step time budget reached after scene creation. Re-chaining for image & style bible.");
+        await updateRun({ current_step: "plan", generated_metadata: { landmark_name: landmarkName, landmark_location: landmarkLocation, landmark_era: landmarkEra, resolved_prompt_config: resolvedConfig } });
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_images", run_id: runId });
+      }
+
+      try {
+        const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
+        const landmarkContext = landmarkName
+          ? `The chosen landmark is: ${landmarkName}, located at ${landmarkLocation}, from ${landmarkEra}. Show the exact real construction site of ${landmarkName} BEFORE the structure exists.`
+          : "";
+        const initialImagePrompt = conceptPrompt
+          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\n${landmarkContext}\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: Show ONLY the untouched, unmodified starting environment of the exact site where ${landmarkName || "the structure"} will be built. No activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
+          : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
+
+        const imageResult = await callAI(
+          [{ role: "user", content: initialImagePrompt }],
+          undefined, undefined,
+          "google/gemini-3-pro-image-preview",
+          ["image", "text"]
+        );
+
+        const assetId = await extractAndUploadImage(
+          imageResult,
+          `${project.id}/initial-image/${runId}/reference`,
+          "initial_image",
+          { run_id: runId, purpose: "run_consistency_anchor" }
+        );
+        if (assetId) {
+          await log("info", `Initial consistency image generated for ${landmarkName || "series"}`);
+        } else {
+          await log("warn", "Could not extract image from AI response — continuing without initial image");
+        }
+        await updateRun({ progress_pct: 15 });
+      } catch (err) {
+        await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
+        await updateRun({ progress_pct: 15 });
+      }
+
+      // ── 1c: Generate Style Bible (now using the SPECIFIC landmark) ──
+      // Time-budget guard
+      if (Date.now() - planStartTime > 80_000) {
+        await log("info", "Plan step time budget reached after initial image. Re-chaining for style bible.");
+        chainNextStep();
+        return json({ status: "plan_rechaining_for_style_bible", run_id: runId });
+      }
+
+      try {
+        const landmarkStyleContext = landmarkName
+          ? `The specific subject is: ${landmarkName}, located at ${landmarkLocation}, from ${landmarkEra}. The style bible must be anchored to this exact landmark and its real historical construction site.`
+          : "";
+        const styleBibleResult = await callAI(
+          [
+            {
+              role: "system",
+              content: `You are a visual consistency director. Given a series concept and a specific chosen landmark, produce a structured "Style Bible" that will be appended to every image and video prompt to maintain perfect consistency across all scenes.`,
+            },
+            {
+              role: "user",
+              content: `${landmarkStyleContext}\n\nSeries concept: ${conceptPrompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible specifically for ${landmarkName || "this series"}.`,
+            },
+          ],
+          [
+            {
+              type: "function",
+              function: {
+                name: "create_style_bible",
+                description: "Output a structured style bible for visual consistency",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    character_identity: { type: "string", description: "Detailed description of main character/subject" },
+                    outfit_description: { type: "string", description: "Exact clothing/outfit description" },
+                    environment_layout: { type: "string", description: "Setting, background elements, spatial layout" },
+                    lighting_palette: { type: "string", description: "Lighting style, color palette, mood" },
+                    camera_constraints: { type: "string", description: "Default camera distance, angle, lens" },
+                    do_not_change: { type: "array", items: { type: "string" }, description: "Elements that must remain identical" },
+                    art_style: { type: "string", description: "Overall art/rendering style" },
+                  },
+                  required: ["character_identity", "outfit_description", "environment_layout", "lighting_palette", "camera_constraints", "do_not_change", "art_style"],
+                  additionalProperties: false,
+                },
+              },
+            },
+          ],
+          { type: "function", function: { name: "create_style_bible" } }
+        );
+        const sbToolCall = styleBibleResult.choices?.[0]?.message?.tool_calls?.[0];
+        if (sbToolCall) {
+          styleBible = JSON.parse(sbToolCall.function.arguments);
+          await log("info", `Style Bible generated for ${landmarkName || "series"}`, styleBible);
+          await updateRun({
+            progress_pct: 18,
+            generated_metadata: {
+              style_bible: styleBible,
+              landmark_name: landmarkName,
+              landmark_location: landmarkLocation,
+              landmark_era: landmarkEra,
+              full_negative_prompt: fullNegativePrompt,
+              resolved_prompt_config: resolvedConfig,
+            },
+          });
+        }
+      } catch (err) {
+        await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
       }
 
       } // end if (!scenesAlreadyCreated)
