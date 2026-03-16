@@ -443,7 +443,11 @@ Each scene must also specify activity_density (low, medium, high):
 ${resolvedConfig.planning.scene_progression_rules.map(r => `- ${r}`).join("\n")}
 
 === START STATE RULES ===
-${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memoryBlock}`,
+${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}
+
+=== CAMERA RULES (MUST FOLLOW) ===
+${resolvedConfig.motion.camera_rules.map(r => `- ${r}`).join("\n")}
+${resolvedConfig.motion.motion_rules.map(r => `- ${r}`).join("\n")}${memoryBlock}`,
           },
           {
             role: "user",
