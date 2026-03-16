@@ -23,7 +23,7 @@ const MOTION_GRAMMAR: Record<string, { camera: string; action: string; density_h
     density_hint: "Focus on a single subject performing one decisive action.",
   },
   timelapse_build: {
-    camera: "fixed tripod OR very slow push-in — the camera barely moves",
+    camera: "slow push-in, gradual orbital sweep, or controlled crane move — camera may shift perspective between scenes for variety",
     action: "continuous parallel activity: multiple workers, machines, or processes happening simultaneously",
     density_hint: "Scene should feel busy with overlapping activities suggesting the passage of time.",
   },
