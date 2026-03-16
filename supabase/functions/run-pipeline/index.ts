@@ -990,7 +990,9 @@ Generate the timed text frames.`,
             .replace("{style_bible}", styleBibleText || "Cinematic, high detail, vibrant colors.")
             .replace("{end_keyframe_prompt}", scene.end_keyframe_prompt || "")
             .replace("{composition_rules}", kfConfig.composition_rules.map(r => `- ${r}`).join("\n"))
-            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"));
+            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"))
+            .replace("{global_rules}", resolvedConfig.global.rules.map(r => `- ${r}`).join("\n"))
+            .replace("{concept_prompt}", conceptPrompt || "");
 
           const userContent: any[] = [{ type: "text", text: promptText }];
           if (prevKeyframeUrl) {
