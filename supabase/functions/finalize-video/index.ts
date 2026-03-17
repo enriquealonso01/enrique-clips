@@ -1762,7 +1762,7 @@ Deno.serve(async (req) => {
 
                 const scaledBoxBorder = Math.round(10 * resScale);
                 const fontFileRef = `fontfile={{in_font}}`;
-                const borderW = Math.max(2, Math.round(3 * resScale));
+                const borderW = Math.max(2, Math.round(4.5 * resScale));
                 const lineHeight = Math.round(fontSize * 1.15); // font size + 15% spacing
 
                 // Calculate total block height for vertical positioning
