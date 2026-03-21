@@ -1530,8 +1530,11 @@ Deno.serve(async (req) => {
                 const { data: urlData } = supabase.storage
                   .from("project-assets")
                   .getPublicUrl(clip.supabase_path);
-                const resp = await withRetry(() => fetch(urlData.publicUrl));
-                if (!resp.ok) throw new Error(`Failed to download clip: ${resp.status}`);
+                const resp = await withRetry(async () => {
+                  const r = await fetch(urlData.publicUrl);
+                  if (!r.ok) throw new Error(`Failed to download clip: ${r.status}`);
+                  return r;
+                }, 5, 2000);
                 return new Uint8Array(await resp.arrayBuffer());
               })
             );
