@@ -284,20 +284,66 @@ The system generates **platform-specific metadata** automatically. Each enabled 
 
 ### 3.9 `memory` — Series Memory (Topic History)
 
-Controls whether the planner receives memory of past video topics for this project. When enabled, the pipeline fetches the last N `topic_summary` values from completed runs and injects them into the planner's system prompt.
+Controls whether the planner receives memory of past video topics for this project. When enabled, the pipeline fetches the last N `topic_summary` values from completed runs and injects them into the planner's system prompt. This prevents repetition and enables thematic continuity across a video series.
 
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `enabled` | boolean | `false` | Whether to activate series memory. When `false`, no history is fetched or injected. |
-| `instruction` | string | `""` | How the planner should use the memory. Examples: `"Do not repeat the construction landmarks shown in the last videos"`, `"Continue the theme from the last video"`, `"Each video must feature a different country"`. |
-| `lookback_count` | number | `30` | How many past video topics to include (1-100). |
+| `instruction` | string | `""` | How the planner should use the memory. This is the directive that tells the AI planner what to do with the list of past topics. |
+| `lookback_count` | number | `30` | How many past video topics to include (1–100). Higher values give more context but use more tokens. |
 
 #### How It Works
-1. After each run's scene plan is generated, a short `topic_summary` is automatically saved to the run record.
-2. On the next run, if memory is enabled, the pipeline fetches the last N topic summaries and appends them to the planner's system prompt as a `=== SERIES MEMORY ===` block.
-3. The `instruction` field tells the planner what to do with that history.
 
-#### Example Configuration
+1. **Topic extraction**: After each run's scene plan is generated, the pipeline asks an AI model to produce a short one-line `topic_summary` describing what the video is about (e.g., `"Construction of the Pont du Gard aqueduct in southern France"`). This summary is saved to the `runs.topic_summary` column.
+2. **Memory injection**: On the next run, if `memory.enabled` is `true`, the pipeline queries the last N completed runs (ordered by `created_at DESC`) and collects their `topic_summary` values.
+3. **Prompt augmentation**: The collected topics are formatted as a numbered list and appended to the planner's system prompt inside a `=== SERIES MEMORY ===` block, along with the `instruction` field. The planner sees something like:
+
+```
+=== SERIES MEMORY ===
+The following topics have been covered in previous videos for this series:
+1. Construction of the Pont du Gard aqueduct in southern France
+2. Building of the Colosseum in Rome
+3. Construction of Angkor Wat in Cambodia
+...
+
+Instruction: Do not repeat any landmark that appears in the previous videos.
+```
+
+4. **Planner compliance**: The AI planner uses this context to choose a new, non-overlapping subject (or continue a theme, depending on your instruction).
+
+#### When to Enable Memory
+
+- **Repetitive series**: Any project that generates many videos from the same concept prompt (e.g., "famous historical constructions") should enable memory to avoid duplicates.
+- **Thematic series**: Projects where each video should build on or reference the previous one (e.g., "continue the storyline from last video").
+- **Diverse content**: When you want to guarantee geographic, temporal, or categorical variety across runs.
+
+#### `instruction` — Best Practices
+
+The `instruction` field is critical — it tells the planner *how* to use the memory. Be specific and actionable:
+
+| Goal | Example Instruction |
+|------|-------------------|
+| **Avoid repeats** | `"Do not repeat any landmark, building, or structure that appears in the previous videos. Always pick a completely different famous landmark."` |
+| **Geographic diversity** | `"Do not repeat any country or region from the previous videos. Ensure global geographic diversity."` |
+| **Thematic continuity** | `"Continue the narrative arc from the last video. Reference events or outcomes from prior episodes."` |
+| **Category rotation** | `"Rotate through different landmark categories: pyramid, cathedral, castle, bridge, monument. Do not repeat a category used in the last 5 videos."` |
+| **Era diversity** | `"Ensure each video covers a different historical era. Alternate between ancient, medieval, renaissance, and industrial-era constructions."` |
+
+> **Tip**: You can combine multiple constraints in one instruction: `"Do not repeat any landmark from previous videos. Also ensure geographic diversity — do not pick the same country as the last 3 videos."`
+
+#### `lookback_count` — Choosing the Right Value
+
+| Value | Use Case |
+|-------|----------|
+| `5–10` | Short memory — only avoids very recent repeats. Good for projects with a small subject pool. |
+| `20–30` | Standard memory — covers roughly a month of daily videos. Recommended default. |
+| `50–100` | Long memory — prevents repeats across months of content. Use for projects with a large subject pool (e.g., "any famous landmark in world history"). |
+
+> **Note**: Setting `lookback_count` higher than the number of completed runs has no negative effect — the pipeline simply returns however many summaries exist.
+
+#### Example Configurations
+
+**Anti-repetition (most common)**:
 ```json
 {
   "memory": {
@@ -307,6 +353,35 @@ Controls whether the planner receives memory of past video topics for this proje
   }
 }
 ```
+
+**Thematic continuity**:
+```json
+{
+  "memory": {
+    "enabled": true,
+    "instruction": "Continue the story from where the last video left off. Reference the previous location and advance the journey to the next destination.",
+    "lookback_count": 5
+  }
+}
+```
+
+**Category rotation with geographic diversity**:
+```json
+{
+  "memory": {
+    "enabled": true,
+    "instruction": "Rotate through landmark categories (temple, castle, bridge, monument, palace, cathedral). Do not repeat a category from the last 4 videos. Also avoid repeating a country from the last 6 videos.",
+    "lookback_count": 30
+  }
+}
+```
+
+#### Important Notes
+
+- Memory only works for **completed runs** that have a `topic_summary`. Failed or stopped runs without a summary are skipped.
+- The `topic_summary` is generated automatically by an AI model — you do not need to write it manually.
+- Memory is **per-project** — each project has its own independent topic history.
+- If memory is disabled (`enabled: false`), the pipeline skips all memory-related queries and prompt injection, even if `instruction` and `lookback_count` are set.
 
 ---
 
