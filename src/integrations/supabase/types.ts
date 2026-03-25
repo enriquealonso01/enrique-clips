@@ -538,7 +538,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_random_project_track: {
+        Args: { p_project_id: string }
+        Returns: {
+          track_id: string
+        }[]
+      }
     }
     Enums: {
       activity_density: "low" | "medium" | "high"
