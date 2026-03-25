@@ -1543,24 +1543,38 @@ Deno.serve(async (req) => {
           }
 
           // Check for tracks via project_tracks junction table (multi-track, random per run)
-          const { data: projectTracks } = await supabase
-            .from("project_tracks")
-            .select("track_id")
-            .eq("project_id", project.id);
+          // Use raw SQL with ORDER BY random() LIMIT 1 so Postgres handles randomization
+          // (Math.random() in short-lived edge functions can repeat across cold starts)
+          const { data: randomTrackRow } = await supabase
+            .rpc('get_random_project_track', { p_project_id: project.id })
+            .maybeSingle();
           
-          // Fall back to legacy selected_track_id if no project_tracks entries
-          const trackCandidates = (projectTracks && projectTracks.length > 0)
-            ? projectTracks.map((pt: any) => pt.track_id)
-            : ((project as any).selected_track_id ? [(project as any).selected_track_id] : []);
+          // Fallback: query all project_tracks and pick via JS random if RPC doesn't exist yet
+          let chosenTrackId: string | null = null;
+          if (randomTrackRow?.track_id) {
+            chosenTrackId = randomTrackRow.track_id;
+          } else {
+            const { data: projectTracks } = await supabase
+              .from("project_tracks")
+              .select("track_id")
+              .eq("project_id", project.id);
+            
+            const trackCandidates = (projectTracks && projectTracks.length > 0)
+              ? projectTracks.map((pt: any) => pt.track_id)
+              : ((project as any).selected_track_id ? [(project as any).selected_track_id] : []);
+            
+            if (trackCandidates.length > 0) {
+              // Shuffle using crypto random for better distribution
+              const randomBytes = new Uint32Array(1);
+              crypto.getRandomValues(randomBytes);
+              chosenTrackId = trackCandidates[randomBytes[0] % trackCandidates.length];
+            }
+          }
           
-          // Pick one randomly
-          const chosenTrackId = trackCandidates.length > 0
-            ? trackCandidates[Math.floor(Math.random() * trackCandidates.length)]
-            : null;
           const hasSelectedTrack = !!chosenTrackId;
           
-          if (trackCandidates.length > 1) {
-            await log("info", `Randomly selected track from ${trackCandidates.length} candidates`);
+          if (hasSelectedTrack) {
+            await log("info", `Selected track ${chosenTrackId} for this run (crypto-random)`);
           }
           
           let finalVideo: Uint8Array;
