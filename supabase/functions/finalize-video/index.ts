@@ -1706,10 +1706,11 @@ Deno.serve(async (req) => {
                           text: voText,
                           model_id: voiceoverConfig.model,
                           voice_settings: {
-                            stability: 0.6,
-                            similarity_boost: 0.75,
-                            style: 0.3,
-                            use_speaker_boost: true,
+                            stability: voiceoverConfig.stability ?? 0.36,
+                            similarity_boost: voiceoverConfig.similarity_boost ?? 0.35,
+                            style: voiceoverConfig.style ?? 0.47,
+                            use_speaker_boost: voiceoverConfig.use_speaker_boost ?? true,
+                            speed: voiceoverConfig.speed ?? 0.83,
                           },
                         }),
                       }
