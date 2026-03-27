@@ -1,0 +1,1 @@
+UPDATE projects SET prompt_config_json = jsonb_set(COALESCE(prompt_config_json, '{}'::jsonb), '{voiceover}', '{"enabled": true, "voice_id": "fIGaHjfrR8KmMy0vGEVJ", "model": "eleven_multilingual_v2", "speed": 0.83, "stability": 0.36, "similarity_boost": 0.35, "style": 0.47, "use_speaker_boost": true}'::jsonb) WHERE id = '45f5e2cd-5e68-4600-be3d-fd7965ef1752';
