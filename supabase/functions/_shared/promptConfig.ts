@@ -55,6 +55,7 @@ export interface PromptConfigOverlayItem {
   bg_color?: string;
   z_index?: number;
   sort_order?: number;
+  voiceover_enabled?: boolean;
 }
 
 export interface PromptConfigOverlays {
