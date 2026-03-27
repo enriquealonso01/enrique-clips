@@ -1,0 +1,1 @@
+UPDATE overlays SET voiceover_enabled = true WHERE project_id = '45f5e2cd-5e68-4600-be3d-fd7965ef1752';
