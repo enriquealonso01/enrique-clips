@@ -81,6 +81,7 @@ export type Database = {
           source: string
           start_pct: number
           style: string
+          voiceover_enabled: boolean
           z_index: number
         }
         Insert: {
@@ -101,6 +102,7 @@ export type Database = {
           source?: string
           start_pct?: number
           style?: string
+          voiceover_enabled?: boolean
           z_index?: number
         }
         Update: {
@@ -121,6 +123,7 @@ export type Database = {
           source?: string
           start_pct?: number
           style?: string
+          voiceover_enabled?: boolean
           z_index?: number
         }
         Relationships: [
