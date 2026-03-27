@@ -105,6 +105,7 @@ export interface PromptConfig {
   overlays: PromptConfigOverlays;
   metadata: PromptConfigMetadata;
   audio: PromptConfigAudio;
+  voiceover: PromptConfigVoiceover;
   pipeline: PromptConfigPipeline;
   memory: PromptConfigMemory;
 }
