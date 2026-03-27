@@ -31,6 +31,7 @@ interface Overlay {
   image_path: string | null;
   sort_order: number;
   source: string;
+  voiceover_enabled: boolean;
 }
 
 export type { Overlay };

@@ -198,6 +198,11 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
     strategy: "background_music",
     enabled: true,
   },
+  voiceover: {
+    enabled: false,
+    voice_id: "JBFqnCBsd6RMkjVDRZzb", // George - deep narrator voice
+    model: "eleven_multilingual_v2",
+  },
   pipeline: {
     use_legacy_fallbacks: true,
   },
