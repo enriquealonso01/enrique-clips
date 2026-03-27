@@ -1904,9 +1904,53 @@ Deno.serve(async (req) => {
                 .map((k) => `-i {{${k}}}`)
                 .join(" ");
 
+              // Build audio mixing filter for voiceover clips
+              const hasVO = voiceoverAudioPaths.length > 0;
+              let audioMapStr = "";
+
+              if (hasVO) {
+                // Build adelay + amix filter chain for voiceover
+                const voFilterParts: string[] = [];
+                const voMixInputs: string[] = [];
+
+                // Base audio source
+                if (hasSelectedTrack && selectedTrackUrl) {
+                  const audioInputIdx = getInputIndex("in_audio");
+                  voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voMixInputs.push("[base_audio]");
+                } else {
+                  voFilterParts.push(`[${videoInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voMixInputs.push("[base_audio]");
+                }
+
+                // Each VO clip gets adelay'd to its start time
+                for (let vi = 0; vi < voiceoverAudioPaths.length; vi++) {
+                  const vo = voiceoverAudioPaths[vi];
+                  const voIdx = getInputIndex(vo.inputKey);
+                  const delayMs = Math.round(vo.startSec * 1000);
+                  const voLabel = `vo${vi}`;
+                  voFilterParts.push(`[${voIdx}:a]adelay=${delayMs}|${delayMs}[${voLabel}]`);
+                  voMixInputs.push(`[${voLabel}]`);
+                }
+
+                // Mix all audio sources
+                const mixInputCount = voMixInputs.length;
+                // Weights: music at 0.6, each VO at 1.0
+                const weights = hasSelectedTrack
+                  ? `0.6 ${voiceoverAudioPaths.map(() => "1.0").join(" ")}`
+                  : `0.4 ${voiceoverAudioPaths.map(() => "1.0").join(" ")}`;
+                voFilterParts.push(`${voMixInputs.join("")}amix=inputs=${mixInputCount}:duration=first:weights='${weights}'[mixed_audio]`);
+
+                // Add VO filters to the main filter_complex
+                filterParts.push(...voFilterParts);
+                audioMapStr = `-map "[mixed_audio]"`;
+              }
+
               if (filterParts.length > 0) {
                 const filterComplex = filterParts.join(";");
-                if (hasSelectedTrack && selectedTrackUrl) {
+                if (hasVO) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {
