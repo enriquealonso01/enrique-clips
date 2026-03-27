@@ -54,6 +54,7 @@ export interface PromptConfigOverlayItem {
   bg_color?: string;          // e.g. "rgba(0,0,0,0.5)"
   z_index?: number;           // stacking order
   sort_order?: number;        // render order
+  voiceover_enabled?: boolean; // enable TTS narration for this overlay
 }
 
 export interface PromptConfigOverlays {
