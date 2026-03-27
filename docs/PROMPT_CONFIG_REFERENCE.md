@@ -91,6 +91,12 @@ The `prompt_config_json` is stored on the project and merged with system default
     "enabled": true                  // Whether to include audio
   },
 
+  "voiceover": {
+    "enabled": false,                // Master toggle — must be true for any TTS to fire
+    "voice_id": "JBFqnCBsd6RMkjVDRZzb", // ElevenLabs voice ID (default: George)
+    "model": "eleven_multilingual_v2"    // ElevenLabs model
+  },
+
   "pipeline": {
     "use_legacy_fallbacks": true     // Whether to fall back to legacy fields
   },
