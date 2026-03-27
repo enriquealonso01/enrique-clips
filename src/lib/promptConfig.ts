@@ -78,6 +78,11 @@ export interface PromptConfigVoiceover {
   enabled: boolean;
   voice_id: string;
   model: string;
+  speed: number;
+  stability: number;
+  similarity_boost: number;
+  style: number;
+  use_speaker_boost: boolean;
 }
 
 export interface PromptConfigAudio {
