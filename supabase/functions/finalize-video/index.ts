@@ -1785,6 +1785,13 @@ Deno.serve(async (req) => {
                 inputFiles["in_audio"] = selectedTrackUrl;
               }
 
+              // Add voiceover audio inputs
+              for (const vo of voiceoverAudioPaths) {
+                const { data: voUrl } = supabase.storage.from("project-assets").getPublicUrl(vo.storagePath);
+                inputFiles[vo.inputKey] = voUrl.publicUrl;
+                tempCleanupPaths.push(vo.storagePath);
+              }
+
               // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
               const sortedInputKeys = Object.keys(inputFiles).sort();
               // Media inputs exclude font (font is referenced via fontfile=, not -i)
