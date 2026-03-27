@@ -294,11 +294,16 @@ The system generates **platform-specific metadata** automatically. Each enabled 
 
 Controls text-to-speech narration for video overlays. When enabled, overlays with `voiceover_enabled: true` will be read aloud by an AI voice, timed to appear when the overlay appears on screen.
 
-| Field      | Type    | Default                    | Purpose                                                                                                                                                                 |
-| ---------- | ------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`  | boolean | `false`                    | **Master toggle.** Must be `true` for any voiceover to be generated. Even if individual overlays have `voiceover_enabled: true`, nothing happens unless this is `true`. |
-| `voice_id` | string  | `"JBFqnCBsd6RMkjVDRZzb"`   | ElevenLabs voice ID. Default is "George" (deep narrator). See [Voice Library](https://elevenlabs.io/voice-library) for options.                                         |
-| `model`    | string  | `"eleven_multilingual_v2"` | ElevenLabs model. Options: `eleven_multilingual_v2` (highest quality, 29 languages), `eleven_turbo_v2_5` (faster).                                                      |
+| Field               | Type    | Default                    | Purpose                                                                                                                                                                 |
+| ------------------- | ------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`           | boolean | `false`                    | **Master toggle.** Must be `true` for any voiceover to be generated. Even if individual overlays have `voiceover_enabled: true`, nothing happens unless this is `true`. |
+| `voice_id`          | string  | `"fIGaHjfrR8KmMy0vGEVJ"`  | ElevenLabs voice ID. Default is "Larry" (high-energy social media voice). See [Voice Library](https://elevenlabs.io/voice-library) for options.                         |
+| `model`             | string  | `"eleven_multilingual_v2"` | ElevenLabs model. Options: `eleven_multilingual_v2` (highest quality, 29 languages), `eleven_turbo_v2_5` (faster).                                                      |
+| `speed`             | number  | `0.83`                     | Playback speed multiplier. Lower = slower, more dramatic. Range: 0.5–2.0.                                                                                              |
+| `stability`         | number  | `0.36`                     | Voice stability (0–1). Lower = more expressive/variable, higher = more consistent.                                                                                      |
+| `similarity_boost`  | number  | `0.35`                     | How closely the output matches the original voice (0–1). Lower = more creative freedom.                                                                                 |
+| `style`             | number  | `0.47`                     | Style exaggeration (0–1). Higher = more dramatic delivery.                                                                                                               |
+| `use_speaker_boost` | boolean | `true`                     | Enhances voice clarity and presence. Recommended for short-form content.
 
 #### Per-Overlay Activation
 
