@@ -196,7 +196,8 @@ This is where you define specific overlays with complete parameter control. **Th
         "font_color": "#FFFFFF",          // Text color (hex)
         "bg_color": "rgba(0,0,0,0.5)",    // Background color (rgba for transparency)
         "z_index": 1,                     // Stacking order (higher = on top)
-        "sort_order": 0                   // Render order
+        "sort_order": 0,                  // Render order
+        "voiceover_enabled": false        // Whether AI reads this text aloud (requires voiceover.enabled=true)
       }
     ]
   }
