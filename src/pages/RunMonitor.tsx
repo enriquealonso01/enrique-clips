@@ -117,7 +117,7 @@ export default function RunMonitor() {
   // Only fallback-invoke for metadata/publish — stitch is handled by the pipeline chain.
   // Including "stitch" here caused duplicate execution that overwrote correct results.
   const needsFinalize = run?.status === "running" && 
-    ["stitch", "metadata", "publish"].includes(run?.current_step);
+    ["metadata", "publish"].includes(run?.current_step);
   useEffect(() => {
     if (!needsFinalize || !runId || finalizeInvokedRef.current === runId) return;
     finalizeInvokedRef.current = runId;
