@@ -205,8 +205,13 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
   },
   voiceover: {
     enabled: false,
-    voice_id: "JBFqnCBsd6RMkjVDRZzb", // George - deep narrator voice
+    voice_id: "JBFqnCBsd6RMkjVDRZzb",
     model: "eleven_multilingual_v2",
+    speed: 0.83,
+    stability: 0.36,
+    similarity_boost: 0.35,
+    style: 0.47,
+    use_speaker_boost: true,
   },
   pipeline: {
     use_legacy_fallbacks: true,
