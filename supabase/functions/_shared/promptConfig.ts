@@ -75,6 +75,12 @@ export interface PromptConfigMetadata {
   }>;
 }
 
+export interface PromptConfigVoiceover {
+  enabled: boolean;
+  voice_id: string;
+  model: string;
+}
+
 export interface PromptConfigAudio {
   strategy: string;
   enabled: boolean;
