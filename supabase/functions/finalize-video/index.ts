@@ -1673,7 +1673,79 @@ Deno.serve(async (req) => {
             }
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
             const resScale = getResolutionScale((project as any).pika_resolution || "540p");
-            const needsPostProd = hasOverlays || hasSelectedTrack;
+
+            // ── Voiceover TTS Generation ──
+            const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
+            const runMetadataForVO = (run.generated_metadata as any) || {};
+            const resolvedConfigForVO: PromptConfig = runMetadataForVO.resolved_prompt_config || buildResolvedPromptConfig(project);
+            const voiceoverConfig = resolvedConfigForVO.voiceover || { enabled: false, voice_id: "JBFqnCBsd6RMkjVDRZzb", model: "eleven_multilingual_v2" };
+
+            // Collect overlays that need voiceover (DB voiceover_enabled flag OR JSON items with voiceover_enabled)
+            const voiceoverOverlays = textOverlays.filter((o: any) => o.voiceover_enabled === true);
+            const voiceoverAudioPaths: Array<{ inputKey: string; startSec: number; storagePath: string }> = [];
+
+            if (voiceoverConfig.enabled && ELEVENLABS_API_KEY && voiceoverOverlays.length > 0) {
+              await log("info", `Generating voiceover for ${voiceoverOverlays.length} overlay(s) using voice=${voiceoverConfig.voice_id}, model=${voiceoverConfig.model}`);
+
+              for (let vi = 0; vi < voiceoverOverlays.length; vi++) {
+                const voOv = voiceoverOverlays[vi];
+                const voText = voOv.content_text || "";
+                if (!voText.trim()) continue;
+
+                try {
+                  const ttsResp = await withRetry(() =>
+                    fetch(
+                      `https://api.elevenlabs.io/v1/text-to-speech/${voiceoverConfig.voice_id}?output_format=mp3_44100_128`,
+                      {
+                        method: "POST",
+                        headers: {
+                          "xi-api-key": ELEVENLABS_API_KEY,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          text: voText,
+                          model_id: voiceoverConfig.model,
+                          voice_settings: {
+                            stability: 0.6,
+                            similarity_boost: 0.75,
+                            style: 0.3,
+                            use_speaker_boost: true,
+                          },
+                        }),
+                      }
+                    ), 2, 2000
+                  );
+
+                  if (!ttsResp.ok) {
+                    const errText = await ttsResp.text();
+                    await log("warn", `ElevenLabs TTS failed for overlay ${vi}: ${ttsResp.status} — ${errText.substring(0, 200)}`);
+                    continue;
+                  }
+
+                  const audioBuffer = new Uint8Array(await ttsResp.arrayBuffer());
+                  const voPath = `${project.id}/final/${runId}/vo_${vi}_${Date.now()}.mp3`;
+                  const { error: voUpErr } = await supabase.storage
+                    .from("project-assets")
+                    .upload(voPath, audioBuffer, { contentType: "audio/mpeg", upsert: true });
+
+                  if (voUpErr) {
+                    await log("warn", `VO upload failed for overlay ${vi}: ${voUpErr.message}`);
+                    continue;
+                  }
+
+                  const startSec = (voOv.start_pct / 100) * videoDurationSec;
+                  const inputKey = `in_vo${vi}`;
+                  voiceoverAudioPaths.push({ inputKey, startSec, storagePath: voPath });
+                  await log("info", `VO clip ${vi} generated: ${(audioBuffer.length / 1024).toFixed(0)}KB, starts at ${startSec.toFixed(1)}s, text="${voText.substring(0, 50)}"`);
+                } catch (voErr) {
+                  await log("warn", `VO generation error for overlay ${vi}: ${(voErr as Error).message}`);
+                }
+              }
+            } else if (voiceoverOverlays.length > 0 && !voiceoverConfig.enabled) {
+              await log("info", `${voiceoverOverlays.length} overlay(s) have voiceover_enabled but project voiceover is disabled in config`);
+            }
+
+            const needsPostProd = hasOverlays || hasSelectedTrack || voiceoverAudioPaths.length > 0;
 
             const tempCleanupPaths: string[] = [];
 
