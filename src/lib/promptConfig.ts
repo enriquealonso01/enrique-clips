@@ -54,6 +54,7 @@ export interface PromptConfigOverlayItem {
   bg_color?: string;          // e.g. "rgba(0,0,0,0.5)"
   z_index?: number;           // stacking order
   sort_order?: number;        // render order
+  voiceover_enabled?: boolean; // enable TTS narration for this overlay
 }
 
 export interface PromptConfigOverlays {
@@ -71,6 +72,12 @@ export interface PromptConfigMetadata {
     description_prompt?: string;
     hashtag_prompt?: string;
   }>;
+}
+
+export interface PromptConfigVoiceover {
+  enabled: boolean;
+  voice_id: string;
+  model: string;
 }
 
 export interface PromptConfigAudio {
@@ -97,6 +104,7 @@ export interface PromptConfig {
   overlays: PromptConfigOverlays;
   metadata: PromptConfigMetadata;
   audio: PromptConfigAudio;
+  voiceover: PromptConfigVoiceover;
   pipeline: PromptConfigPipeline;
   memory: PromptConfigMemory;
 }
@@ -189,6 +197,11 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
   audio: {
     strategy: "background_music",
     enabled: true,
+  },
+  voiceover: {
+    enabled: false,
+    voice_id: "JBFqnCBsd6RMkjVDRZzb", // George - deep narrator voice
+    model: "eleven_multilingual_v2",
   },
   pipeline: {
     use_legacy_fallbacks: true,

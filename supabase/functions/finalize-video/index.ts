@@ -1673,7 +1673,79 @@ Deno.serve(async (req) => {
             }
             const hasOverlays = imageOverlays.length > 0 || textOverlays.length > 0;
             const resScale = getResolutionScale((project as any).pika_resolution || "540p");
-            const needsPostProd = hasOverlays || hasSelectedTrack;
+
+            // ── Voiceover TTS Generation ──
+            const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
+            const runMetadataForVO = (run.generated_metadata as any) || {};
+            const resolvedConfigForVO: PromptConfig = runMetadataForVO.resolved_prompt_config || buildResolvedPromptConfig(project);
+            const voiceoverConfig = resolvedConfigForVO.voiceover || { enabled: false, voice_id: "JBFqnCBsd6RMkjVDRZzb", model: "eleven_multilingual_v2" };
+
+            // Collect overlays that need voiceover (DB voiceover_enabled flag OR JSON items with voiceover_enabled)
+            const voiceoverOverlays = textOverlays.filter((o: any) => o.voiceover_enabled === true);
+            const voiceoverAudioPaths: Array<{ inputKey: string; startSec: number; storagePath: string }> = [];
+
+            if (voiceoverConfig.enabled && ELEVENLABS_API_KEY && voiceoverOverlays.length > 0) {
+              await log("info", `Generating voiceover for ${voiceoverOverlays.length} overlay(s) using voice=${voiceoverConfig.voice_id}, model=${voiceoverConfig.model}`);
+
+              for (let vi = 0; vi < voiceoverOverlays.length; vi++) {
+                const voOv = voiceoverOverlays[vi];
+                const voText = voOv.content_text || "";
+                if (!voText.trim()) continue;
+
+                try {
+                  const ttsResp = await withRetry(() =>
+                    fetch(
+                      `https://api.elevenlabs.io/v1/text-to-speech/${voiceoverConfig.voice_id}?output_format=mp3_44100_128`,
+                      {
+                        method: "POST",
+                        headers: {
+                          "xi-api-key": ELEVENLABS_API_KEY,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({
+                          text: voText,
+                          model_id: voiceoverConfig.model,
+                          voice_settings: {
+                            stability: 0.6,
+                            similarity_boost: 0.75,
+                            style: 0.3,
+                            use_speaker_boost: true,
+                          },
+                        }),
+                      }
+                    ), 2, 2000
+                  );
+
+                  if (!ttsResp.ok) {
+                    const errText = await ttsResp.text();
+                    await log("warn", `ElevenLabs TTS failed for overlay ${vi}: ${ttsResp.status} — ${errText.substring(0, 200)}`);
+                    continue;
+                  }
+
+                  const audioBuffer = new Uint8Array(await ttsResp.arrayBuffer());
+                  const voPath = `${project.id}/final/${runId}/vo_${vi}_${Date.now()}.mp3`;
+                  const { error: voUpErr } = await supabase.storage
+                    .from("project-assets")
+                    .upload(voPath, audioBuffer, { contentType: "audio/mpeg", upsert: true });
+
+                  if (voUpErr) {
+                    await log("warn", `VO upload failed for overlay ${vi}: ${voUpErr.message}`);
+                    continue;
+                  }
+
+                  const startSec = (voOv.start_pct / 100) * videoDurationSec;
+                  const inputKey = `in_vo${vi}`;
+                  voiceoverAudioPaths.push({ inputKey, startSec, storagePath: voPath });
+                  await log("info", `VO clip ${vi} generated: ${(audioBuffer.length / 1024).toFixed(0)}KB, starts at ${startSec.toFixed(1)}s, text="${voText.substring(0, 50)}"`);
+                } catch (voErr) {
+                  await log("warn", `VO generation error for overlay ${vi}: ${(voErr as Error).message}`);
+                }
+              }
+            } else if (voiceoverOverlays.length > 0 && !voiceoverConfig.enabled) {
+              await log("info", `${voiceoverOverlays.length} overlay(s) have voiceover_enabled but project voiceover is disabled in config`);
+            }
+
+            const needsPostProd = hasOverlays || hasSelectedTrack || voiceoverAudioPaths.length > 0;
 
             const tempCleanupPaths: string[] = [];
 
@@ -1711,6 +1783,13 @@ Deno.serve(async (req) => {
               // Add audio input if selected
               if (hasSelectedTrack && selectedTrackUrl) {
                 inputFiles["in_audio"] = selectedTrackUrl;
+              }
+
+              // Add voiceover audio inputs
+              for (const vo of voiceoverAudioPaths) {
+                const { data: voUrl } = supabase.storage.from("project-assets").getPublicUrl(vo.storagePath);
+                inputFiles[vo.inputKey] = voUrl.publicUrl;
+                tempCleanupPaths.push(vo.storagePath);
               }
 
               // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
@@ -1825,9 +1904,53 @@ Deno.serve(async (req) => {
                 .map((k) => `-i {{${k}}}`)
                 .join(" ");
 
+              // Build audio mixing filter for voiceover clips
+              const hasVO = voiceoverAudioPaths.length > 0;
+              let audioMapStr = "";
+
+              if (hasVO) {
+                // Build adelay + amix filter chain for voiceover
+                const voFilterParts: string[] = [];
+                const voMixInputs: string[] = [];
+
+                // Base audio source
+                if (hasSelectedTrack && selectedTrackUrl) {
+                  const audioInputIdx = getInputIndex("in_audio");
+                  voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voMixInputs.push("[base_audio]");
+                } else {
+                  voFilterParts.push(`[${videoInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voMixInputs.push("[base_audio]");
+                }
+
+                // Each VO clip gets adelay'd to its start time
+                for (let vi = 0; vi < voiceoverAudioPaths.length; vi++) {
+                  const vo = voiceoverAudioPaths[vi];
+                  const voIdx = getInputIndex(vo.inputKey);
+                  const delayMs = Math.round(vo.startSec * 1000);
+                  const voLabel = `vo${vi}`;
+                  voFilterParts.push(`[${voIdx}:a]adelay=${delayMs}|${delayMs}[${voLabel}]`);
+                  voMixInputs.push(`[${voLabel}]`);
+                }
+
+                // Mix all audio sources
+                const mixInputCount = voMixInputs.length;
+                // Weights: music at 0.6, each VO at 1.0
+                const weights = hasSelectedTrack
+                  ? `0.6 ${voiceoverAudioPaths.map(() => "1.0").join(" ")}`
+                  : `0.4 ${voiceoverAudioPaths.map(() => "1.0").join(" ")}`;
+                voFilterParts.push(`${voMixInputs.join("")}amix=inputs=${mixInputCount}:duration=first:weights='${weights}'[mixed_audio]`);
+
+                // Add VO filters to the main filter_complex
+                filterParts.push(...voFilterParts);
+                audioMapStr = `-map "[mixed_audio]"`;
+              }
+
               if (filterParts.length > 0) {
                 const filterComplex = filterParts.join(";");
-                if (hasSelectedTrack && selectedTrackUrl) {
+                if (hasVO) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {

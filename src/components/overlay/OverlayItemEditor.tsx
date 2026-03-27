@@ -3,6 +3,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import type { Overlay } from "@/components/OverlayEditor";
 
 const STYLES = [
@@ -202,6 +203,22 @@ export function OverlayItemEditor({ overlay: ov, onUpdate, onImageUpload }: Prop
           </p>
         )}
       </div>
+
+      {/* Voiceover toggle for text overlays */}
+      {ov.overlay_type === "text" && (
+        <div className="flex items-center justify-between rounded-lg border border-border p-3">
+          <div className="space-y-0.5">
+            <Label className="text-xs font-medium">Voiceover</Label>
+            <p className="text-[11px] text-muted-foreground">
+              AI will read this overlay text aloud using ElevenLabs TTS
+            </p>
+          </div>
+          <Switch
+            checked={ov.voiceover_enabled || false}
+            onCheckedChange={(v) => onUpdate(ov.id, "voiceover_enabled", v)}
+          />
+        </div>
+      )}
 
       {/* Text styling */}
       {ov.overlay_type === "text" && (

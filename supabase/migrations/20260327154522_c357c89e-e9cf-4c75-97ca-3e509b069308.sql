@@ -1,0 +1,1 @@
+ALTER TABLE public.overlays ADD COLUMN voiceover_enabled boolean NOT NULL DEFAULT false;

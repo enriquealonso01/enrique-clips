@@ -689,6 +689,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
               bg_color: item.bg_color || "rgba(0,0,0,0.5)",
               z_index: item.z_index ?? 1,
               sort_order: nextSortOrder++,
+              voiceover_enabled: item.voiceover_enabled ?? false,
             });
           }
           await log("info", `${jsonOverlays.length} JSON overlay(s) synced into DB`);

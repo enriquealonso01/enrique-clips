@@ -91,6 +91,12 @@ The `prompt_config_json` is stored on the project and merged with system default
     "enabled": true                  // Whether to include audio
   },
 
+  "voiceover": {
+    "enabled": false,                // Master toggle — must be true for any TTS to fire
+    "voice_id": "JBFqnCBsd6RMkjVDRZzb", // ElevenLabs voice ID (default: George)
+    "model": "eleven_multilingual_v2"    // ElevenLabs model
+  },
+
   "pipeline": {
     "use_legacy_fallbacks": true     // Whether to fall back to legacy fields
   },
@@ -190,7 +196,8 @@ This is where you define specific overlays with complete parameter control. **Th
         "font_color": "#FFFFFF",          // Text color (hex)
         "bg_color": "rgba(0,0,0,0.5)",    // Background color (rgba for transparency)
         "z_index": 1,                     // Stacking order (higher = on top)
-        "sort_order": 0                   // Render order
+        "sort_order": 0,                  // Render order
+        "voiceover_enabled": false        // Whether AI reads this text aloud (requires voiceover.enabled=true)
       }
     ]
   }
@@ -276,13 +283,64 @@ The system generates **platform-specific metadata** automatically. Each enabled 
 
 > Music tracks are managed separately at the project level (uploaded MP3s). The JSON controls whether audio is included, not which track.
 
-### 3.8 `pipeline` — Technical Settings
+### 3.8 `voiceover` — AI Narration (ElevenLabs TTS)
+
+Controls text-to-speech narration for video overlays. When enabled, overlays with `voiceover_enabled: true` will be read aloud by an AI voice, timed to appear when the overlay appears on screen.
+
+| Field | Type | Default | Purpose |
+|-------|------|---------|---------|
+| `enabled` | boolean | `false` | **Master toggle.** Must be `true` for any voiceover to be generated. Even if individual overlays have `voiceover_enabled: true`, nothing happens unless this is `true`. |
+| `voice_id` | string | `"JBFqnCBsd6RMkjVDRZzb"` | ElevenLabs voice ID. Default is "George" (deep narrator). See [Voice Library](https://elevenlabs.io/voice-library) for options. |
+| `model` | string | `"eleven_multilingual_v2"` | ElevenLabs model. Options: `eleven_multilingual_v2` (highest quality, 29 languages), `eleven_turbo_v2_5` (faster). |
+
+#### Per-Overlay Activation
+
+Voiceover is activated on individual overlays using the `voiceover_enabled` field:
+
+```jsonc
+"overlays": {
+  "items": [
+    {
+      "overlay_type": "text",
+      "content_mode": "exact",
+      "content_text": "The Colosseum, Rome",
+      "position": "top_left",
+      "voiceover_enabled": true,    // ← This overlay will be narrated
+      // ... other fields
+    },
+    {
+      "overlay_type": "text",
+      "content_text": "Subscribe!",
+      "voiceover_enabled": false,   // ← This overlay will NOT be narrated (default)
+      // ...
+    }
+  ]
+}
+```
+
+Manual overlays can also toggle voiceover via the UI switch in the overlay editor.
+
+#### How It Works
+
+1. During finalization (Step 5), the pipeline checks which overlays have `voiceover_enabled: true`.
+2. For each, it calls ElevenLabs TTS with the overlay's resolved `content_text`.
+3. The resulting audio clips are delayed (via FFmpeg `adelay`) to sync with each overlay's `start_pct` timing.
+4. All VO clips are mixed with the background music using `amix` (music at 60% volume, VO at 100%).
+
+#### Best Practices
+
+- Keep narrated text SHORT — 2-8 words works best for short-form video pacing.
+- Use `voiceover_enabled` only on key overlays (landmark names, chapter titles) — not decorative text.
+- AI sequence overlays: each frame's text will be narrated individually if the parent has `voiceover_enabled`.
+- Choose a voice that matches your content's tone (documentary → George/Brian, casual → Chris/Liam).
+
+### 3.9 `pipeline` — Technical Settings
 
 | Field | Type | Purpose |
 |-------|------|---------|
 | `use_legacy_fallbacks` | boolean | Whether to read from legacy fields (`series_prompt`, `series_rules`, `negative_prompt`) as fallbacks. Keep `true` unless you're fully migrated to JSON. |
 
-### 3.9 `memory` — Series Memory (Topic History)
+### 3.10 `memory` — Series Memory (Topic History)
 
 Controls whether the planner receives memory of past video topics for this project. When enabled, the pipeline fetches the last N `topic_summary` values from completed runs and injects them into the planner's system prompt. This prevents repetition and enables thematic continuity across a video series.
 
