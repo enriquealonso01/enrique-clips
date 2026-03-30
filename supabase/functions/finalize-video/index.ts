@@ -2333,7 +2333,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         });
 
         if (metaToolCall) {
-          const platformMetadata = JSON.parse(metaToolCall.function.arguments);
+          const platformMetadata = metaToolCall; // callStructured returns parsed args directly
           // Store per-platform metadata AND keep a fallback title/description from the first platform
           const firstPlatform = platformsToGenerate[0];
           const fallback = platformMetadata[firstPlatform] || {};
