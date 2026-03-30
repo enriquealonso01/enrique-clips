@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
+import { MODELS } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,7 +8,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+// OpenAI integration is now handled by _shared/openai.ts
 
 // Compute scale factor based on video resolution relative to 540p baseline
 function getResolutionScale(pikaResolution: string): number {
@@ -1432,7 +1433,7 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  // OpenAI client initialized lazily in _shared/openai.ts
 
   let runId: string;
   try {
@@ -2294,7 +2295,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           },
         ];
 
-        await log("debug", "🔵 AI CALL → model=google/gemini-2.5-flash, tool=generate_platform_metadata", {
+        await log("debug", `🔵 AI CALL → model=${MODELS.TEXT_CHEAP}, tool=generate_platform_metadata`, {
           platforms: platformsToGenerate,
           messages: metadataPromptMessages.map(m => ({
             role: m.role,
@@ -2302,50 +2303,37 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           })),
         });
 
-        const aiResp = await withRetry(() =>
-          fetch(AI_GATEWAY, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            },
-            body: JSON.stringify({
-              model: "google/gemini-2.5-flash",
-              messages: metadataPromptMessages,
-              tools: [
-                {
-                  type: "function",
-                  function: {
-                    name: "generate_platform_metadata",
-                    description: "Generate per-platform video post metadata",
-                    parameters: {
-                      type: "object",
-                      properties: platformProperties,
-                      required: platformsToGenerate,
-                      additionalProperties: false,
-                    },
-                  },
+        const { callStructured } = await import("../_shared/openai.ts");
+        const platformMetadataResult = await callStructured({
+          messages: metadataPromptMessages as any,
+          model: MODELS.TEXT_CHEAP,
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "generate_platform_metadata",
+                description: "Generate per-platform video post metadata",
+                parameters: {
+                  type: "object",
+                  properties: platformProperties,
+                  required: platformsToGenerate,
+                  additionalProperties: false,
                 },
-              ],
-              tool_choice: { type: "function", function: { name: "generate_platform_metadata" } },
-            }),
-          })
-        );
+              },
+            },
+          ],
+          tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
+          endpoint: "platform_metadata",
+        });
 
-        const metaResult = await aiResp.json();
-        const metaToolCall = metaResult.choices?.[0]?.message?.tool_calls?.[0];
+        const metaToolCall = platformMetadataResult;
 
-        await log("debug", "🟢 AI RESP ← model=google/gemini-2.5-flash", {
-          tool_call: metaToolCall ? {
-            name: metaToolCall.function?.name,
-            args_preview: metaToolCall.function?.arguments?.substring(0, 800),
-          } : null,
-          finish_reason: metaResult?.choices?.[0]?.finish_reason,
-          usage: metaResult?.usage,
+        await log("debug", `🟢 AI RESP ← model=${MODELS.TEXT_CHEAP}`, {
+          result_preview: JSON.stringify(platformMetadataResult).substring(0, 800),
         });
 
         if (metaToolCall) {
-          const platformMetadata = JSON.parse(metaToolCall.function.arguments);
+          const platformMetadata = metaToolCall; // callStructured returns parsed args directly
           // Store per-platform metadata AND keep a fallback title/description from the first platform
           const firstPlatform = platformsToGenerate[0];
           const fallback = platformMetadata[firstPlatform] || {};
