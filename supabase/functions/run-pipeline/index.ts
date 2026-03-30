@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
+import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
