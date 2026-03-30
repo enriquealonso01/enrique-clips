@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  // OpenAI client is initialized lazily in _shared/openai.ts
 
   let runId: string;
   try {
