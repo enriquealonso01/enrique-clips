@@ -230,8 +230,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       size: opts.size || "auto",
       quality: opts.quality || (model === MODELS.IMAGE_FINAL ? "high" : "medium"),
       n: opts.n || 1,
-      response_format: "b64_json",
-    });
+    } as any);
 
     const latency = Date.now() - start;
     logUsage({ endpoint, model, success: true, latency_ms: latency });
