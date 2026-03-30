@@ -15,9 +15,9 @@ export const MODELS = {
   /** Premium reasoning — only when needed */
   TEXT_PREMIUM: "gpt-5.4",
   /** Draft image generation */
-  IMAGE_DRAFT: "gpt-image-1",
+  IMAGE_DRAFT: "gpt-image-1-mini",
   /** Final image generation */
-  IMAGE_FINAL: "gpt-image-1",
+  IMAGE_FINAL: "gpt-image-1-mini",
 } as const;
 
 export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
