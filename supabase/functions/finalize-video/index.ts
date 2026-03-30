@@ -2295,7 +2295,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           },
         ];
 
-        await log("debug", "🔵 AI CALL → model=google/gemini-2.5-flash, tool=generate_platform_metadata", {
+        await log("debug", `🔵 AI CALL → model=${MODELS.TEXT_CHEAP}, tool=generate_platform_metadata`, {
           platforms: platformsToGenerate,
           messages: metadataPromptMessages.map(m => ({
             role: m.role,
@@ -2303,46 +2303,33 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           })),
         });
 
-        const aiResp = await withRetry(() =>
-          fetch(AI_GATEWAY, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            },
-            body: JSON.stringify({
-              model: "google/gemini-2.5-flash",
-              messages: metadataPromptMessages,
-              tools: [
-                {
-                  type: "function",
-                  function: {
-                    name: "generate_platform_metadata",
-                    description: "Generate per-platform video post metadata",
-                    parameters: {
-                      type: "object",
-                      properties: platformProperties,
-                      required: platformsToGenerate,
-                      additionalProperties: false,
-                    },
-                  },
+        const { callStructured } = await import("../_shared/openai.ts");
+        const platformMetadataResult = await callStructured({
+          messages: metadataPromptMessages as any,
+          model: MODELS.TEXT_CHEAP,
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "generate_platform_metadata",
+                description: "Generate per-platform video post metadata",
+                parameters: {
+                  type: "object",
+                  properties: platformProperties,
+                  required: platformsToGenerate,
+                  additionalProperties: false,
                 },
-              ],
-              tool_choice: { type: "function", function: { name: "generate_platform_metadata" } },
-            }),
-          })
-        );
+              },
+            },
+          ],
+          tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
+          endpoint: "platform_metadata",
+        });
 
-        const metaResult = await aiResp.json();
-        const metaToolCall = metaResult.choices?.[0]?.message?.tool_calls?.[0];
+        const metaToolCall = platformMetadataResult;
 
-        await log("debug", "🟢 AI RESP ← model=google/gemini-2.5-flash", {
-          tool_call: metaToolCall ? {
-            name: metaToolCall.function?.name,
-            args_preview: metaToolCall.function?.arguments?.substring(0, 800),
-          } : null,
-          finish_reason: metaResult?.choices?.[0]?.finish_reason,
-          usage: metaResult?.usage,
+        await log("debug", `🟢 AI RESP ← model=${MODELS.TEXT_CHEAP}`, {
+          result_preview: JSON.stringify(platformMetadataResult).substring(0, 800),
         });
 
         if (metaToolCall) {
