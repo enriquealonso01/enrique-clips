@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
+import { MODELS } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,7 +8,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
+// OpenAI integration is now handled by _shared/openai.ts
 
 // Compute scale factor based on video resolution relative to 540p baseline
 function getResolutionScale(pikaResolution: string): number {
