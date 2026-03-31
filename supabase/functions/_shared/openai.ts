@@ -23,8 +23,8 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
-const MAX_IMAGE_ATTEMPTS = 4;
-const IMAGE_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const IMAGE_503_RETRY_DELAY_MS = 60_000;
+const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 1; // Limited by edge function timeout (~150s)
 
 class GeminiApiError extends Error {
   status: number;
