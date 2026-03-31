@@ -1,0 +1,1 @@
+DELETE FROM assets WHERE run_id = '3da56adb-e943-4f84-a7d3-8010f70521c0' AND type = 'final_video';
