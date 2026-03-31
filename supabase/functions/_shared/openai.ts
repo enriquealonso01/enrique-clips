@@ -22,6 +22,25 @@ export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | 
 export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
+const MAX_IMAGE_ATTEMPTS = 4;
+const IMAGE_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
+class GeminiApiError extends Error {
+  status: number;
+  bodyPreview: string;
+
+  constructor(status: number, bodyPreview: string) {
+    super(`Gemini API error ${status}: ${bodyPreview}`);
+    this.name = "GeminiApiError";
+    this.status = status;
+    this.bodyPreview = bodyPreview;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getApiKey(): string {
   const key = Deno.env.get("GOOGLE_AI_API_KEY");
@@ -180,22 +199,35 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any): Promise<any> {
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS): Promise<any> {
   const apiKey = getApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini API error ${resp.status}: ${errText.substring(0, 500)}`);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new GeminiApiError(resp.status, errText.substring(0, 500));
+    }
+
+    return resp.json();
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") {
+      throw new Error(`Gemini request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return resp.json();
 }
 
 // ── Text Completion ──────────────────────────────────────
