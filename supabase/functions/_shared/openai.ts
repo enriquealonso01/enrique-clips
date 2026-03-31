@@ -38,6 +38,17 @@ class GeminiApiError extends Error {
   }
 }
 
+/** Thrown when image generation hits a 503 and exhausted per-invocation retries.
+ *  The pipeline should catch this and re-chain to retry later. */
+export class Image503RetryableError extends Error {
+  attempts: number;
+  constructor(attempts: number) {
+    super(`Image generation got 503 after ${attempts} attempt(s). Pipeline should re-chain to retry.`);
+    this.name = "Image503RetryableError";
+    this.attempts = attempts;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
