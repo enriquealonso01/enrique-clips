@@ -936,6 +936,11 @@ Generate the timed text frames.`,
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           generatedCount++;
         } catch (sceneErr) {
+          if (sceneErr instanceof Image503RetryableError) {
+            await log("warn", `Keyframe K${scene.scene_index} got 503 (attempt ${sceneErr.attempts}). Re-chaining to retry in ~60s...`);
+            chainNextStep();
+            return json({ status: "keyframe_503_rechain", run_id: runId });
+          }
           await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           generatedCount++; // Count as processed even if failed, to avoid infinite loop
