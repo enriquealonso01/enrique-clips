@@ -426,66 +426,89 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   const endpoint = opts.endpoint || "image";
   const start = Date.now();
 
-  try {
-    const parts: any[] = [{ text: opts.prompt }];
+  const IMAGE_RETRY_DELAY_MS = 60_000;
 
-    // Support image-to-image by including reference image
-    if (opts.referenceImage) {
-      const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
-      if (base64Match) {
-        parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
-      }
+  const parts: any[] = [{ text: opts.prompt }];
+
+  // Support image-to-image by including reference image
+  if (opts.referenceImage) {
+    const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
+    if (base64Match) {
+      parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
     }
+  }
 
-    const body: any = {
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-        imageConfig: {
-          aspectRatio: sizeToAspectRatio(opts.size),
-          imageSize: qualityToResolution(opts.quality),
-        },
+  const body: any = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseModalities: ["IMAGE"],
+      imageConfig: {
+        aspectRatio: sizeToAspectRatio(opts.size),
+        imageSize: qualityToResolution(opts.quality),
       },
-    };
+    },
+  };
 
-    const result = await geminiRequest(model, body);
-    const latency = Date.now() - start;
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    const attemptStart = Date.now();
+    try {
+      const result = await geminiRequest(model, body);
+      const latency = Date.now() - start;
 
-    const candidate = result.candidates?.[0];
-    const responseParts = candidate?.content?.parts || [];
+      const candidate = result.candidates?.[0];
+      const responseParts = candidate?.content?.parts || [];
 
-    // Find inline image data
-    const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
-    if (!imagePart) {
-      // Check if there's text with error info
-      const textPart = responseParts.find((p: any) => p.text);
-      throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
+      // Find inline image data
+      const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+      if (!imagePart) {
+        const textPart = responseParts.find((p: any) => p.text);
+        throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
+      }
+
+      const usage = result.usageMetadata ? {
+        prompt_tokens: result.usageMetadata.promptTokenCount,
+        completion_tokens: result.usageMetadata.candidatesTokenCount,
+        total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+      } : undefined;
+
+      if (attempt > 1) {
+        console.log(`[AI] Image generation succeeded on attempt ${attempt} after 503 retries`);
+      }
+
+      logUsage({
+        endpoint, model, success: true, latency_ms: latency,
+        prompt_tokens: usage?.prompt_tokens,
+        completion_tokens: usage?.completion_tokens,
+        total_tokens: usage?.total_tokens,
+      });
+
+      return {
+        b64_json: imagePart.inlineData.data,
+        revised_prompt: undefined,
+      };
+    } catch (err) {
+      // Only retry on 503 — unlimited retries with 60s delay
+      if (err instanceof GeminiApiError && err.status === 503) {
+        const latency = Date.now() - attemptStart;
+        console.warn(`[AI] Image 503 on attempt ${attempt} (${latency}ms). Waiting ${IMAGE_RETRY_DELAY_MS / 1000}s before retry...`);
+        logUsage({
+          endpoint: `${endpoint}_retry_${attempt}`, model, success: false, latency_ms: latency,
+          error: `503 retry attempt ${attempt}`,
+        });
+        await sleep(IMAGE_RETRY_DELAY_MS);
+        continue;
+      }
+
+      // Non-503 errors fail immediately
+      const latency = Date.now() - start;
+      logUsage({
+        endpoint, model, success: false, latency_ms: latency,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
     }
-
-    const usage = result.usageMetadata ? {
-      prompt_tokens: result.usageMetadata.promptTokenCount,
-      completion_tokens: result.usageMetadata.candidatesTokenCount,
-      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
-    } : undefined;
-
-    logUsage({
-      endpoint, model, success: true, latency_ms: latency,
-      prompt_tokens: usage?.prompt_tokens,
-      completion_tokens: usage?.completion_tokens,
-      total_tokens: usage?.total_tokens,
-    });
-
-    return {
-      b64_json: imagePart.inlineData.data,
-      revised_prompt: undefined,
-    };
-  } catch (err) {
-    const latency = Date.now() - start;
-    logUsage({
-      endpoint, model, success: false, latency_ms: latency,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
   }
 }
 
