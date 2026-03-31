@@ -1,38 +1,32 @@
 // ═══════════════════════════════════════════════════════════
-// Shared OpenAI Integration Module
-// Direct OpenAI API calls — no gateway proxy
+// Shared Google Gemini Integration Module
+// Direct Gemini REST API calls — no gateway proxy
 // ═══════════════════════════════════════════════════════════
-
-import OpenAI from "npm:openai@4";
 
 // ── Model Routing ────────────────────────────────────────
 
 export const MODELS = {
-  /** Default text model — balanced quality and cost */
-  TEXT_DEFAULT: "gpt-5-mini",
+  /** Default text model — high quality reasoning */
+  TEXT_DEFAULT: "gemini-2.5-pro",
   /** Cheap model for metadata, classification, tagging */
-  TEXT_CHEAP: "gpt-5-nano",
-  /** Premium reasoning — only when needed */
-  TEXT_PREMIUM: "gpt-5",
+  TEXT_CHEAP: "gemini-2.5-flash",
+  /** Premium reasoning — same as default for Gemini */
+  TEXT_PREMIUM: "gemini-2.5-pro",
   /** Draft image generation */
-  IMAGE_DRAFT: "gpt-image-1-mini",
+  IMAGE_DRAFT: "gemini-3-pro-image-preview",
   /** Final image generation */
-  IMAGE_FINAL: "gpt-image-1-mini",
+  IMAGE_FINAL: "gemini-3-pro-image-preview",
 } as const;
 
 export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
 export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
-// ── Client Initialization ────────────────────────────────
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-let _client: OpenAI | null = null;
-
-export function getOpenAIClient(): OpenAI {
-  if (_client) return _client;
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
-  _client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 1 });
-  return _client;
+function getApiKey(): string {
+  const key = Deno.env.get("GOOGLE_AI_API_KEY");
+  if (!key) throw new Error("GOOGLE_AI_API_KEY is not configured");
+  return key;
 }
 
 // ── Usage Logger ─────────────────────────────────────────
@@ -61,7 +55,6 @@ export function getUsageLog(): UsageEntry[] {
 
 // ── JSON Repair ──────────────────────────────────────────
 
-/** Clean markdown fences and parse JSON. Returns null on failure. */
 function tryParseJSON(text: string): any | null {
   const cleaned = text
     .replace(/```json?\s*/g, "")
@@ -70,7 +63,6 @@ function tryParseJSON(text: string): any | null {
   try {
     return JSON.parse(cleaned);
   } catch {
-    // Try to extract JSON array or object
     const match = cleaned.match(/[\[{][\s\S]*[\]}]/);
     if (match) {
       try { return JSON.parse(match[0]); } catch { /* fall through */ }
@@ -79,59 +71,204 @@ function tryParseJSON(text: string): any | null {
   }
 }
 
+// ── OpenAI-to-Gemini Message Conversion ──────────────────
+
+interface OpenAIMessage {
+  role: "system" | "user" | "assistant";
+  content: any;
+}
+
+interface GeminiContent {
+  role: "user" | "model";
+  parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string }; functionCall?: any; functionResponse?: any }>;
+}
+
+function convertMessages(messages: OpenAIMessage[]): { systemInstruction?: { parts: Array<{ text: string }> }; contents: GeminiContent[] } {
+  let systemInstruction: { parts: Array<{ text: string }> } | undefined;
+  const contents: GeminiContent[] = [];
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      // Gemini uses systemInstruction for system messages
+      const text = typeof msg.content === "string" ? msg.content :
+        Array.isArray(msg.content) ? msg.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n") : String(msg.content);
+      if (systemInstruction) {
+        systemInstruction.parts[0].text += "\n\n" + text;
+      } else {
+        systemInstruction = { parts: [{ text }] };
+      }
+      continue;
+    }
+
+    const role = msg.role === "assistant" ? "model" : "user";
+    const parts: GeminiContent["parts"] = [];
+
+    if (typeof msg.content === "string") {
+      parts.push({ text: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.type === "text") {
+          parts.push({ text: part.text });
+        } else if (part.type === "image_url" && part.image_url?.url) {
+          const base64Match = part.image_url.url.match(/^data:([^;]+);base64,(.+)$/s);
+          if (base64Match) {
+            parts.push({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
+          }
+        }
+      }
+    } else {
+      parts.push({ text: String(msg.content) });
+    }
+
+    if (parts.length > 0) {
+      contents.push({ role, parts });
+    }
+  }
+
+  return { systemInstruction, contents };
+}
+
+// ── OpenAI-to-Gemini Tool Conversion ─────────────────────
+
+function convertTools(tools: any[]): any[] {
+  if (!tools || tools.length === 0) return [];
+
+  const functionDeclarations = tools
+    .filter((t: any) => t.type === "function")
+    .map((t: any) => ({
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    }));
+
+  return [{ functionDeclarations }];
+}
+
+function convertToolChoice(toolChoice: any): any {
+  if (!toolChoice) return undefined;
+
+  if (typeof toolChoice === "string") {
+    if (toolChoice === "auto") return { functionCallingConfig: { mode: "AUTO" } };
+    if (toolChoice === "none") return { functionCallingConfig: { mode: "NONE" } };
+    if (toolChoice === "required") return { functionCallingConfig: { mode: "ANY" } };
+  }
+
+  if (toolChoice?.type === "function" && toolChoice?.function?.name) {
+    return {
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: [toolChoice.function.name],
+      },
+    };
+  }
+
+  return undefined;
+}
+
+// ── Gemini API Call ──────────────────────────────────────
+
+async function geminiRequest(model: string, body: any): Promise<any> {
+  const apiKey = getApiKey();
+  const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Gemini API error ${resp.status}: ${errText.substring(0, 500)}`);
+  }
+
+  return resp.json();
+}
+
 // ── Text Completion ──────────────────────────────────────
 
 export interface CallTextOptions {
   messages: Array<{ role: "system" | "user" | "assistant"; content: any }>;
   model?: TextModel;
-  tools?: OpenAI.ChatCompletionTool[];
-  tool_choice?: OpenAI.ChatCompletionToolChoiceOption;
+  tools?: any[];
+  tool_choice?: any;
   temperature?: number;
   max_tokens?: number;
-  /** If true, escalate to premium model on failure */
   premium?: boolean;
-  /** Endpoint name for usage logging */
   endpoint?: string;
 }
 
+// Keep OpenAI-compatible result shape for backward compat
 export interface CallTextResult {
   content: string | null;
-  tool_calls: OpenAI.ChatCompletionMessageToolCall[] | undefined;
-  usage: OpenAI.CompletionUsage | undefined;
-  raw: OpenAI.ChatCompletion;
+  tool_calls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> | undefined;
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+  raw: any;
 }
 
 export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
-  const client = getOpenAIClient();
   const model = opts.model || MODELS.TEXT_DEFAULT;
   const endpoint = opts.endpoint || "text";
   const start = Date.now();
 
   try {
-    const params: OpenAI.ChatCompletionCreateParamsNonStreaming = {
-      model,
-      messages: opts.messages as any,
-      stream: false,
-    };
-    if (opts.tools) params.tools = opts.tools;
-    if (opts.tool_choice) params.tool_choice = opts.tool_choice;
-    if (opts.temperature !== undefined) params.temperature = opts.temperature;
-    if (opts.max_tokens) params.max_tokens = opts.max_tokens;
+    const { systemInstruction, contents } = convertMessages(opts.messages);
 
-    const result = await client.chat.completions.create(params);
+    const body: any = { contents };
+    if (systemInstruction) body.systemInstruction = systemInstruction;
+
+    if (opts.tools && opts.tools.length > 0) {
+      body.tools = convertTools(opts.tools);
+      const toolConfig = convertToolChoice(opts.tool_choice);
+      if (toolConfig) body.toolConfig = toolConfig;
+    }
+
+    if (opts.temperature !== undefined || opts.max_tokens) {
+      body.generationConfig = {};
+      if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
+      if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
+    }
+
+    const result = await geminiRequest(model, body);
     const latency = Date.now() - start;
+
+    const candidate = result.candidates?.[0];
+    const parts = candidate?.content?.parts || [];
+
+    // Extract text content
+    const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text);
+    const content = textParts.length > 0 ? textParts.join("") : null;
+
+    // Extract function calls (convert to OpenAI format)
+    const functionCalls = parts.filter((p: any) => p.functionCall);
+    const tool_calls = functionCalls.length > 0
+      ? functionCalls.map((p: any, i: number) => ({
+          id: `call_${i}`,
+          type: "function" as const,
+          function: {
+            name: p.functionCall.name,
+            arguments: JSON.stringify(p.functionCall.args),
+          },
+        }))
+      : undefined;
+
+    const usage = result.usageMetadata ? {
+      prompt_tokens: result.usageMetadata.promptTokenCount,
+      completion_tokens: result.usageMetadata.candidatesTokenCount,
+      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+    } : undefined;
 
     logUsage({
       endpoint, model, success: true, latency_ms: latency,
-      prompt_tokens: result.usage?.prompt_tokens,
-      completion_tokens: result.usage?.completion_tokens,
-      total_tokens: result.usage?.total_tokens,
+      prompt_tokens: usage?.prompt_tokens,
+      completion_tokens: usage?.completion_tokens,
+      total_tokens: usage?.total_tokens,
     });
 
     return {
-      content: result.choices[0]?.message?.content || null,
-      tool_calls: result.choices[0]?.message?.tool_calls,
-      usage: result.usage,
+      content,
+      tool_calls,
+      usage,
       raw: result,
     };
   } catch (err) {
@@ -141,7 +278,6 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
       error: err instanceof Error ? err.message : String(err),
     });
 
-    // Escalate to premium if allowed and failed
     if (opts.premium && model !== MODELS.TEXT_PREMIUM) {
       console.log(`[AI] Escalating to premium model after failure: ${err}`);
       return callText({ ...opts, model: MODELS.TEXT_PREMIUM, premium: false });
@@ -153,7 +289,6 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
 // ── Structured Text (JSON output with retry) ─────────────
 
 export interface CallStructuredOptions extends CallTextOptions {
-  /** Parse the response as JSON. If parsing fails, retry with repair prompt. */
   parseJSON?: boolean;
 }
 
@@ -198,47 +333,106 @@ export async function callStructured<T = any>(opts: CallStructuredOptions): Prom
   return result.content as any;
 }
 
-// ── Image Generation ─────────────────────────────────────
+// ── Image Generation (Gemini native) ─────────────────────
 
 export interface CallImageOptions {
   prompt: string;
   model?: ImageModel;
-  size?: "1024x1024" | "1024x1536" | "1536x1024" | "auto";
-  quality?: "low" | "medium" | "high" | "auto";
+  size?: string;
+  quality?: string;
   n?: number;
-  /** Endpoint name for usage logging */
   endpoint?: string;
+  /** Optional reference image as base64 data URI for image-to-image */
+  referenceImage?: string;
 }
 
 export interface CallImageResult {
-  /** Base64-encoded image data */
   b64_json: string;
-  /** Revised prompt (if applicable) */
   revised_prompt?: string;
 }
 
+function sizeToAspectRatio(size?: string): string {
+  if (!size || size === "auto") return "9:16";
+  const map: Record<string, string> = {
+    "1024x1024": "1:1",
+    "1024x1536": "2:3",
+    "1536x1024": "3:2",
+    "9:16": "9:16",
+    "16:9": "16:9",
+    "1:1": "1:1",
+    "2:3": "2:3",
+    "3:2": "3:2",
+    "3:4": "3:4",
+    "4:3": "4:3",
+    "4:5": "4:5",
+    "5:4": "5:4",
+  };
+  return map[size] || "9:16";
+}
+
+function qualityToResolution(quality?: string): string {
+  if (quality === "high") return "2K";
+  if (quality === "low") return "512";
+  return "1K"; // medium/default
+}
+
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
-  const client = getOpenAIClient();
   const model = opts.model || MODELS.IMAGE_DRAFT;
   const endpoint = opts.endpoint || "image";
   const start = Date.now();
 
   try {
-    const result = await client.images.generate({
-      model,
-      prompt: opts.prompt,
-      size: opts.size || "auto",
-      quality: opts.quality || (model === MODELS.IMAGE_FINAL ? "high" : "medium"),
-      n: opts.n || 1,
-    } as any);
+    const parts: any[] = [{ text: opts.prompt }];
 
+    // Support image-to-image by including reference image
+    if (opts.referenceImage) {
+      const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
+      if (base64Match) {
+        parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
+      }
+    }
+
+    const body: any = {
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+        imageConfig: {
+          aspectRatio: sizeToAspectRatio(opts.size),
+          imageSize: qualityToResolution(opts.quality),
+        },
+      },
+    };
+
+    const result = await geminiRequest(model, body);
     const latency = Date.now() - start;
-    logUsage({ endpoint, model, success: true, latency_ms: latency });
 
-    const img = result.data[0];
+    const candidate = result.candidates?.[0];
+    const responseParts = candidate?.content?.parts || [];
+
+    // Find inline image data
+    const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+    if (!imagePart) {
+      // Check if there's text with error info
+      const textPart = responseParts.find((p: any) => p.text);
+      throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
+    }
+
+    const usage = result.usageMetadata ? {
+      prompt_tokens: result.usageMetadata.promptTokenCount,
+      completion_tokens: result.usageMetadata.candidatesTokenCount,
+      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+    } : undefined;
+
+    logUsage({
+      endpoint, model, success: true, latency_ms: latency,
+      prompt_tokens: usage?.prompt_tokens,
+      completion_tokens: usage?.completion_tokens,
+      total_tokens: usage?.total_tokens,
+    });
+
     return {
-      b64_json: img.b64_json || "",
-      revised_prompt: img.revised_prompt || undefined,
+      b64_json: imagePart.inlineData.data,
+      revised_prompt: undefined,
     };
   } catch (err) {
     const latency = Date.now() - start;
@@ -285,7 +479,7 @@ export function summarizeAIResponse(result: CallTextResult): any {
   if (result.content) {
     summary.text = result.content.length > 500 ? result.content.substring(0, 500) + "…[truncated]" : result.content;
   }
-  summary.finish_reason = result.raw.choices[0]?.finish_reason;
+  summary.finish_reason = result.raw.candidates?.[0]?.finishReason;
   summary.usage = result.usage;
   return summary;
 }
@@ -302,13 +496,18 @@ export async function callAI(
   timeoutMs = 120000,
   retries = 1
 ): Promise<any> {
-  // Map old model names to new OpenAI models
+  // Map old model names to Gemini models
   const modelMap: Record<string, string> = {
     "google/gemini-2.5-pro": MODELS.TEXT_DEFAULT,
     "google/gemini-2.5-flash": MODELS.TEXT_CHEAP,
     "openai/gpt-5-mini": MODELS.TEXT_DEFAULT,
     "openai/gpt-5": MODELS.TEXT_PREMIUM,
+    "openai/gpt-5-nano": MODELS.TEXT_CHEAP,
+    "gpt-5-mini": MODELS.TEXT_DEFAULT,
+    "gpt-5-nano": MODELS.TEXT_CHEAP,
+    "gpt-5": MODELS.TEXT_PREMIUM,
     "google/gemini-3-pro-image-preview": MODELS.IMAGE_DRAFT,
+    "google/gemini-3.1-flash-image-preview": MODELS.IMAGE_DRAFT,
   };
   const mappedModel = model ? (modelMap[model] || model) : MODELS.TEXT_DEFAULT;
 
@@ -318,14 +517,25 @@ export async function callAI(
       ? messages[0].content.find((p: any) => p.type === "text")?.text || ""
       : String(messages[0]?.content || "");
 
-    const imageModel = mappedModel.startsWith("gpt-image") ? mappedModel as ImageModel : MODELS.IMAGE_DRAFT;
+    // Check for reference image in the messages
+    let referenceImage: string | undefined;
+    for (const msg of messages) {
+      if (Array.isArray(msg.content)) {
+        const imgPart = msg.content.find((p: any) => p.type === "image_url");
+        if (imgPart?.image_url?.url) {
+          referenceImage = imgPart.image_url.url;
+          break;
+        }
+      }
+    }
 
     const imgResult = await callImage({
       prompt: textContent,
-      model: imageModel,
+      model: mappedModel as ImageModel,
       size: "auto",
-      quality: imageModel === MODELS.IMAGE_FINAL ? "high" : "medium",
+      quality: "medium",
       endpoint: "pipeline_image",
+      referenceImage,
     });
 
     // Return in the old format for backward compat
@@ -361,7 +571,7 @@ export async function callAI(
         content: textResult.content,
         tool_calls: textResult.tool_calls,
       },
-      finish_reason: textResult.raw.choices[0]?.finish_reason,
+      finish_reason: textResult.raw.candidates?.[0]?.finishReason || "stop",
     }],
     usage: textResult.usage,
   };
