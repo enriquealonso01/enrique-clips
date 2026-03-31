@@ -13,9 +13,9 @@ export const MODELS = {
   /** Premium reasoning — same as default for Gemini */
   TEXT_PREMIUM: "gemini-2.5-pro",
   /** Draft image generation */
-  IMAGE_DRAFT: "gemini-3-pro-image-preview",
+  IMAGE_DRAFT: "gemini-2.5-flash-preview-image",
   /** Final image generation */
-  IMAGE_FINAL: "gemini-3-pro-image-preview",
+  IMAGE_FINAL: "gemini-2.5-flash-preview-image",
 } as const;
 
 export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
