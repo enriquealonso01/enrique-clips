@@ -268,78 +268,99 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
   const endpoint = opts.endpoint || "text";
   const start = Date.now();
 
-  try {
-    const { systemInstruction, contents } = convertMessages(opts.messages);
+  // Unlimited 503 retry loop with 60s waits
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    try {
+      const { systemInstruction, contents } = convertMessages(opts.messages);
 
-    const body: any = { contents };
-    if (systemInstruction) body.systemInstruction = systemInstruction;
+      const body: any = { contents };
+      if (systemInstruction) body.systemInstruction = systemInstruction;
 
-    if (opts.tools && opts.tools.length > 0) {
-      body.tools = convertTools(opts.tools);
-      const toolConfig = convertToolChoice(opts.tool_choice);
-      if (toolConfig) body.toolConfig = toolConfig;
+      if (opts.tools && opts.tools.length > 0) {
+        body.tools = convertTools(opts.tools);
+        const toolConfig = convertToolChoice(opts.tool_choice);
+        if (toolConfig) body.toolConfig = toolConfig;
+      }
+
+      if (opts.temperature !== undefined || opts.max_tokens) {
+        body.generationConfig = {};
+        if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
+        if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
+      }
+
+      const result = await geminiRequest(model, body);
+      const latency = Date.now() - start;
+
+      const candidate = result.candidates?.[0];
+      const parts = candidate?.content?.parts || [];
+
+      // Extract text content
+      const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text);
+      const content = textParts.length > 0 ? textParts.join("") : null;
+
+      // Extract function calls (convert to OpenAI format)
+      const functionCalls = parts.filter((p: any) => p.functionCall);
+      const tool_calls = functionCalls.length > 0
+        ? functionCalls.map((p: any, i: number) => ({
+            id: `call_${i}`,
+            type: "function" as const,
+            function: {
+              name: p.functionCall.name,
+              arguments: JSON.stringify(p.functionCall.args),
+            },
+          }))
+        : undefined;
+
+      const usage = result.usageMetadata ? {
+        prompt_tokens: result.usageMetadata.promptTokenCount,
+        completion_tokens: result.usageMetadata.candidatesTokenCount,
+        total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+      } : undefined;
+
+      if (attempt > 1) {
+        console.log(`[AI] Text generation succeeded on attempt ${attempt} after 503 retries`);
+      }
+
+      logUsage({
+        endpoint, model, success: true, latency_ms: latency,
+        prompt_tokens: usage?.prompt_tokens,
+        completion_tokens: usage?.completion_tokens,
+        total_tokens: usage?.total_tokens,
+      });
+
+      return {
+        content,
+        tool_calls,
+        usage,
+        raw: result,
+      };
+    } catch (err) {
+      // 503 → wait 60s and retry (unlimited)
+      if (err instanceof GeminiApiError && err.status === 503) {
+        console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 60s before retry...`);
+        logUsage({
+          endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false,
+          latency_ms: Date.now() - start,
+          error: `503 attempt ${attempt}`,
+        });
+        await sleep(60_000);
+        continue;
+      }
+
+      const latency = Date.now() - start;
+      logUsage({
+        endpoint, model, success: false, latency_ms: latency,
+        error: err instanceof Error ? err.message : String(err),
+      });
+
+      if (opts.premium && model !== MODELS.TEXT_PREMIUM) {
+        console.log(`[AI] Escalating to premium model after failure: ${err}`);
+        return callText({ ...opts, model: MODELS.TEXT_PREMIUM, premium: false });
+      }
+      throw err;
     }
-
-    if (opts.temperature !== undefined || opts.max_tokens) {
-      body.generationConfig = {};
-      if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
-      if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
-    }
-
-    const result = await geminiRequest(model, body);
-    const latency = Date.now() - start;
-
-    const candidate = result.candidates?.[0];
-    const parts = candidate?.content?.parts || [];
-
-    // Extract text content
-    const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text);
-    const content = textParts.length > 0 ? textParts.join("") : null;
-
-    // Extract function calls (convert to OpenAI format)
-    const functionCalls = parts.filter((p: any) => p.functionCall);
-    const tool_calls = functionCalls.length > 0
-      ? functionCalls.map((p: any, i: number) => ({
-          id: `call_${i}`,
-          type: "function" as const,
-          function: {
-            name: p.functionCall.name,
-            arguments: JSON.stringify(p.functionCall.args),
-          },
-        }))
-      : undefined;
-
-    const usage = result.usageMetadata ? {
-      prompt_tokens: result.usageMetadata.promptTokenCount,
-      completion_tokens: result.usageMetadata.candidatesTokenCount,
-      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
-    } : undefined;
-
-    logUsage({
-      endpoint, model, success: true, latency_ms: latency,
-      prompt_tokens: usage?.prompt_tokens,
-      completion_tokens: usage?.completion_tokens,
-      total_tokens: usage?.total_tokens,
-    });
-
-    return {
-      content,
-      tool_calls,
-      usage,
-      raw: result,
-    };
-  } catch (err) {
-    const latency = Date.now() - start;
-    logUsage({
-      endpoint, model, success: false, latency_ms: latency,
-      error: err instanceof Error ? err.message : String(err),
-    });
-
-    if (opts.premium && model !== MODELS.TEXT_PREMIUM) {
-      console.log(`[AI] Escalating to premium model after failure: ${err}`);
-      return callText({ ...opts, model: MODELS.TEXT_PREMIUM, premium: false });
-    }
-    throw err;
   }
 }
 
