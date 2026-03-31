@@ -444,6 +444,28 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
     const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
     if (base64Match) {
       parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
+    } else if (opts.referenceImage.startsWith("http")) {
+      // Fetch HTTP URL and convert to base64 for Gemini inlineData
+      try {
+        const imgResp = await fetch(opts.referenceImage);
+        if (imgResp.ok) {
+          const imgBuffer = await imgResp.arrayBuffer();
+          const imgBytes = new Uint8Array(imgBuffer);
+          // Convert to base64
+          let binary = "";
+          for (let i = 0; i < imgBytes.length; i++) {
+            binary += String.fromCharCode(imgBytes[i]);
+          }
+          const b64 = btoa(binary);
+          const mimeType = imgResp.headers.get("content-type") || "image/png";
+          parts.unshift({ inlineData: { mimeType, data: b64 } });
+          console.log(`[AI] Fetched reference image (${(imgBytes.length / 1024).toFixed(0)}KB) for image-to-image chaining`);
+        } else {
+          console.warn(`[AI] Failed to fetch reference image: ${imgResp.status} ${imgResp.statusText}`);
+        }
+      } catch (fetchErr) {
+        console.warn(`[AI] Error fetching reference image: ${(fetchErr as Error).message}`);
+      }
     }
   }
 
