@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
-import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp } from "../_shared/openai.ts";
+import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -459,6 +459,11 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         }
         await updateRun({ progress_pct: 15 });
       } catch (err) {
+        if (err instanceof Image503RetryableError) {
+          await log("warn", `Initial image got 503 (attempt ${err.attempts}). Re-chaining to retry in ~60s...`);
+          chainNextStep();
+          return json({ status: "image_503_rechain", run_id: runId });
+        }
         await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
         await updateRun({ progress_pct: 15 });
       }
@@ -931,6 +936,11 @@ Generate the timed text frames.`,
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           generatedCount++;
         } catch (sceneErr) {
+          if (sceneErr instanceof Image503RetryableError) {
+            await log("warn", `Keyframe K${scene.scene_index} got 503 (attempt ${sceneErr.attempts}). Re-chaining to retry in ~60s...`);
+            chainNextStep();
+            return json({ status: "keyframe_503_rechain", run_id: runId });
+          }
           await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
           generatedCount++; // Count as processed even if failed, to avoid infinite loop

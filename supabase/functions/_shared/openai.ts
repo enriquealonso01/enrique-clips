@@ -23,8 +23,8 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
-const MAX_IMAGE_ATTEMPTS = 4;
-const IMAGE_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+const IMAGE_503_RETRY_DELAY_MS = 60_000;
+const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 1; // Limited by edge function timeout (~150s)
 
 class GeminiApiError extends Error {
   status: number;
@@ -35,6 +35,17 @@ class GeminiApiError extends Error {
     this.name = "GeminiApiError";
     this.status = status;
     this.bodyPreview = bodyPreview;
+  }
+}
+
+/** Thrown when image generation hits a 503 and exhausted per-invocation retries.
+ *  The pipeline should catch this and re-chain to retry later. */
+export class Image503RetryableError extends Error {
+  attempts: number;
+  constructor(attempts: number) {
+    super(`Image generation got 503 after ${attempts} attempt(s). Pipeline should re-chain to retry.`);
+    this.name = "Image503RetryableError";
+    this.attempts = attempts;
   }
 }
 
@@ -426,67 +437,93 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   const endpoint = opts.endpoint || "image";
   const start = Date.now();
 
-  try {
-    const parts: any[] = [{ text: opts.prompt }];
+  const parts: any[] = [{ text: opts.prompt }];
 
-    // Support image-to-image by including reference image
-    if (opts.referenceImage) {
-      const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
-      if (base64Match) {
-        parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
-      }
+  // Support image-to-image by including reference image
+  if (opts.referenceImage) {
+    const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
+    if (base64Match) {
+      parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
     }
-
-    const body: any = {
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-        imageConfig: {
-          aspectRatio: sizeToAspectRatio(opts.size),
-          imageSize: qualityToResolution(opts.quality),
-        },
-      },
-    };
-
-    const result = await geminiRequest(model, body);
-    const latency = Date.now() - start;
-
-    const candidate = result.candidates?.[0];
-    const responseParts = candidate?.content?.parts || [];
-
-    // Find inline image data
-    const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
-    if (!imagePart) {
-      // Check if there's text with error info
-      const textPart = responseParts.find((p: any) => p.text);
-      throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
-    }
-
-    const usage = result.usageMetadata ? {
-      prompt_tokens: result.usageMetadata.promptTokenCount,
-      completion_tokens: result.usageMetadata.candidatesTokenCount,
-      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
-    } : undefined;
-
-    logUsage({
-      endpoint, model, success: true, latency_ms: latency,
-      prompt_tokens: usage?.prompt_tokens,
-      completion_tokens: usage?.completion_tokens,
-      total_tokens: usage?.total_tokens,
-    });
-
-    return {
-      b64_json: imagePart.inlineData.data,
-      revised_prompt: undefined,
-    };
-  } catch (err) {
-    const latency = Date.now() - start;
-    logUsage({
-      endpoint, model, success: false, latency_ms: latency,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
   }
+
+  const body: any = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseModalities: ["IMAGE"],
+      imageConfig: {
+        aspectRatio: sizeToAspectRatio(opts.size),
+        imageSize: qualityToResolution(opts.quality),
+      },
+    },
+  };
+
+  let attempt = 0;
+  while (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
+    attempt++;
+    const attemptStart = Date.now();
+    try {
+      const result = await geminiRequest(model, body);
+      const latency = Date.now() - start;
+
+      const candidate = result.candidates?.[0];
+      const responseParts = candidate?.content?.parts || [];
+
+      const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+      if (!imagePart) {
+        const textPart = responseParts.find((p: any) => p.text);
+        throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
+      }
+
+      const usage = result.usageMetadata ? {
+        prompt_tokens: result.usageMetadata.promptTokenCount,
+        completion_tokens: result.usageMetadata.candidatesTokenCount,
+        total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+      } : undefined;
+
+      if (attempt > 1) {
+        console.log(`[AI] Image generation succeeded on attempt ${attempt} after 503 retry`);
+      }
+
+      logUsage({
+        endpoint, model, success: true, latency_ms: latency,
+        prompt_tokens: usage?.prompt_tokens,
+        completion_tokens: usage?.completion_tokens,
+        total_tokens: usage?.total_tokens,
+      });
+
+      return { b64_json: imagePart.inlineData.data, revised_prompt: undefined };
+    } catch (err) {
+      if (err instanceof GeminiApiError && err.status === 503) {
+        const latency = Date.now() - attemptStart;
+        logUsage({
+          endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false, latency_ms: latency,
+          error: `503 attempt ${attempt}`,
+        });
+
+        if (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
+          console.warn(`[AI] Image 503 on attempt ${attempt}. Waiting ${IMAGE_503_RETRY_DELAY_MS / 1000}s before retry...`);
+          await sleep(IMAGE_503_RETRY_DELAY_MS);
+          continue;
+        }
+
+        // Exhausted per-invocation retries — throw retriable error for pipeline to re-chain
+        console.warn(`[AI] Image 503 persists after ${attempt} attempts. Throwing Image503RetryableError for pipeline re-chain.`);
+        throw new Image503RetryableError(attempt);
+      }
+
+      // Non-503 errors fail immediately
+      const latency = Date.now() - start;
+      logUsage({
+        endpoint, model, success: false, latency_ms: latency,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  // Should not reach here, but safety net
+  throw new Image503RetryableError(attempt);
 }
 
 // ── Summarization helpers (for logging) ──────────────────
