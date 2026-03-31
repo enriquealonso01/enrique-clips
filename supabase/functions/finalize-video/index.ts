@@ -1522,30 +1522,16 @@ Deno.serve(async (req) => {
         if (completedClips.length === 0) {
           await log("warn", "No completed clips — skipping stitch.");
         } else {
-          // Download all clips (batch of 3 for memory management)
-          const clipBuffers: Uint8Array[] = [];
-          for (let i = 0; i < completedClips.length; i += 3) {
-            const batch = completedClips.slice(i, i + 3);
-            const buffers = await Promise.all(
-              batch.map(async (clip: any) => {
-                const { data: urlData } = supabase.storage
-                  .from("project-assets")
-                  .getPublicUrl(clip.supabase_path);
-                const resp = await withRetry(async () => {
-                  const r = await fetch(urlData.publicUrl);
-                  if (!r.ok) throw new Error(`Failed to download clip: ${r.status}`);
-                  return r;
-                }, 5, 2000);
-                return new Uint8Array(await resp.arrayBuffer());
-              })
-            );
-            clipBuffers.push(...buffers);
-            await log("debug", `Downloaded batch ${Math.floor(i / 3) + 1}/${Math.ceil(completedClips.length / 3)}`);
-          }
+          // Build clip URLs (no downloading into memory — Rendi handles everything)
+          const clipUrls: string[] = completedClips.map((clip: any) => {
+            const { data: urlData } = supabase.storage
+              .from("project-assets")
+              .getPublicUrl(clip.supabase_path);
+            return urlData.publicUrl;
+          });
+          await log("info", `Prepared ${clipUrls.length} clip URLs for Rendi concat`);
 
           // Check for tracks via project_tracks junction table (multi-track, random per run)
-          // Use raw SQL with ORDER BY random() LIMIT 1 so Postgres handles randomization
-          // (Math.random() in short-lived edge functions can repeat across cold starts)
           const { data: randomTrackRow } = await supabase
             .rpc('get_random_project_track', { p_project_id: project.id })
             .maybeSingle();
@@ -1578,31 +1564,7 @@ Deno.serve(async (req) => {
             await log("info", `Selected track ${chosenTrackId} for this run (crypto-random)`);
           }
           
-          let finalVideo: Uint8Array;
-          if (clipBuffers.length === 1) {
-            // Single clip: if selected track exists, strip to video-only to remove generator audio
-            if (hasSelectedTrack) {
-              try {
-                finalVideo = concatenateMP4(clipBuffers, { videoOnly: true });
-                await log("info", "Single clip — stripped to video-only for music mux.");
-              } catch (stripErr) {
-                await log("warn", `Single clip strip failed: ${stripErr.message} — using original.`);
-                finalVideo = clipBuffers[0];
-              }
-            } else {
-              finalVideo = clipBuffers[0];
-              await log("info", "Single clip — using directly as final video.");
-            }
-          } else {
-            await log("info", `Concatenating ${clipBuffers.length} clips via MP4 remuxer...`);
-            try {
-              finalVideo = concatenateMP4(clipBuffers, { videoOnly: hasSelectedTrack });
-              await log("info", `MP4 remux succeeded${hasSelectedTrack ? " (video-only)" : ""}. Output: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-            } catch (concatErr) {
-              await log("warn", `MP4 remux failed: ${concatErr.message} — using first clip as fallback.`);
-              finalVideo = clipBuffers[0];
-            }
-          }
+          let finalVideo: Uint8Array | null = null;
 
           // Resolve selected track once (used by compose and mux fallback)
           let selectedTrack: { supabase_path: string; title: string } | null = null;
@@ -1627,6 +1589,9 @@ Deno.serve(async (req) => {
           const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
           const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
 
+          // ── ALL-IN-ONE RENDI PIPELINE: concat + overlays + audio ──
+          // Instead of downloading clips into memory (OOM risk), pass all clip URLs
+          // to Rendi and let FFmpeg handle concat + post-production in a single job.
           try {
             const { data: overlays } = await supabase
               .from("overlays")
@@ -1747,25 +1712,16 @@ Deno.serve(async (req) => {
               await log("info", `${voiceoverOverlays.length} overlay(s) have voiceover_enabled but project voiceover is disabled in config`);
             }
 
-            const needsPostProd = hasOverlays || hasSelectedTrack || voiceoverAudioPaths.length > 0;
-
             const tempCleanupPaths: string[] = [];
 
-            if (needsPostProd && RENDI_API_KEY) {
-              await log("info", `Rendi post-production: ${textOverlays.length} text overlay(s), ${imageOverlays.length} image overlay(s), music=${hasSelectedTrack ? "yes" : "no"}`);
+            if (RENDI_API_KEY) {
+              await log("info", `Rendi all-in-one: ${clipUrls.length} clips to concat, ${textOverlays.length} text overlay(s), ${imageOverlays.length} image overlay(s), music=${hasSelectedTrack ? "yes" : "no"}`);
 
-              // Upload base video for Rendi access
-              const tempVideoPath = `${project.id}/final/${runId}/pre-rendi-${Date.now()}.mp4`;
-              await supabase.storage
-                .from("project-assets")
-                .upload(tempVideoPath, finalVideo, { contentType: "video/mp4", upsert: true });
-              tempCleanupPaths.push(tempVideoPath);
-              const { data: tempVideoUrl } = supabase.storage.from("project-assets").getPublicUrl(tempVideoPath);
-
-              // Build input_files map for Rendi
-              const inputFiles: Record<string, string> = {
-                in_video: tempVideoUrl.publicUrl,
-              };
+              // Build input_files map for Rendi — one input per clip
+              const inputFiles: Record<string, string> = {};
+              for (let ci = 0; ci < clipUrls.length; ci++) {
+                inputFiles[`in_clip${String(ci).padStart(3, "0")}`] = clipUrls[ci];
+              }
 
               // Add Anton font for text overlays (condensed bold, social-media / game-style)
               const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FAnton-Regular.ttf";
@@ -1799,11 +1755,24 @@ Deno.serve(async (req) => {
               // Media inputs exclude font (font is referenced via fontfile=, not -i)
               const mediaInputKeys = sortedInputKeys.filter((k) => k !== "in_font");
               const getInputIndex = (key: string): number => mediaInputKeys.indexOf(key);
-              const videoInputIdx = getInputIndex("in_video");
+
+              // Build concat filter: all clip inputs → single video stream
+              const clipInputIdxes = clipUrls.map((_, ci) => getInputIndex(`in_clip${String(ci).padStart(3, "0")}`));
 
               // Build FFmpeg filter_complex
               const filterParts: string[] = [];
-              let currentVideoLabel = `${videoInputIdx}:v`;
+
+              // Concat filter: [0:v][0:a][1:v][1:a]...concat=n=N:v=1:a=1[cv][ca]
+              // If hasSelectedTrack, we strip audio (video-only concat) and add music later
+              if (hasSelectedTrack) {
+                const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v]`).join("");
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[concatv]`);
+              } else {
+                // Try to concat with audio — if clips have audio, preserve it
+                const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v][${idx}:a]`).join("");
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[concatv][concata]`);
+              }
+              let currentVideoLabel = "concatv";
               let filterIdx = 0;
 
               // Image overlays: chain overlay filters
@@ -1921,7 +1890,7 @@ Deno.serve(async (req) => {
                   voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
                   voMixInputs.push("[base_audio]");
                 } else {
-                  voFilterParts.push(`[${videoInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voFilterParts.push(`[concata]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
                   voMixInputs.push("[base_audio]");
                 }
 
@@ -1951,21 +1920,27 @@ Deno.serve(async (req) => {
               if (filterParts.length > 0) {
                 const filterComplex = filterParts.join(";");
                 if (hasVO) {
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
                 } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
                 } else {
-                  // Keep original clip audio when no replacement music track is selected
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${videoInputIdx}:a? -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
+                  // Keep concatenated clip audio when no replacement music track is selected
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart -y {{out_1}}`;
                 }
               } else if (hasSelectedTrack && selectedTrackUrl) {
-                // No overlays, just audio merge
+                // No overlays, just concat + audio merge
                 const audioInputIdx = getInputIndex("in_audio");
-                ffmpegCmd = `${inputArgs} -map ${videoInputIdx}:v -map ${audioInputIdx}:a -c:v copy -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                const filterComplex = filterParts.join(";");
+                ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
               } else {
-                // Nothing to do
-                ffmpegCmd = "";
+                // No overlays, no music — just concat
+                if (clipUrls.length === 1) {
+                  ffmpegCmd = ""; // single clip, no processing needed
+                } else {
+                  const filterComplex = filterParts.join(";");
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart -y {{out_1}}`;
+                }
               }
 
               if (ffmpegCmd) {
@@ -2026,8 +2001,8 @@ Deno.serve(async (req) => {
                       const dlResp = await fetch(outputUrl);
                       if (!dlResp.ok) throw new Error(`Rendi output download failed: ${dlResp.status}`);
                       finalVideo = new Uint8Array(await dlResp.arrayBuffer());
-                      rendiSuccess = true;
                       await log("info", `Rendi post-production succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
+                      rendiSuccess = true;
                       break;
                     }
 
@@ -2042,42 +2017,31 @@ Deno.serve(async (req) => {
                     throw new Error("Rendi command timed out after 3 minutes.");
                   }
                 } catch (rendiErr) {
-                  await log("warn", `Rendi failed: ${(rendiErr as Error).message} — falling back to local processing.`);
-
-                  // Fallback: local mux for audio (overlays are lost but audio is preserved)
-                  if (hasSelectedTrack && selectedTrackUrl) {
-                    try {
-                      const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
-                      if (!mp3Resp.ok) throw new Error(`Download failed: ${mp3Resp.status}`);
-                      const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
-                      finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
-                      await log("info", `Local MP3 mux fallback succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                    } catch (localErr) {
-                      await log("error", `Local MP3 mux also failed: ${(localErr as Error).message}`);
-                    }
-                  }
-                }
+                await log("warn", `Rendi failed: ${(rendiErr as Error).message} — falling back to single-clip download.`);
               }
-            } else if (needsPostProd && !RENDI_API_KEY) {
-              await log("warn", "RENDI_API_KEY not set — attempting local audio mux only (overlays skipped).");
-              if (hasSelectedTrack && selectedTrackUrl) {
-                try {
-                  const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
-                  if (mp3Resp.ok) {
-                    const mp3Bytes = new Uint8Array(await mp3Resp.arrayBuffer());
-                    finalVideo = muxMP3IntoMP4(finalVideo, mp3Bytes, videoDurationSec);
-                    await log("info", `Local MP3 mux succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB`);
-                  }
-                } catch (localErr) {
-                  await log("error", `Local MP3 mux failed: ${(localErr as Error).message}`);
-                }
+              } else if (clipUrls.length === 1) {
+                // Single clip, no post-production needed — download directly
+                await log("info", "Single clip, no post-production — downloading directly.");
+                const dlResp = await withRetry(async () => {
+                  const r = await fetch(clipUrls[0]);
+                  if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+                  return r;
+                }, 5, 2000);
+                finalVideo = new Uint8Array(await dlResp.arrayBuffer());
               }
+            } else if (!RENDI_API_KEY) {
+              await log("warn", "RENDI_API_KEY not set — downloading single clip as fallback.");
+              const dlResp = await withRetry(async () => {
+                const r = await fetch(clipUrls[0]);
+                if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+                return r;
+              }, 5, 2000);
+              finalVideo = new Uint8Array(await dlResp.arrayBuffer());
             }
 
-            // Hard guarantee: when a selected track exists, final candidate must contain audio.
-            if (hasSelectedTrack && selectedTrackUrl) {
+            // Hard guarantee: when a selected track exists, final candidate must contain audio
+            if (finalVideo && hasSelectedTrack && selectedTrackUrl) {
               if (!hasAudioTrack(finalVideo)) {
-                // One last try with local mux
                 await log("warn", "Final candidate has no audio — last-resort local MP3 mux.");
                 try {
                   const mp3Resp = await withRetry(() => fetch(selectedTrackUrl!));
@@ -2092,6 +2056,17 @@ Deno.serve(async (req) => {
               if (!hasAudioTrack(finalVideo)) {
                 throw new Error("Selected music track is configured, but final output still has no audio after all attempts.");
               }
+            }
+
+            // If Rendi failed and we have no video, download first clip as absolute fallback
+            if (!finalVideo) {
+              await log("warn", "No final video produced — downloading first clip as fallback.");
+              const dlResp = await withRetry(async () => {
+                const r = await fetch(clipUrls[0]);
+                if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+                return r;
+              }, 5, 2000);
+              finalVideo = new Uint8Array(await dlResp.arrayBuffer());
             }
 
             // Cleanup temp files
@@ -2121,7 +2096,7 @@ Deno.serve(async (req) => {
                 scene_count: completedClips.length,
                 source_clips: completedClips.map((c: any) => c.supabase_path),
                 size_bytes: finalVideo.length,
-                concat_method: clipBuffers.length > 1 ? "mp4_remux" : "single_clip",
+                concat_method: clipUrls.length > 1 ? "rendi_concat" : "single_clip",
                 music_track: hasSelectedTrack ? chosenTrackId : null,
               },
             });
