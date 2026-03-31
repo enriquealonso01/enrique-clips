@@ -24,7 +24,8 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
 const IMAGE_503_RETRY_DELAY_MS = 60_000;
-const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 1; // Limited by edge function timeout (~150s)
+// One image request per invocation on 503, then re-chain after 60s (unlimited across invocations)
+const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 0;
 
 class GeminiApiError extends Error {
   status: number;
@@ -529,8 +530,11 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
           continue;
         }
 
-        // Exhausted per-invocation retries — throw retriable error for pipeline to re-chain
-        console.warn(`[AI] Image 503 persists after ${attempt} attempts. Throwing Image503RetryableError for pipeline re-chain.`);
+        // Exhausted per-invocation retries — enforce 60s wait before re-chain
+        console.warn(`[AI] Image 503 persists after ${attempt} attempt(s). Waiting ${IMAGE_503_RETRY_DELAY_MS / 1000}s before re-chain...`);
+        await sleep(IMAGE_503_RETRY_DELAY_MS);
+        // Throw retriable error for pipeline to re-chain (unlimited across invocations)
+        console.warn(`[AI] Throwing Image503RetryableError for pipeline re-chain after 60s wait.`);
         throw new Image503RetryableError(attempt);
       }
 
