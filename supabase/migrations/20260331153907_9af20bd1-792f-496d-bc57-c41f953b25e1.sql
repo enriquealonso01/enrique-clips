@@ -1,0 +1,1 @@
+UPDATE runs SET current_step = 'stitch', progress_pct = 50, status = 'running', finished_at = NULL WHERE id = '3da56adb-e943-4f84-a7d3-8010f70521c0';
