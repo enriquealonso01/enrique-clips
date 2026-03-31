@@ -22,7 +22,7 @@ export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | 
 export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
+const DEFAULT_GEMINI_TIMEOUT_MS = 180_000;
 const IMAGE_503_RETRY_DELAY_MS = 60_000;
 // One image request per invocation on 503, then re-chain after 60s (unlimited across invocations)
 const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 0;
