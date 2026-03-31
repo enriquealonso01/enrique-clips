@@ -459,6 +459,11 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         }
         await updateRun({ progress_pct: 15 });
       } catch (err) {
+        if (err instanceof Image503RetryableError) {
+          await log("warn", `Initial image got 503 (attempt ${err.attempts}). Re-chaining to retry in ~60s...`);
+          chainNextStep();
+          return json({ status: "image_503_rechain", run_id: runId });
+        }
         await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
         await updateRun({ progress_pct: 15 });
       }
