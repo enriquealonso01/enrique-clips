@@ -199,22 +199,35 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any): Promise<any> {
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS): Promise<any> {
   const apiKey = getApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini API error ${resp.status}: ${errText.substring(0, 500)}`);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new GeminiApiError(resp.status, errText.substring(0, 500));
+    }
+
+    return resp.json();
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") {
+      throw new Error(`Gemini request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return resp.json();
 }
 
 // ── Text Completion ──────────────────────────────────────
