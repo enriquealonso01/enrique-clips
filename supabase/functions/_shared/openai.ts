@@ -9,11 +9,11 @@ import OpenAI from "npm:openai@4";
 
 export const MODELS = {
   /** Default text model — balanced quality and cost */
-  TEXT_DEFAULT: "gpt-5.4-mini",
+  TEXT_DEFAULT: "gpt-5-mini",
   /** Cheap model for metadata, classification, tagging */
-  TEXT_CHEAP: "gpt-5.4-nano",
+  TEXT_CHEAP: "gpt-5-nano",
   /** Premium reasoning — only when needed */
-  TEXT_PREMIUM: "gpt-5.4",
+  TEXT_PREMIUM: "gpt-5",
   /** Draft image generation */
   IMAGE_DRAFT: "gpt-image-1-mini",
   /** Final image generation */
