@@ -437,8 +437,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   const endpoint = opts.endpoint || "image";
   const start = Date.now();
 
-  const IMAGE_RETRY_DELAY_MS = 60_000;
-
   const parts: any[] = [{ text: opts.prompt }];
 
   // Support image-to-image by including reference image
@@ -461,7 +459,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   };
 
   let attempt = 0;
-  while (true) {
+  while (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
     attempt++;
     const attemptStart = Date.now();
     try {
@@ -471,7 +469,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       const candidate = result.candidates?.[0];
       const responseParts = candidate?.content?.parts || [];
 
-      // Find inline image data
       const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
       if (!imagePart) {
         const textPart = responseParts.find((p: any) => p.text);
@@ -485,7 +482,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       } : undefined;
 
       if (attempt > 1) {
-        console.log(`[AI] Image generation succeeded on attempt ${attempt} after 503 retries`);
+        console.log(`[AI] Image generation succeeded on attempt ${attempt} after 503 retry`);
       }
 
       logUsage({
@@ -495,21 +492,24 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         total_tokens: usage?.total_tokens,
       });
 
-      return {
-        b64_json: imagePart.inlineData.data,
-        revised_prompt: undefined,
-      };
+      return { b64_json: imagePart.inlineData.data, revised_prompt: undefined };
     } catch (err) {
-      // Only retry on 503 — unlimited retries with 60s delay
       if (err instanceof GeminiApiError && err.status === 503) {
         const latency = Date.now() - attemptStart;
-        console.warn(`[AI] Image 503 on attempt ${attempt} (${latency}ms). Waiting ${IMAGE_RETRY_DELAY_MS / 1000}s before retry...`);
         logUsage({
-          endpoint: `${endpoint}_retry_${attempt}`, model, success: false, latency_ms: latency,
-          error: `503 retry attempt ${attempt}`,
+          endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false, latency_ms: latency,
+          error: `503 attempt ${attempt}`,
         });
-        await sleep(IMAGE_RETRY_DELAY_MS);
-        continue;
+
+        if (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
+          console.warn(`[AI] Image 503 on attempt ${attempt}. Waiting ${IMAGE_503_RETRY_DELAY_MS / 1000}s before retry...`);
+          await sleep(IMAGE_503_RETRY_DELAY_MS);
+          continue;
+        }
+
+        // Exhausted per-invocation retries — throw retriable error for pipeline to re-chain
+        console.warn(`[AI] Image 503 persists after ${attempt} attempts. Throwing Image503RetryableError for pipeline re-chain.`);
+        throw new Image503RetryableError(attempt);
       }
 
       // Non-503 errors fail immediately
@@ -521,6 +521,9 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       throw err;
     }
   }
+
+  // Should not reach here, but safety net
+  throw new Image503RetryableError(attempt);
 }
 
 // ── Summarization helpers (for logging) ──────────────────
