@@ -22,6 +22,25 @@ export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | 
 export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_GEMINI_TIMEOUT_MS = 90_000;
+const MAX_IMAGE_ATTEMPTS = 4;
+const IMAGE_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
+class GeminiApiError extends Error {
+  status: number;
+  bodyPreview: string;
+
+  constructor(status: number, bodyPreview: string) {
+    super(`Gemini API error ${status}: ${bodyPreview}`);
+    this.name = "GeminiApiError";
+    this.status = status;
+    this.bodyPreview = bodyPreview;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getApiKey(): string {
   const key = Deno.env.get("GOOGLE_AI_API_KEY");
