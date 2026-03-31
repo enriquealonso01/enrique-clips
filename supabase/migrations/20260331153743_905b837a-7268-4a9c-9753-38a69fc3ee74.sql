@@ -1,0 +1,1 @@
+UPDATE runs SET progress_pct = 50 WHERE id = '3da56adb-e943-4f84-a7d3-8010f70521c0' AND current_step = 'stitch';

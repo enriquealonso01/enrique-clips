@@ -1920,26 +1920,26 @@ Deno.serve(async (req) => {
               if (filterParts.length > 0) {
                 const filterComplex = filterParts.join(";");
                 if (hasVO) {
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {
                   // Keep concatenated clip audio when no replacement music track is selected
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart -y {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
                 }
               } else if (hasSelectedTrack && selectedTrackUrl) {
                 // No overlays, just concat + audio merge
                 const audioInputIdx = getInputIndex("in_audio");
                 const filterComplex = filterParts.join(";");
-                ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart -y {{out_1}}`;
+                ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
               } else {
                 // No overlays, no music — just concat
                 if (clipUrls.length === 1) {
                   ffmpegCmd = ""; // single clip, no processing needed
                 } else {
                   const filterComplex = filterParts.join(";");
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart -y {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
                 }
               }
 
