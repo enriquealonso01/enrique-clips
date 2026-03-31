@@ -130,6 +130,19 @@ function convertMessages(messages: OpenAIMessage[]): { systemInstruction?: { par
 
 // ── OpenAI-to-Gemini Tool Conversion ─────────────────────
 
+/** Recursively strip `additionalProperties` from a schema object (Gemini doesn't support it) */
+function stripAdditionalProperties(obj: any): any {
+  if (obj === null || obj === undefined || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(stripAdditionalProperties);
+
+  const cleaned: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === "additionalProperties") continue;
+    cleaned[key] = stripAdditionalProperties(value);
+  }
+  return cleaned;
+}
+
 function convertTools(tools: any[]): any[] {
   if (!tools || tools.length === 0) return [];
 
@@ -138,7 +151,7 @@ function convertTools(tools: any[]): any[] {
     .map((t: any) => ({
       name: t.function.name,
       description: t.function.description,
-      parameters: t.function.parameters,
+      parameters: stripAdditionalProperties(t.function.parameters),
     }));
 
   return [{ functionDeclarations }];
