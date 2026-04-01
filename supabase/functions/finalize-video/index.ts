@@ -2060,15 +2060,9 @@ Deno.serve(async (req) => {
               }
             }
 
-            // If Rendi failed and we have no video, download first clip as absolute fallback
+            // If no video was produced, fail the run
             if (!finalVideo) {
-              await log("warn", "No final video produced — downloading first clip as fallback.");
-              const dlResp = await withRetry(async () => {
-                const r = await fetch(clipUrls[0]);
-                if (!r.ok) throw new Error(`Download failed: ${r.status}`);
-                return r;
-              }, 5, 2000);
-              finalVideo = new Uint8Array(await dlResp.arrayBuffer());
+              throw new Error("No final video produced after stitching. Pipeline cannot continue.");
             }
 
             // Cleanup temp files
