@@ -2017,8 +2017,10 @@ Deno.serve(async (req) => {
                     throw new Error("Rendi command timed out after 3 minutes.");
                   }
                 } catch (rendiErr) {
-                await log("warn", `Rendi failed: ${(rendiErr as Error).message} — falling back to single-clip download.`);
-              }
+                  const rendiErrMsg = (rendiErr as Error).message;
+                  await log("error", `Rendi failed: ${rendiErrMsg} — stopping pipeline.`);
+                  throw new Error(`Rendi post-production failed: ${rendiErrMsg}`);
+                }
               } else if (clipUrls.length === 1) {
                 // Single clip, no post-production needed — download directly
                 await log("info", "Single clip, no post-production — downloading directly.");
