@@ -1807,7 +1807,11 @@ Deno.serve(async (req) => {
               // Text overlays: use one drawtext per LINE to avoid newline escaping issues
               // (%{eol} is not a valid FFmpeg token and \n gets swallowed by Rendi API)
               for (const textOv of textOverlays) {
+                // Skip disabled overlays (start_pct === end_pct means zero duration)
+                if (textOv.start_pct === textOv.end_pct) continue;
+
                 const rawText = (textOv.content_text || "");
+                if (!rawText.trim()) continue; // skip empty text overlays
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
                 const lines = wrappedText.split("\n");
