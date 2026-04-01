@@ -1793,11 +1793,11 @@ Deno.serve(async (req) => {
                     `[${imageInputIdx}:v]scale=iw*${resScale.toFixed(2)}:ih*${resScale.toFixed(2)}:flags=lanczos[${scaledImgLabel}]`
                   );
                   filterParts.push(
-                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                   );
                 } else {
                   filterParts.push(
-                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                   );
                 }
                 currentVideoLabel = outLabel;
@@ -1807,7 +1807,11 @@ Deno.serve(async (req) => {
               // Text overlays: use one drawtext per LINE to avoid newline escaping issues
               // (%{eol} is not a valid FFmpeg token and \n gets swallowed by Rendi API)
               for (const textOv of textOverlays) {
+                // Skip disabled overlays (start_pct === end_pct means zero duration)
+                if (textOv.start_pct === textOv.end_pct) continue;
+
                 const rawText = (textOv.content_text || "");
+                if (!rawText.trim()) continue; // skip empty text overlays
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
                 const lines = wrappedText.split("\n");
@@ -1862,7 +1866,7 @@ Deno.serve(async (req) => {
                   const outLabel = `v${filterIdx}`;
 
                   filterParts.push(
-                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable=between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})[${outLabel}]`
+                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
                   );
                   currentVideoLabel = outLabel;
                   filterIdx++;
