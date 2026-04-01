@@ -2331,11 +2331,12 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     }
 
     // ===== STEP 6: PUBLISH =====
-    // Idempotency: skip if publish job already exists
+    // Idempotency: skip if a publish job is already submitted/polling/completed
     const { data: existingJobs } = await supabase
       .from("publish_jobs")
-      .select("id")
+      .select("id, status")
       .eq("run_id", runId)
+      .in("status", ["submitted", "polling", "completed"])
       .limit(1);
     if (existingJobs && existingJobs.length > 0) {
       await log("info", "Publish job already exists — skipping duplicate publish.");
