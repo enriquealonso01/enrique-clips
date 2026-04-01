@@ -1,0 +1,1 @@
+UPDATE runs SET status = 'running', current_step = 'stitch', finished_at = NULL, error_message = NULL WHERE id = '50f472b3-c64c-4769-838c-6fce3d464b6c'

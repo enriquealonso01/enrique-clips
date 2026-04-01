@@ -1862,7 +1862,7 @@ Deno.serve(async (req) => {
                   const outLabel = `v${filterIdx}`;
 
                   filterParts.push(
-                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}]drawtext=text='${lineText}':${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}:enable=between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})[${outLabel}]`
                   );
                   currentVideoLabel = outLabel;
                   filterIdx++;
@@ -2017,8 +2017,10 @@ Deno.serve(async (req) => {
                     throw new Error("Rendi command timed out after 3 minutes.");
                   }
                 } catch (rendiErr) {
-                await log("warn", `Rendi failed: ${(rendiErr as Error).message} — falling back to single-clip download.`);
-              }
+                  const rendiErrMsg = (rendiErr as Error).message;
+                  await log("error", `Rendi failed: ${rendiErrMsg} — stopping pipeline.`);
+                  throw new Error(`Rendi post-production failed: ${rendiErrMsg}`);
+                }
               } else if (clipUrls.length === 1) {
                 // Single clip, no post-production needed — download directly
                 await log("info", "Single clip, no post-production — downloading directly.");
@@ -2058,15 +2060,9 @@ Deno.serve(async (req) => {
               }
             }
 
-            // If Rendi failed and we have no video, download first clip as absolute fallback
+            // If no video was produced, fail the run
             if (!finalVideo) {
-              await log("warn", "No final video produced — downloading first clip as fallback.");
-              const dlResp = await withRetry(async () => {
-                const r = await fetch(clipUrls[0]);
-                if (!r.ok) throw new Error(`Download failed: ${r.status}`);
-                return r;
-              }, 5, 2000);
-              finalVideo = new Uint8Array(await dlResp.arrayBuffer());
+              throw new Error("No final video produced after stitching. Pipeline cannot continue.");
             }
 
             // Cleanup temp files
