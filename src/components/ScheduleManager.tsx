@@ -104,24 +104,42 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Add new schedule */}
-        <div className="flex items-end gap-3">
-          <div className="space-y-2 flex-1">
-            <Label>Time ({timezone})</Label>
-            <Input
-              type="time"
-              value={newTime}
-              onChange={(e) => setNewTime(e.target.value)}
-              className="max-w-[160px]"
-            />
+        <div className="space-y-3">
+          <div className="flex items-end gap-3">
+            <div className="space-y-2 flex-1">
+              <Label>Time ({timezone})</Label>
+              <Input
+                type="time"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                className="max-w-[160px]"
+              />
+            </div>
+            <Button
+              onClick={() => addSchedule.mutate(newTime)}
+              disabled={addSchedule.isPending || newDays.length === 0}
+              size="sm"
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Add
+            </Button>
           </div>
-          <Button
-            onClick={() => addSchedule.mutate(newTime)}
-            disabled={addSchedule.isPending}
-            size="sm"
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            Add
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            {WEEKDAYS.map((day) => (
+              <label key={day.value} className="flex items-center gap-1 text-sm cursor-pointer">
+                <Checkbox
+                  checked={newDays.includes(day.value)}
+                  onCheckedChange={(checked) =>
+                    setNewDays(checked
+                      ? [...newDays, day.value].sort()
+                      : newDays.filter((d) => d !== day.value)
+                    )
+                  }
+                />
+                {day.label}
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Existing schedules */}
