@@ -262,10 +262,14 @@ Deno.serve(async (req) => {
       let memoryBlock = "";
       if (resolvedConfig.memory?.enabled) {
         const lookback = resolvedConfig.memory.lookback_count || 30;
+        const sourceProjectIds: string[] = resolvedConfig.memory.source_project_ids || [];
+        const allProjectIds = [project.id, ...sourceProjectIds];
+
+        // Fetch runs from this project + any source projects, combined by date
         const { data: pastRuns } = await supabase
           .from("runs")
-          .select("topic_summary, created_at")
-          .eq("project_id", project.id)
+          .select("topic_summary, created_at, project_id")
+          .in("project_id", allProjectIds)
           .neq("id", runId)
           .not("topic_summary", "is", null)
           .order("created_at", { ascending: false })
@@ -275,7 +279,7 @@ Deno.serve(async (req) => {
           const memoryInstruction = resolvedConfig.memory.instruction || "Use this history to avoid repeating topics and ensure variety.";
           const topicList = pastRuns.map((r: any, i: number) => `${i + 1}. ${r.topic_summary}`).join("\n");
           memoryBlock = `\n\n=== SERIES MEMORY (last ${pastRuns.length} videos) ===\nINSTRUCTION: ${memoryInstruction}\n\nPrevious video topics:\n${topicList}\n`;
-          await log("info", `Memory loaded: ${pastRuns.length} past topic(s) injected into planner.`);
+          await log("info", `Memory loaded: ${pastRuns.length} past topic(s) from ${allProjectIds.length} project(s) injected into planner.`);
         } else {
           await log("info", "Memory enabled but no past topics found yet.");
         }
