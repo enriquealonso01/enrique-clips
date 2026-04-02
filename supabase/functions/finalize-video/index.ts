@@ -1797,7 +1797,7 @@ Deno.serve(async (req) => {
                   );
                 } else {
                   filterParts.push(
-                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t,${startSec.toFixed(1)},${endSec.toFixed(1)})'[${outLabel}]`
+                    `[${currentVideoLabel}][${imageInputIdx}:v]overlay=${pos}:enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})'[${outLabel}]`
                   );
                 }
                 currentVideoLabel = outLabel;
