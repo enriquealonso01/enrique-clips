@@ -727,6 +727,13 @@ export default function ProjectEditor() {
                   <Label>Facebook Page ID</Label>
                   <Input value={publishDefaults.facebook?.facebook_page_id || ""} onChange={(e) => updatePublishDefault("facebook", "facebook_page_id", e.target.value)} placeholder="Page ID" />
                 </div>
+                <div className="flex items-center justify-between pt-2">
+                  <div>
+                    <Label>Facebook Image Post</Label>
+                    <p className="text-xs text-muted-foreground">Post last keyframe as image post</p>
+                  </div>
+                  <Switch checked={form.facebook_image_post_enabled || false} onCheckedChange={(v) => update("facebook_image_post_enabled", v)} />
+                </div>
               </CardContent>
             </Card>
           )}
