@@ -47,7 +47,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     mutationFn: async (time: string) => {
       const { error } = await supabase
         .from("schedules")
-        .insert({ project_id: projectId, time_utc: time + ":00" });
+        .insert({ project_id: projectId, time_utc: time + ":00", days_of_week: newDays } as any);
       if (error) throw error;
     },
     onSuccess: () => {
