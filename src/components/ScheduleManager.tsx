@@ -68,6 +68,17 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules", projectId] }),
   });
 
+  const updateDays = useMutation({
+    mutationFn: async ({ id, days }: { id: string; days: number[] }) => {
+      const { error } = await supabase
+        .from("schedules")
+        .update({ days_of_week: days } as any)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules", projectId] }),
+  });
+
   const deleteSchedule = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("schedules").delete().eq("id", id);
