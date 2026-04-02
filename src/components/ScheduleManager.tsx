@@ -153,33 +153,58 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
 
+              const scheduleDays: number[] = (schedule as any).days_of_week || [0,1,2,3,4,5,6];
+              const daysLabel = scheduleDays.length === 7
+                ? "Every day"
+                : WEEKDAYS.filter((d) => scheduleDays.includes(d.value)).map((d) => d.label).join(", ");
+
               return (
                 <div
                   key={schedule.id}
-                  className="flex items-center justify-between rounded-lg border p-3"
+                  className="rounded-lg border p-3 space-y-2"
                 >
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={schedule.is_enabled}
-                      onCheckedChange={(checked) =>
-                        toggleSchedule.mutate({ id: schedule.id, enabled: checked })
-                      }
-                    />
-                    <div>
-                      <p className="font-medium text-sm">{timeDisplay}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Last triggered: {lastTriggered}
-                      </p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={schedule.is_enabled}
+                        onCheckedChange={(checked) =>
+                          toggleSchedule.mutate({ id: schedule.id, enabled: checked })
+                        }
+                      />
+                      <div>
+                        <p className="font-medium text-sm">{timeDisplay} · {daysLabel}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Last triggered: {lastTriggered}
+                        </p>
+                      </div>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteSchedule.mutate(schedule.id)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteSchedule.mutate(schedule.id)}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-2 flex-wrap pl-10">
+                    {WEEKDAYS.map((day) => (
+                      <label key={day.value} className="flex items-center gap-1 text-xs cursor-pointer">
+                        <Checkbox
+                          checked={scheduleDays.includes(day.value)}
+                          onCheckedChange={(checked) => {
+                            const updated = checked
+                              ? [...scheduleDays, day.value].sort()
+                              : scheduleDays.filter((d) => d !== day.value);
+                            if (updated.length > 0) {
+                              updateDays.mutate({ id: schedule.id, days: updated });
+                            }
+                          }}
+                        />
+                        {day.label}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               );
             })}
