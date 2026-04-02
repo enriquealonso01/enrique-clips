@@ -1,76 +1,61 @@
 
 
-## Analysis: Why overlays and music keep disappearing
+## Plan: Facebook Image Post Step
 
-The root cause is clear from the logs: **fal.ai's `ffmpeg-api/compose` endpoint is unreliable for this use case**. Every run shows the same pattern:
+### Summary
+Add a new optional pipeline step that publishes the last keyframe as a Facebook image post with an AI-generated caption, after the video publish step. Failures in this step never fail the run. A per-project toggle controls whether it runs.
 
-1. Primary compose (video + overlay SVGs + audio) → fails with "Compose completed without video URL"
-2. Overlay-only fallback → also fails the same way
-3. Music-only merge fallback → sometimes works, sometimes doesn't
-4. Local mux fallback → may succeed for audio but overlays are already lost
+### Database Changes
 
-The SVG-as-video-track approach is fundamentally fragile because fal.ai's compose endpoint treats SVGs inconsistently -- sometimes cropping them, sometimes failing to process them entirely. We have been patching the same brittle pipeline for multiple iterations.
-
-## Alternative approaches (ranked by reliability)
-
-### Option A: Two sequential fal.ai calls instead of one compose (Recommended)
-
-Instead of cramming everything into one compose call, use two separate, well-understood fal.ai endpoints sequentially:
-
-1. **Step 1 -- Burn overlay via `fal-ai/ffmpeg-api` (raw ffmpeg command)**: Use a direct ffmpeg filter command (`overlay` filter with a PNG input) instead of the compose endpoint. Render text overlays as **PNG images** (not SVG -- better compatibility) using a canvas-like approach, upload them, then run a single ffmpeg command: `ffmpeg -i video.mp4 -i overlay.png -filter_complex "[0:v][1:v]overlay=0:0:enable='between(t,start,end)'" output.mp4`
-
-2. **Step 2 -- Mux audio via `fal-ai/ffmpeg-api/merge-audio-video`**: This endpoint has worked before. Use it as the final step after overlays are burned in.
-
-**Why this is better**: Each step does one thing. If overlay burning fails, we still get video+audio. If audio mux fails, we still get video+overlay. No single-point-of-failure compose call.
-
-### Option B: Use fal.ai `ffmpeg-api` with raw command string
-
-Instead of the higher-level `compose` endpoint, use the lower-level fal.ai ffmpeg endpoint that accepts raw ffmpeg command strings. This gives full control over filter chains:
-
-```
-ffmpeg -i input.mp4 -i overlay.png -i music.mp3 \
-  -filter_complex "[0:v][1:v]overlay=0:0:enable='between(t,2,8)'" \
-  -map "[v]" -map 2:a -shortest output.mp4
+**Migration: Add `facebook_image_post_enabled` column to `projects`**
+```sql
+ALTER TABLE public.projects
+  ADD COLUMN facebook_image_post_enabled boolean NOT NULL DEFAULT false;
 ```
 
-This handles overlay + audio in one call but with explicit ffmpeg syntax rather than the abstracted `compose` API.
+No new tables needed — this step is fire-and-forget and logs results to `run_logs`.
 
-### Option C: Local-only processing (no fal.ai for post-production)
+### Backend Changes (finalize-video/index.ts)
 
-Do everything in the edge function using the existing local MP4 muxer:
-- **Overlays**: Skip burning into video entirely. Instead, store overlay metadata and render them **client-side** using an HTML5 `<video>` element with absolutely-positioned DOM overlays on top during playback. For publishing, use a simple ffmpeg drawtext command via fal.ai as a single call.
-- **Audio**: Already have `muxMP3IntoMP4` working locally.
+Insert a new **Step 6b: Facebook Image Post** between the current publish step (Step 6) and the DONE block (~line 2519):
 
-**Tradeoff**: Overlays won't be in the raw MP4 file for social media publishing, but would be visible in-app. A single ffmpeg call for publishing is simpler than the current multi-fallback chain.
+1. **Guard checks** (wrapped in try/catch that never throws to the outer scope):
+   - `project.facebook_image_post_enabled` must be `true`
+   - Facebook must be enabled in `publish_platforms`
+   - Upload-Post API key must be configured
+   - A `facebook_page_id` must exist in `publish_defaults.facebook`
 
-## Recommended plan: Option A (two sequential calls)
+2. **Find last keyframe**: Query `assets` for `type = 'keyframe'` on this run, ordered by `created_at DESC`, take the first one. Get its public URL from storage.
 
-### Changes in `supabase/functions/finalize-video/index.ts`:
+3. **Build image description**: Use the run's `topic_summary`, last scene's `scene_description`, and the keyframe prompt from the last scene to compose a concise image description for the AI.
 
-1. **Replace SVG overlay rendering with PNG rendering**
-   - Generate overlay as a PNG using an offscreen canvas approach (or a simpler SVG-to-PNG via fal.ai's image processing)
-   - Upload the PNG to storage
+4. **Generate Facebook caption**: Call `callText()` (using `MODELS.TEXT_CHEAP` / gemini-2.5-flash) with:
+   - **System prompt**: The full "Facebook Post Text Rules" provided by the user (the compact version)
+   - **User prompt**: The image description assembled above
+   - Parse the response as plain text (no structured output needed)
 
-2. **Replace the unified compose call with two sequential fal.ai calls**
-   - Call 1: `fal-ai/ffmpeg-api` with raw command to overlay PNG onto video using ffmpeg's `overlay` filter
-   - Call 2: `fal-ai/ffmpeg-api/merge-audio-video` to add the music track
-   - Each call is polled independently with the existing robust polling logic
+5. **Upload to Facebook via Upload-Post API**: 
+   - `POST https://api.upload-post.com/api/upload_photos`
+   - `Authorization: Apikey <key>`
+   - Form data: `photos[]` = keyframe image URL, `platform[]` = `facebook`, `title` = generated caption, `user` = profile username, `facebook_page_id` from publish defaults, `facebook_media_type` = `POSTS`, `async_upload` = `true`
 
-3. **Simplify fallback logic**
-   - If overlay call fails → continue with base video (log warning)
-   - If audio mux call fails → fall back to local `muxMP3IntoMP4` (already working)
-   - Remove the complex nested try/catch fallback chain
+6. **Log result**: Log success/failure to `run_logs`. Never throw.
 
-4. **Keep the hard audio guarantee**
-   - The `hasAudioTrack` check + local mux fallback stays as the final safety net
+### Frontend Changes (ProjectEditor.tsx)
 
-### What gets removed:
-- The `runFalCompose` function (no longer needed)
-- The SVG rendering code (replaced with PNG)
-- The triple-nested fallback chain
+In the Facebook Settings card (visible when `platforms.facebook !== false`, ~line 712-731), add a Switch toggle:
 
-### Risk:
-- Low -- each fal.ai call is simple and well-understood
-- Audio has a proven local fallback
-- Overlay failure is graceful (video still publishes)
+```
+Facebook Image Post: [ON/OFF]
+```
+
+Label: "Post last keyframe as image post"
+Maps to `form.facebook_image_post_enabled`.
+
+### Technical Details
+
+- The caption generation uses `MODELS.TEXT_CHEAP` (gemini-2.5-flash) since this is a simple creative writing task — no deep reasoning needed.
+- The Upload-Post `/api/upload_photos` endpoint accepts a URL in `photos[]` — we pass the Supabase public URL of the keyframe image directly.
+- The entire step is wrapped in a try/catch that logs errors but never propagates them, ensuring the run always completes successfully regardless of image post outcome.
+- No schema changes to `publish_jobs` — this is a lightweight side-effect, not a tracked job.
 
