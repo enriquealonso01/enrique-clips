@@ -477,6 +477,7 @@ export type Database = {
       schedules: {
         Row: {
           created_at: string
+          days_of_week: number[]
           id: string
           is_enabled: boolean
           last_triggered_at: string | null
@@ -485,6 +486,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          days_of_week?: number[]
           id?: string
           is_enabled?: boolean
           last_triggered_at?: string | null
@@ -493,6 +495,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          days_of_week?: number[]
           id?: string
           is_enabled?: boolean
           last_triggered_at?: string | null
