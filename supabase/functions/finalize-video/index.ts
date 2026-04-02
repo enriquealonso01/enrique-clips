@@ -48,14 +48,12 @@ function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
 
 function escapeFFmpegDrawtextText(text: string): string {
   return text
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
-    .replace(/,/g, "\\,")
-    .replace(/%/g, "\\%")
-    .replace(/ /g, "\\ ")
-    .replace(/\[/g, "\\[")
-    .replace(/\]/g, "\\]");
+    .replace(/['\[\]]/g, "")        // strip chars that break FFmpeg filter parsing
+    .replace(/,/g, "")              // commas break filter_complex separator
+    .replace(/%/g, "pct")           // percent signs trigger FFmpeg text expansion
+    .replace(/\\/g, "")             // backslashes cause escape confusion
+    .replace(/:/g, " -")            // colons are FFmpeg option separators
+    .replace(/ /g, "\\ ");          // spaces must be escaped in unquoted mode
 }
 
 // Map overlay position to FFmpeg drawtext x/y
