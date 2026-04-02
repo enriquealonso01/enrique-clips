@@ -57,6 +57,90 @@ function getMotionRulesForBehavior(behavior: string): { camera: string; action: 
   return MOTION_GRAMMAR[behavior] || MOTION_GRAMMAR["cinematic_action"];
 }
 
+// ── Keyframe Prompt Compiler ─────────────────────────────
+// Produces compact, scene-specific prompts instead of injecting
+// the full concept, full style bible, and all rule blocks every time.
+
+interface CompiledKeyframePrompt {
+  prompt: string;
+  debugSummary: string;
+}
+
+function compileKeyframePrompt(opts: {
+  sceneIndex: number;
+  totalScenes: number;
+  aspectRatio: string;
+  scene: { scene_title?: string; scene_description?: string; end_keyframe_prompt?: string; scene_behavior?: string; activity_density?: string };
+  prevScene?: { scene_title?: string; scene_description?: string; end_keyframe_prompt?: string } | null;
+  styleBible: Record<string, any>;
+  conceptPrompt: string;
+}): CompiledKeyframePrompt {
+  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt } = opts;
+
+  // 1. Identity lock — compress style bible to core visual anchors
+  const identityParts: string[] = [];
+  if (styleBible.environment_layout) identityParts.push(`Setting: ${styleBible.environment_layout}`);
+  if (styleBible.lighting_palette) identityParts.push(`Light: ${styleBible.lighting_palette}`);
+  if (styleBible.camera_constraints) identityParts.push(`Camera: ${styleBible.camera_constraints}`);
+  if (styleBible.art_style) identityParts.push(`Style: ${styleBible.art_style}`);
+  if (styleBible.character_identity) identityParts.push(`Subject: ${styleBible.character_identity}`);
+  const doNotChange = Array.isArray(styleBible.do_not_change) ? styleBible.do_not_change.slice(0, 4) : [];
+  if (doNotChange.length > 0) identityParts.push(`Lock: ${doNotChange.join(", ")}`);
+  const identityBlock = identityParts.join(". ");
+
+  // 2. Scene delta — what changed vs previous scene
+  let deltaBlock = "";
+  if (prevScene && prevScene.end_keyframe_prompt) {
+    deltaBlock = `Previous scene showed: "${prevScene.scene_title || "prior state"}". ` +
+      `This scene advances to: "${scene.scene_title || "next state"}". ` +
+      `Show clear visual progression from the previous frame.`;
+  } else if (sceneIndex === 1) {
+    deltaBlock = `This is the OPENING frame. Show the initial untouched state.`;
+  }
+
+  // 3. Duplicate prevention — strengthen delta if scene descriptions are too similar
+  if (prevScene?.end_keyframe_prompt && scene.end_keyframe_prompt) {
+    const prevWords = new Set((prevScene.end_keyframe_prompt).toLowerCase().split(/\s+/));
+    const curWords = new Set((scene.end_keyframe_prompt).toLowerCase().split(/\s+/));
+    let overlap = 0;
+    for (const w of curWords) { if (prevWords.has(w) && w.length > 3) overlap++; }
+    const overlapRatio = overlap / Math.max(curWords.size, 1);
+    if (overlapRatio > 0.6) {
+      deltaBlock += ` IMPORTANT: The previous and current scenes are similar — emphasize what is NEW and DIFFERENT. Show measurable environmental change.`;
+    }
+  }
+
+  // 4. Core visual target — the actual scene content
+  const sceneTarget = scene.end_keyframe_prompt || scene.scene_description || "";
+
+  // 5. Minimal constraints (no audio rules, no repeated negatives)
+  const constraints = [
+    "No text, watermarks, or logos",
+    "Match reference image framing and palette exactly",
+  ];
+  if (sceneIndex > 1) {
+    constraints.push("Maintain spatial continuity with previous keyframe");
+  }
+
+  // Build the compiled prompt
+  const prompt = [
+    `Generate a ${aspectRatio} image — keyframe K${sceneIndex} of ${totalScenes}.`,
+    ``,
+    `IDENTITY: ${identityBlock}`,
+    ``,
+    deltaBlock ? `PROGRESSION: ${deltaBlock}` : null,
+    ``,
+    `THIS SCENE: ${sceneTarget}`,
+    ``,
+    `CONSTRAINTS: ${constraints.join(". ")}.`,
+  ].filter(line => line !== null).join("\n");
+
+  return {
+    prompt,
+    debugSummary: `K${sceneIndex}: ${prompt.length} chars (identity=${identityBlock.length}, scene=${sceneTarget.length})`,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -882,20 +966,22 @@ Generate the timed text frames.`,
         await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title}`);
 
         try {
-          // Build keyframe prompt from resolved config template
-          const kfConfig = resolvedConfig.keyframes;
-          const promptText = kfConfig.prompt_template
-            .replace("{aspect_ratio}", project.aspect_ratio || "9:16")
-            .replace("{scene_index}", String(scene.scene_index))
-            .replace("{total_scenes}", String(scenes.length))
-            .replace("{style_bible}", styleBibleText || "Cinematic, high detail, vibrant colors.")
-            .replace("{end_keyframe_prompt}", scene.end_keyframe_prompt || "")
-            .replace("{composition_rules}", kfConfig.composition_rules.map(r => `- ${r}`).join("\n"))
-            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"))
-            .replace("{global_rules}", resolvedConfig.global.rules.map(r => `- ${r}`).join("\n"))
-            .replace("{concept_prompt}", conceptPrompt || "");
+          // Find the previous scene for delta computation
+          const prevScene = scenes.find(s => s.scene_index === scene.scene_index - 1) || null;
 
-          const userContent: any[] = [{ type: "text", text: promptText }];
+          // Compile a compact, scene-specific prompt via the Keyframe Prompt Compiler
+          const compiled = compileKeyframePrompt({
+            sceneIndex: scene.scene_index,
+            totalScenes: scenes.length,
+            aspectRatio: project.aspect_ratio || "9:16",
+            scene,
+            prevScene,
+            styleBible,
+            conceptPrompt: conceptPrompt || "",
+          });
+          await log("debug", `Compiled keyframe prompt: ${compiled.debugSummary}`);
+
+          const userContent: any[] = [{ type: "text", text: compiled.prompt }];
           if (prevKeyframeUrl) {
             userContent.push({ type: "image_url", image_url: { url: prevKeyframeUrl } });
           }
