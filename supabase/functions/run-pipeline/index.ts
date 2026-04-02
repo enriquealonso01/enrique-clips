@@ -966,20 +966,22 @@ Generate the timed text frames.`,
         await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title}`);
 
         try {
-          // Build keyframe prompt from resolved config template
-          const kfConfig = resolvedConfig.keyframes;
-          const promptText = kfConfig.prompt_template
-            .replace("{aspect_ratio}", project.aspect_ratio || "9:16")
-            .replace("{scene_index}", String(scene.scene_index))
-            .replace("{total_scenes}", String(scenes.length))
-            .replace("{style_bible}", styleBibleText || "Cinematic, high detail, vibrant colors.")
-            .replace("{end_keyframe_prompt}", scene.end_keyframe_prompt || "")
-            .replace("{composition_rules}", kfConfig.composition_rules.map(r => `- ${r}`).join("\n"))
-            .replace("{continuity_rules}", kfConfig.continuity_rules.map(r => `- ${r}`).join("\n"))
-            .replace("{global_rules}", resolvedConfig.global.rules.map(r => `- ${r}`).join("\n"))
-            .replace("{concept_prompt}", conceptPrompt || "");
+          // Find the previous scene for delta computation
+          const prevScene = scenes.find(s => s.scene_index === scene.scene_index - 1) || null;
 
-          const userContent: any[] = [{ type: "text", text: promptText }];
+          // Compile a compact, scene-specific prompt via the Keyframe Prompt Compiler
+          const compiled = compileKeyframePrompt({
+            sceneIndex: scene.scene_index,
+            totalScenes: scenes.length,
+            aspectRatio: project.aspect_ratio || "9:16",
+            scene,
+            prevScene,
+            styleBible,
+            conceptPrompt: conceptPrompt || "",
+          });
+          await log("debug", `Compiled keyframe prompt: ${compiled.debugSummary}`);
+
+          const userContent: any[] = [{ type: "text", text: compiled.prompt }];
           if (prevKeyframeUrl) {
             userContent.push({ type: "image_url", image_url: { url: prevKeyframeUrl } });
           }
