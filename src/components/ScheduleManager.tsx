@@ -5,9 +5,20 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Trash2, Clock } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useState } from "react";
+
+const WEEKDAYS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
 
 interface ScheduleManagerProps {
   projectId: string;
@@ -17,6 +28,7 @@ interface ScheduleManagerProps {
 export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const queryClient = useQueryClient();
   const [newTime, setNewTime] = useState("09:00");
+  const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
@@ -35,7 +47,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     mutationFn: async (time: string) => {
       const { error } = await supabase
         .from("schedules")
-        .insert({ project_id: projectId, time_utc: time + ":00" });
+        .insert({ project_id: projectId, time_utc: time + ":00", days_of_week: newDays } as any);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -50,6 +62,17 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
       const { error } = await supabase
         .from("schedules")
         .update({ is_enabled: enabled })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules", projectId] }),
+  });
+
+  const updateDays = useMutation({
+    mutationFn: async ({ id, days }: { id: string; days: number[] }) => {
+      const { error } = await supabase
+        .from("schedules")
+        .update({ days_of_week: days } as any)
         .eq("id", id);
       if (error) throw error;
     },
@@ -81,24 +104,42 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Add new schedule */}
-        <div className="flex items-end gap-3">
-          <div className="space-y-2 flex-1">
-            <Label>Time ({timezone})</Label>
-            <Input
-              type="time"
-              value={newTime}
-              onChange={(e) => setNewTime(e.target.value)}
-              className="max-w-[160px]"
-            />
+        <div className="space-y-3">
+          <div className="flex items-end gap-3">
+            <div className="space-y-2 flex-1">
+              <Label>Time ({timezone})</Label>
+              <Input
+                type="time"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                className="max-w-[160px]"
+              />
+            </div>
+            <Button
+              onClick={() => addSchedule.mutate(newTime)}
+              disabled={addSchedule.isPending || newDays.length === 0}
+              size="sm"
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Add
+            </Button>
           </div>
-          <Button
-            onClick={() => addSchedule.mutate(newTime)}
-            disabled={addSchedule.isPending}
-            size="sm"
-          >
-            <Plus className="mr-1 h-4 w-4" />
-            Add
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            {WEEKDAYS.map((day) => (
+              <label key={day.value} className="flex items-center gap-1 text-sm cursor-pointer">
+                <Checkbox
+                  checked={newDays.includes(day.value)}
+                  onCheckedChange={(checked) =>
+                    setNewDays(checked
+                      ? [...newDays, day.value].sort()
+                      : newDays.filter((d) => d !== day.value)
+                    )
+                  }
+                />
+                {day.label}
+              </label>
+            ))}
+          </div>
         </div>
 
         {/* Existing schedules */}
@@ -112,33 +153,58 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
 
+              const scheduleDays: number[] = (schedule as any).days_of_week || [0,1,2,3,4,5,6];
+              const daysLabel = scheduleDays.length === 7
+                ? "Every day"
+                : WEEKDAYS.filter((d) => scheduleDays.includes(d.value)).map((d) => d.label).join(", ");
+
               return (
                 <div
                   key={schedule.id}
-                  className="flex items-center justify-between rounded-lg border p-3"
+                  className="rounded-lg border p-3 space-y-2"
                 >
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={schedule.is_enabled}
-                      onCheckedChange={(checked) =>
-                        toggleSchedule.mutate({ id: schedule.id, enabled: checked })
-                      }
-                    />
-                    <div>
-                      <p className="font-medium text-sm">{timeDisplay}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Last triggered: {lastTriggered}
-                      </p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={schedule.is_enabled}
+                        onCheckedChange={(checked) =>
+                          toggleSchedule.mutate({ id: schedule.id, enabled: checked })
+                        }
+                      />
+                      <div>
+                        <p className="font-medium text-sm">{timeDisplay} · {daysLabel}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Last triggered: {lastTriggered}
+                        </p>
+                      </div>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => deleteSchedule.mutate(schedule.id)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => deleteSchedule.mutate(schedule.id)}
-                    className="text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-2 flex-wrap pl-10">
+                    {WEEKDAYS.map((day) => (
+                      <label key={day.value} className="flex items-center gap-1 text-xs cursor-pointer">
+                        <Checkbox
+                          checked={scheduleDays.includes(day.value)}
+                          onCheckedChange={(checked) => {
+                            const updated = checked
+                              ? [...scheduleDays, day.value].sort()
+                              : scheduleDays.filter((d) => d !== day.value);
+                            if (updated.length > 0) {
+                              updateDays.mutate({ id: schedule.id, days: updated });
+                            }
+                          }}
+                        />
+                        {day.label}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               );
             })}

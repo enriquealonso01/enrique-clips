@@ -50,6 +50,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Check day-of-week filter
+      const scheduleDays: number[] = schedule.days_of_week || [0,1,2,3,4,5,6];
+      const currentDow = localDate.getDay(); // 0=Sun
+      if (!scheduleDays.includes(currentDow)) {
+        continue;
+      }
+
       // Prevent double-trigger: check if already triggered in this minute
       if (schedule.last_triggered_at) {
         const lastLocal = new Date(

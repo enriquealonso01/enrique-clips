@@ -1,0 +1,1 @@
+ALTER TABLE public.schedules ADD COLUMN days_of_week integer[] NOT NULL DEFAULT ARRAY[0,1,2,3,4,5,6];
