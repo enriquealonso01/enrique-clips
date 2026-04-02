@@ -1793,7 +1793,7 @@ Deno.serve(async (req) => {
                     `[${imageInputIdx}:v]scale=iw*${resScale.toFixed(2)}:ih*${resScale.toFixed(2)}:flags=lanczos[${scaledImgLabel}]`
                   );
                   filterParts.push(
-                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=${pos}:enable=between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})[${outLabel}]`
+                    `[${currentVideoLabel}][${scaledImgLabel}]overlay=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':${pos}[${outLabel}]`
                   );
                 } else {
                   filterParts.push(
