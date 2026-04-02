@@ -66,6 +66,15 @@ interface CompiledKeyframePrompt {
   debugSummary: string;
 }
 
+function summarizeIdentityAnchor(text: string): string {
+  const firstLine = (text || "")
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .find(Boolean) || "";
+
+  return firstLine.replace(/\s+/g, " ").slice(0, 180);
+}
+
 function compileKeyframePrompt(opts: {
   sceneIndex: number;
   totalScenes: number;
@@ -74,8 +83,12 @@ function compileKeyframePrompt(opts: {
   prevScene?: { scene_title?: string; scene_description?: string; end_keyframe_prompt?: string } | null;
   styleBible: Record<string, any>;
   conceptPrompt: string;
+  landmarkName?: string;
+  landmarkLocation?: string;
+  landmarkEra?: string;
+  topicSummary?: string;
 }): CompiledKeyframePrompt {
-  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt } = opts;
+  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary } = opts;
 
   // 1. Identity lock — compress style bible to core visual anchors
   const identityParts: string[] = [];
@@ -86,7 +99,17 @@ function compileKeyframePrompt(opts: {
   if (styleBible.character_identity) identityParts.push(`Subject: ${styleBible.character_identity}`);
   const doNotChange = Array.isArray(styleBible.do_not_change) ? styleBible.do_not_change.slice(0, 4) : [];
   if (doNotChange.length > 0) identityParts.push(`Lock: ${doNotChange.join(", ")}`);
-  const identityBlock = identityParts.join(". ");
+
+  if (identityParts.length === 0) {
+    if (landmarkName) identityParts.push(`Subject: ${landmarkName}`);
+    if (landmarkLocation) identityParts.push(`Place: ${landmarkLocation}`);
+    if (landmarkEra) identityParts.push(`Era: ${landmarkEra}`);
+
+    const identityAnchor = summarizeIdentityAnchor(topicSummary || conceptPrompt);
+    if (identityAnchor) identityParts.push(`Anchor: ${identityAnchor}`);
+  }
+
+  const identityBlock = identityParts.join(". ") || "Keep the same yard layout, build identity, and framing as the reference image.";
 
   // 2. Scene delta — what changed vs previous scene
   let deltaBlock = "";
@@ -326,6 +349,7 @@ Deno.serve(async (req) => {
     ].filter(Boolean).join(", ");
 
     const conceptPrompt = resolvedConfig.global.concept_prompt;
+    const metadataState: Record<string, any> = { ...(((run.generated_metadata as any) || {})) };
 
     // ═══════════════════════════════════════════════════════
     // STEP: plan — initial image + style bible + scene plan
@@ -369,8 +393,90 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Recover style bible from metadata if resuming
-      let styleBible: Record<string, any> = (run.generated_metadata as any)?.style_bible || {};
+      // Recover style bible / subject metadata if resuming
+      let styleBible: Record<string, any> = metadataState.style_bible || {};
+      let landmarkName = metadataState.landmark_name || "";
+      let landmarkLocation = metadataState.landmark_location || "";
+      let landmarkEra = metadataState.landmark_era || "";
+
+      if (!landmarkName && run.topic_summary) {
+        const [summaryName, summaryMeta = ""] = String(run.topic_summary).split(/\s*\(/, 2);
+        const metaParts = summaryMeta
+          .replace(/\)$/g, "")
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
+
+        landmarkName = summaryName.trim();
+        if (!landmarkLocation && metaParts.length > 0) landmarkLocation = metaParts[0];
+        if (!landmarkEra && metaParts.length > 1) landmarkEra = metaParts.slice(1).join(", ");
+      }
+
+      const ensureStyleBible = async () => {
+        if (Object.keys(styleBible).length > 0) return;
+
+        try {
+          const landmarkStyleContext = landmarkName
+            ? `The specific subject is: ${landmarkName}, located at ${landmarkLocation || "unknown location"}, from ${landmarkEra || "unknown era"}. The style bible must be anchored to this exact subject and site.`
+            : "Anchor the style bible to the exact project subject and environment already implied by the series context.";
+          const styleBibleResult = await callAI(
+            [
+              {
+                role: "system",
+                content: `You are a visual consistency director. Given a series concept and a specific chosen landmark, produce a structured "Style Bible" that will be appended to every image and video prompt to maintain perfect consistency across all scenes.`,
+              },
+              {
+                role: "user",
+                content: `${landmarkStyleContext}\n\nSeries concept: ${conceptPrompt || run.topic_summary || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible specifically for ${landmarkName || run.topic_summary || "this series"}.`,
+              },
+            ],
+            [
+              {
+                type: "function",
+                function: {
+                  name: "create_style_bible",
+                  description: "Output a structured style bible for visual consistency",
+                  parameters: {
+                    type: "object",
+                    properties: {
+                      character_identity: { type: "string", description: "Detailed description of main character/subject" },
+                      outfit_description: { type: "string", description: "Exact clothing/outfit description" },
+                      environment_layout: { type: "string", description: "Setting, background elements, spatial layout" },
+                      lighting_palette: { type: "string", description: "Lighting style, color palette, mood" },
+                      camera_constraints: { type: "string", description: "Default camera distance, angle, lens" },
+                      do_not_change: { type: "array", items: { type: "string" }, description: "Elements that must remain identical" },
+                      art_style: { type: "string", description: "Overall art/rendering style" },
+                    },
+                    required: ["character_identity", "outfit_description", "environment_layout", "lighting_palette", "camera_constraints", "do_not_change", "art_style"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+            ],
+            { type: "function", function: { name: "create_style_bible" } }
+          );
+
+          const sbToolCall = styleBibleResult.choices?.[0]?.message?.tool_calls?.[0];
+          if (sbToolCall) {
+            styleBible = JSON.parse(sbToolCall.function.arguments);
+            await log("info", `Style Bible generated for ${landmarkName || run.topic_summary || "series"}`, styleBible);
+            Object.assign(metadataState, {
+              style_bible: styleBible,
+              landmark_name: landmarkName,
+              landmark_location: landmarkLocation,
+              landmark_era: landmarkEra,
+              full_negative_prompt: fullNegativePrompt,
+              resolved_prompt_config: resolvedConfig,
+            });
+            await updateRun({
+              progress_pct: 18,
+              generated_metadata: metadataState,
+            });
+          }
+        } catch (err) {
+          await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
+        }
+      };
 
       if (!scenesAlreadyCreated) {
 
@@ -476,9 +582,9 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
       if (!toolCall) throw new Error("No tool call in plan response");
 
       const scenePlan = JSON.parse(toolCall.function.arguments);
-      const landmarkName = scenePlan.landmark_name || "";
-      const landmarkLocation = scenePlan.landmark_location || "";
-      const landmarkEra = scenePlan.landmark_era || "";
+      landmarkName = scenePlan.landmark_name || landmarkName;
+      landmarkLocation = scenePlan.landmark_location || landmarkLocation;
+      landmarkEra = scenePlan.landmark_era || landmarkEra;
       await log("info", `Planner chose: ${landmarkName} (${landmarkLocation}, ${landmarkEra}) — ${scenePlan.scenes.length} scenes`, scenePlan);
 
       // Save scenes to DB
@@ -513,7 +619,13 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
       // Time-budget guard
       if (Date.now() - planStartTime > 60_000) {
         await log("info", "Plan step time budget reached after scene creation. Re-chaining for image & style bible.");
-        await updateRun({ current_step: "plan", generated_metadata: { landmark_name: landmarkName, landmark_location: landmarkLocation, landmark_era: landmarkEra, resolved_prompt_config: resolvedConfig } });
+        Object.assign(metadataState, {
+          landmark_name: landmarkName,
+          landmark_location: landmarkLocation,
+          landmark_era: landmarkEra,
+          resolved_prompt_config: resolvedConfig,
+        });
+        await updateRun({ current_step: "plan", generated_metadata: metadataState });
         chainNextStep();
         return json({ status: "plan_rechaining_for_images", run_id: runId });
       }
@@ -556,75 +668,15 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         await updateRun({ progress_pct: 15 });
       }
 
-      // ── 1c: Generate Style Bible (now using the SPECIFIC landmark) ──
-      // Time-budget guard
-      if (Date.now() - planStartTime > 80_000) {
+      } // end if (!scenesAlreadyCreated)
+
+      if (Date.now() - planStartTime > 80_000 && Object.keys(styleBible).length === 0) {
         await log("info", "Plan step time budget reached after initial image. Re-chaining for style bible.");
         chainNextStep();
         return json({ status: "plan_rechaining_for_style_bible", run_id: runId });
       }
 
-      try {
-        const landmarkStyleContext = landmarkName
-          ? `The specific subject is: ${landmarkName}, located at ${landmarkLocation}, from ${landmarkEra}. The style bible must be anchored to this exact landmark and its real historical construction site.`
-          : "";
-        const styleBibleResult = await callAI(
-          [
-            {
-              role: "system",
-              content: `You are a visual consistency director. Given a series concept and a specific chosen landmark, produce a structured "Style Bible" that will be appended to every image and video prompt to maintain perfect consistency across all scenes.`,
-            },
-            {
-              role: "user",
-              content: `${landmarkStyleContext}\n\nSeries concept: ${conceptPrompt || "A visually stunning short video series"}\nAspect ratio: ${project.aspect_ratio}\n${resolvedConfig.global.rules.length ? `Rules: ${resolvedConfig.global.rules.join("\n")}` : ""}\n${resolvedConfig.global.negative_prompt ? `Avoid: ${resolvedConfig.global.negative_prompt}` : ""}\n${resolvedConfig.global.style_notes ? `Style notes: ${resolvedConfig.global.style_notes}` : ""}\n\nCreate a detailed style bible specifically for ${landmarkName || "this series"}.`,
-            },
-          ],
-          [
-            {
-              type: "function",
-              function: {
-                name: "create_style_bible",
-                description: "Output a structured style bible for visual consistency",
-                parameters: {
-                  type: "object",
-                  properties: {
-                    character_identity: { type: "string", description: "Detailed description of main character/subject" },
-                    outfit_description: { type: "string", description: "Exact clothing/outfit description" },
-                    environment_layout: { type: "string", description: "Setting, background elements, spatial layout" },
-                    lighting_palette: { type: "string", description: "Lighting style, color palette, mood" },
-                    camera_constraints: { type: "string", description: "Default camera distance, angle, lens" },
-                    do_not_change: { type: "array", items: { type: "string" }, description: "Elements that must remain identical" },
-                    art_style: { type: "string", description: "Overall art/rendering style" },
-                  },
-                  required: ["character_identity", "outfit_description", "environment_layout", "lighting_palette", "camera_constraints", "do_not_change", "art_style"],
-                  additionalProperties: false,
-                },
-              },
-            },
-          ],
-          { type: "function", function: { name: "create_style_bible" } }
-        );
-        const sbToolCall = styleBibleResult.choices?.[0]?.message?.tool_calls?.[0];
-        if (sbToolCall) {
-          styleBible = JSON.parse(sbToolCall.function.arguments);
-          await log("info", `Style Bible generated for ${landmarkName || "series"}`, styleBible);
-          await updateRun({
-            progress_pct: 18,
-            generated_metadata: {
-              style_bible: styleBible,
-              landmark_name: landmarkName,
-              landmark_location: landmarkLocation,
-              landmark_era: landmarkEra,
-              full_negative_prompt: fullNegativePrompt,
-              resolved_prompt_config: resolvedConfig,
-            },
-          });
-        }
-      } catch (err) {
-        await log("warn", `Style Bible generation failed: ${err.message} — continuing without it`);
-      }
-
-      } // end if (!scenesAlreadyCreated)
+      await ensureStyleBible();
 
       // Time-budget guard: if we've used >80s on plan, save and re-chain
       if (Date.now() - planStartTime > 80_000) {
@@ -854,14 +906,18 @@ Generate the timed text frames.`,
       }
 
       // Store style bible + negative prompt + resolved config in metadata for downstream steps
+      Object.assign(metadataState, {
+        style_bible: styleBible,
+        landmark_name: landmarkName,
+        landmark_location: landmarkLocation,
+        landmark_era: landmarkEra,
+        full_negative_prompt: fullNegativePrompt,
+        resolved_prompt_config: resolvedConfig,
+      });
       await updateRun({
         current_step: "keyframes",
         progress_pct: 15,
-        generated_metadata: {
-          style_bible: styleBible,
-          full_negative_prompt: fullNegativePrompt,
-          resolved_prompt_config: resolvedConfig,
-        },
+        generated_metadata: metadataState,
       });
       await log("info", "Plan step complete. Chaining to keyframes step.");
       chainNextStep();
@@ -978,6 +1034,10 @@ Generate the timed text frames.`,
             prevScene,
             styleBible,
             conceptPrompt: conceptPrompt || "",
+            landmarkName: metadata.landmark_name || "",
+            landmarkLocation: metadata.landmark_location || "",
+            landmarkEra: metadata.landmark_era || "",
+            topicSummary: run.topic_summary || "",
           });
           await log("debug", `Compiled keyframe prompt: ${compiled.debugSummary}`);
 
