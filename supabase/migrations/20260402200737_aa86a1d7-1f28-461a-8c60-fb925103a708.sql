@@ -1,0 +1,1 @@
+ALTER TABLE public.projects ADD COLUMN facebook_image_post_enabled boolean NOT NULL DEFAULT false;
