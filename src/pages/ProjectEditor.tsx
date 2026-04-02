@@ -266,11 +266,13 @@ export default function ProjectEditor() {
                 let memoryEnabled = false;
                 let memoryInstruction = "";
                 let lookbackCount = 30;
+                let sourceProjectIds: string[] = [];
                 try {
                   const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
                   memoryEnabled = pcj?.memory?.enabled || false;
                   memoryInstruction = pcj?.memory?.instruction || "";
                   lookbackCount = pcj?.memory?.lookback_count || 30;
+                  sourceProjectIds = pcj?.memory?.source_project_ids || [];
                 } catch {}
 
                 if (!memoryEnabled) return <p className="text-sm text-muted-foreground">Enable the toggle above to configure memory.</p>;
@@ -310,6 +312,18 @@ export default function ProjectEditor() {
                       />
                       <p className="text-xs text-muted-foreground">How many past video topics to include (max 100).</p>
                     </div>
+                    <MemorySourceProjects
+                      currentProjectId={projectId!}
+                      sourceProjectIds={sourceProjectIds}
+                      onChange={(ids) => {
+                        try {
+                          const pcj = JSON.parse(promptConfigText || "{}");
+                          if (!pcj.memory) pcj.memory = { enabled: true, instruction: "", lookback_count: 30 };
+                          pcj.memory.source_project_ids = ids;
+                          setPromptConfigText(JSON.stringify(pcj, null, 2));
+                        } catch {}
+                      }}
+                    />
                   </>
                 );
               })()}
