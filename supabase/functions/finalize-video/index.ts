@@ -2518,6 +2518,126 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
       }
     }
 
+    // ===== STEP 6b: FACEBOOK IMAGE POST (fire-and-forget) =====
+    try {
+      const fbEnabled = (project as any).facebook_image_post_enabled === true;
+      const fbPlatformOn = (project as any).publish_platforms?.facebook !== false;
+      const fbPageId = (project as any).publish_defaults?.facebook?.facebook_page_id;
+      const apiKeyConfigured = (project as any).uploadpost_api_key_configured;
+      const profileUsername = (project as any).uploadpost_profile_username;
+
+      if (fbEnabled && fbPlatformOn && fbPageId && apiKeyConfigured && profileUsername) {
+        await log("info", "Step 6b: Generating Facebook image post from last keyframe...");
+
+        // Find last keyframe
+        const { data: lastKf } = await supabase
+          .from("assets")
+          .select("*")
+          .eq("run_id", runId)
+          .eq("type", "keyframe")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (lastKf) {
+          const kfPublicUrl = supabase.storage.from("project-assets").getPublicUrl(lastKf.supabase_path).data.publicUrl;
+
+          // Build image description from run context
+          const { data: lastScene } = await supabase
+            .from("scenes")
+            .select("scene_description, end_keyframe_prompt, scene_title")
+            .eq("run_id", runId)
+            .order("scene_index", { ascending: false })
+            .limit(1)
+            .single();
+
+          const imageDesc = [
+            run.topic_summary ? `Topic: ${run.topic_summary}` : "",
+            lastScene?.scene_title ? `Scene: ${lastScene.scene_title}` : "",
+            lastScene?.scene_description || "",
+            lastScene?.end_keyframe_prompt ? `Visual: ${lastScene.end_keyframe_prompt}` : "",
+          ].filter(Boolean).join("\n");
+
+          // Generate caption via AI
+          const fbSystemPrompt = `Write a short, highly engaging Facebook caption for a single image post based on the provided image description.
+
+Goal: maximize scroll-stop, curiosity, emotional reaction, comments, and shares.
+
+Rules:
+- Write like a real person on Facebook, not a brand, not a marketer, not AI.
+- Keep it short: 1 to 4 short lines.
+- The first line must be the hook and create immediate curiosity, admiration, disbelief, desire, or emotional pull.
+- Do not waste words describing what is already visible in the image.
+- The caption must create a reaction frame around the image: awe, satisfaction, aspiration, disbelief, curiosity, nostalgia, admiration, or debate.
+- Pick one primary emotional angle only.
+- End with a natural question or opinion trigger that makes commenting feel effortless.
+- Do not use obvious engagement bait like "comment yes," "tag a friend," "like and share," or spammy CTA language.
+- Do not mention AI, prompts, generation, rendering, editing workflow, or anything synthetic.
+- Do not sound corporate, polished, robotic, or overly scripted.
+- Avoid generic filler like "amazing result" unless rewritten in a sharper, more emotionally compelling way.
+- Use conversational, native Facebook phrasing.
+- Match the intensity of the text to the intensity of the image.
+- Do not invent facts not provided in the image description.
+- Keep wording simple, broad, and instantly understandable.
+- Use line breaks for rhythm and readability.
+- Output only the final caption, with no explanation or labels.`;
+
+          const captionResult = await callText({
+            messages: [
+              { role: "system", content: fbSystemPrompt },
+              { role: "user", content: imageDesc },
+            ],
+            model: MODELS.TEXT_CHEAP,
+            temperature: 0.9,
+            max_tokens: 300,
+          });
+
+          const caption = captionResult.text?.trim() || run.topic_summary || "Check this out";
+          await log("info", `Facebook image post caption generated (${caption.length} chars)`);
+
+          // Decrypt API key
+          const encKey = (project as any).uploadpost_api_key_encrypted;
+          let apiKey = encKey;
+          if (encKey && encKey.startsWith("enc:")) {
+            const raw = encKey.slice(4);
+            const decoded = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+            apiKey = new TextDecoder().decode(decoded);
+          }
+
+          // Upload to Facebook via Upload-Post
+          const formData = new FormData();
+          formData.append("user", profileUsername);
+          formData.append("platform[]", "facebook");
+          formData.append("title", caption);
+          formData.append("facebook_page_id", fbPageId);
+          formData.append("facebook_media_type", "POSTS");
+          formData.append("async_upload", "true");
+
+          // Fetch image and append as file
+          const imgResp = await fetch(kfPublicUrl);
+          const imgBlob = await imgResp.blob();
+          formData.append("photos[]", imgBlob, "keyframe.png");
+
+          const uploadResp = await fetch("https://api.upload-post.com/api/upload_photos", {
+            method: "POST",
+            headers: { Authorization: `Apikey ${apiKey}` },
+            body: formData,
+          });
+
+          const uploadResult = await uploadResp.json();
+          if (uploadResp.ok) {
+            await log("info", "Facebook image post submitted successfully", uploadResult);
+          } else {
+            await log("warn", `Facebook image post upload failed: ${JSON.stringify(uploadResult)}`);
+          }
+        } else {
+          await log("warn", "No keyframe found for Facebook image post — skipping.");
+        }
+      }
+    } catch (fbImgErr) {
+      await log("warn", `Facebook image post step failed (non-fatal): ${fbImgErr.message}`);
+    }
+
     // ===== DONE =====
     await updateRun({
       current_step: "done",

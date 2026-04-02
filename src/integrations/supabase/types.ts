@@ -177,6 +177,7 @@ export type Database = {
           aspect_ratio: string
           clip_duration_sec: number
           created_at: string
+          facebook_image_post_enabled: boolean
           id: string
           initial_asset_id: string | null
           is_enabled: boolean
@@ -211,6 +212,7 @@ export type Database = {
           aspect_ratio?: string
           clip_duration_sec?: number
           created_at?: string
+          facebook_image_post_enabled?: boolean
           id?: string
           initial_asset_id?: string | null
           is_enabled?: boolean
@@ -245,6 +247,7 @@ export type Database = {
           aspect_ratio?: string
           clip_duration_sec?: number
           created_at?: string
+          facebook_image_post_enabled?: boolean
           id?: string
           initial_asset_id?: string | null
           is_enabled?: boolean
