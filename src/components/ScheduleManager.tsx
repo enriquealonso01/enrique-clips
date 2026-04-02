@@ -28,6 +28,7 @@ interface ScheduleManagerProps {
 export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const queryClient = useQueryClient();
   const [newTime, setNewTime] = useState("09:00");
+  const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
