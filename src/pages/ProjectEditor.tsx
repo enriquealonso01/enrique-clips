@@ -14,6 +14,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2 } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
+import { MemorySourceProjects } from "@/components/MemorySourceProjects";
 import { ScheduleManager } from "@/components/ScheduleManager";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
@@ -266,11 +267,13 @@ export default function ProjectEditor() {
                 let memoryEnabled = false;
                 let memoryInstruction = "";
                 let lookbackCount = 30;
+                let sourceProjectIds: string[] = [];
                 try {
                   const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
                   memoryEnabled = pcj?.memory?.enabled || false;
                   memoryInstruction = pcj?.memory?.instruction || "";
                   lookbackCount = pcj?.memory?.lookback_count || 30;
+                  sourceProjectIds = pcj?.memory?.source_project_ids || [];
                 } catch {}
 
                 if (!memoryEnabled) return <p className="text-sm text-muted-foreground">Enable the toggle above to configure memory.</p>;
@@ -310,6 +313,18 @@ export default function ProjectEditor() {
                       />
                       <p className="text-xs text-muted-foreground">How many past video topics to include (max 100).</p>
                     </div>
+                    <MemorySourceProjects
+                      currentProjectId={projectId!}
+                      sourceProjectIds={sourceProjectIds}
+                      onChange={(ids) => {
+                        try {
+                          const pcj = JSON.parse(promptConfigText || "{}");
+                          if (!pcj.memory) pcj.memory = { enabled: true, instruction: "", lookback_count: 30 };
+                          pcj.memory.source_project_ids = ids;
+                          setPromptConfigText(JSON.stringify(pcj, null, 2));
+                        } catch {}
+                      }}
+                    />
                   </>
                 );
               })()}
