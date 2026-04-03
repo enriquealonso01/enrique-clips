@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
-import { MODELS } from "../_shared/openai.ts";
+import { MODELS, callText } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
