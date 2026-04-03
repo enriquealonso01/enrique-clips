@@ -2648,7 +2648,7 @@ Rules:
             ],
             model: MODELS.TEXT_CHEAP,
             temperature: 0.9,
-            max_tokens: 300,
+            max_tokens: 1024,
           });
 
           const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
