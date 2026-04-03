@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
-import { MODELS } from "../_shared/openai.ts";
+import { MODELS, callText } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1446,9 +1446,11 @@ Deno.serve(async (req) => {
   // OpenAI client initialized lazily in _shared/openai.ts
 
   let runId: string;
+  let forceFbImagePost = false;
   try {
     const body = await req.json();
     runId = body.run_id;
+    forceFbImagePost = body.force_fb_image_post === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
@@ -1466,6 +1468,63 @@ Deno.serve(async (req) => {
   try {
     const { data: run } = await supabase.from("runs").select("*").eq("id", runId).single();
     if (!run) return json({ error: "Run not found" }, 404);
+    if (forceFbImagePost) {
+      // Skip normal pipeline, just run FB image post step
+      await log("info", "Force-triggered Facebook image post step...");
+      const { data: project } = await supabase.from("projects").select("*").eq("id", run.project_id).single();
+      if (!project) return json({ error: "Project not found" }, 404);
+      try {
+        const platforms = project.publish_platforms as any;
+        const defaults = project.publish_defaults as any;
+        const fbPageId = defaults?.facebook?.facebook_page_id;
+        const profileUsername = project.uploadpost_profile_username;
+        if (!project.facebook_image_post_enabled) { await log("info", "Facebook image post not enabled — skipping."); return json({ status: "skipped" }); }
+        if (platforms?.facebook === false) { await log("info", "Facebook not enabled — skipping."); return json({ status: "skipped" }); }
+        if (!project.uploadpost_api_key_configured || !project.uploadpost_api_key_encrypted) { await log("warn", "Upload-Post API key not configured — skipping."); return json({ status: "skipped" }); }
+        if (!fbPageId || !profileUsername) { await log("warn", "Facebook page ID or profile username missing — skipping."); return json({ status: "skipped" }); }
+
+        const { data: lastKf } = await supabase.from("assets").select("*").eq("run_id", runId).eq("type", "keyframe").order("created_at", { ascending: false }).limit(1).single();
+        if (!lastKf) { await log("warn", "No keyframe found — skipping."); return json({ status: "skipped" }); }
+
+        const kfPublicUrl = supabase.storage.from("project-assets").getPublicUrl(lastKf.supabase_path).data.publicUrl;
+        const { data: lastScene } = await supabase.from("scenes").select("scene_description, end_keyframe_prompt, scene_title").eq("run_id", runId).order("scene_index", { ascending: false }).limit(1).single();
+        const imageDesc = [
+          run.topic_summary ? `Topic: ${run.topic_summary}` : "",
+          lastScene?.scene_title ? `Scene: ${lastScene.scene_title}` : "",
+          lastScene?.scene_description || "",
+          lastScene?.end_keyframe_prompt ? `Visual: ${lastScene.end_keyframe_prompt}` : "",
+        ].filter(Boolean).join("\n");
+
+        const fbSystemPrompt = `Write a short, highly engaging Facebook caption for a single image post based on the provided image description.\n\nGoal: maximize scroll-stop, curiosity, emotional reaction, comments, and shares.\n\nRules:\n- Write like a real person on Facebook, not a brand, not a marketer, not AI.\n- Keep it short: 1 to 4 short lines.\n- The first line must be the hook.\n- Do not waste words describing what is already visible in the image.\n- Pick one primary emotional angle only.\n- End with a natural question or opinion trigger.\n- Do not use obvious engagement bait.\n- Do not mention AI, prompts, generation, rendering, or anything synthetic.\n- Use conversational, native Facebook phrasing.\n- Output only the final caption, with no explanation or labels.`;
+
+        const captionResult = await callText({ messages: [{ role: "system", content: fbSystemPrompt }, { role: "user", content: imageDesc }], model: MODELS.TEXT_CHEAP, temperature: 0.9, max_tokens: 300 });
+        const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
+        await log("info", `Facebook image post caption generated (${caption.length} chars)`);
+
+        const encKey = project.uploadpost_api_key_encrypted;
+        let apiKey = encKey;
+        if (encKey && encKey.startsWith("enc:")) { const raw = encKey.slice(4); const decoded = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0)); apiKey = new TextDecoder().decode(decoded); }
+
+        const formData = new FormData();
+        formData.append("user", profileUsername);
+        formData.append("platform[]", "facebook");
+        formData.append("title", caption);
+        formData.append("facebook_page_id", fbPageId);
+        formData.append("facebook_media_type", "POSTS");
+        formData.append("async_upload", "true");
+        const imgResp = await fetch(kfPublicUrl);
+        const imgBlob = await imgResp.blob();
+        formData.append("photos[]", imgBlob, "keyframe.png");
+
+        const uploadResp = await fetch("https://api.upload-post.com/api/upload_photos", { method: "POST", headers: { Authorization: `Apikey ${apiKey}` }, body: formData });
+        const uploadResult = await uploadResp.json();
+        if (uploadResp.ok) { await log("info", "Facebook image post submitted successfully", uploadResult); } else { await log("warn", `Facebook image post upload failed: ${JSON.stringify(uploadResult)}`); }
+        return json({ status: "fb_image_posted", result: uploadResult });
+      } catch (fbErr) {
+        await log("warn", `Facebook image post step failed: ${fbErr.message}`);
+        return json({ error: fbErr.message }, 500);
+      }
+    }
     if (run.status !== "running") return json({ status: "not_running" });
     if (run.current_step === "done") return json({ status: "already_completed" });
 
@@ -2592,7 +2651,7 @@ Rules:
             max_tokens: 300,
           });
 
-          const caption = captionResult.text?.trim() || run.topic_summary || "Check this out";
+          const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
           await log("info", `Facebook image post caption generated (${caption.length} chars)`);
 
           // Decrypt API key
