@@ -2651,7 +2651,7 @@ Rules:
             max_tokens: 300,
           });
 
-          const caption = captionResult.text?.trim() || run.topic_summary || "Check this out";
+          const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
           await log("info", `Facebook image post caption generated (${caption.length} chars)`);
 
           // Decrypt API key
