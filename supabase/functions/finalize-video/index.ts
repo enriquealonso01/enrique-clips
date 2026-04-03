@@ -1497,7 +1497,7 @@ Deno.serve(async (req) => {
 
         const fbSystemPrompt = `Write a short, highly engaging Facebook caption for a single image post based on the provided image description.\n\nGoal: maximize scroll-stop, curiosity, emotional reaction, comments, and shares.\n\nRules:\n- Write like a real person on Facebook, not a brand, not a marketer, not AI.\n- Keep it short: 1 to 4 short lines.\n- The first line must be the hook.\n- Do not waste words describing what is already visible in the image.\n- Pick one primary emotional angle only.\n- End with a natural question or opinion trigger.\n- Do not use obvious engagement bait.\n- Do not mention AI, prompts, generation, rendering, or anything synthetic.\n- Use conversational, native Facebook phrasing.\n- Output only the final caption, with no explanation or labels.`;
 
-        const captionResult = await callText({ messages: [{ role: "system", content: fbSystemPrompt }, { role: "user", content: imageDesc }], model: MODELS.TEXT_CHEAP, temperature: 0.9, max_tokens: 300 });
+        const captionResult = await callText({ messages: [{ role: "system", content: fbSystemPrompt }, { role: "user", content: imageDesc }], model: MODELS.TEXT_CHEAP, temperature: 0.9, max_tokens: 1024 });
         const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
         await log("info", `Facebook image post caption generated (${caption.length} chars)`);
 
@@ -2648,7 +2648,7 @@ Rules:
             ],
             model: MODELS.TEXT_CHEAP,
             temperature: 0.9,
-            max_tokens: 300,
+            max_tokens: 1024,
           });
 
           const caption = captionResult.content?.trim() || run.topic_summary || "Check this out";
