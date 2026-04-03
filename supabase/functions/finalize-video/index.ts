@@ -1446,9 +1446,11 @@ Deno.serve(async (req) => {
   // OpenAI client initialized lazily in _shared/openai.ts
 
   let runId: string;
+  let forceFbImagePost = false;
   try {
     const body = await req.json();
     runId = body.run_id;
+    forceFbImagePost = body.force_fb_image_post === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
