@@ -1447,10 +1447,12 @@ Deno.serve(async (req) => {
 
   let runId: string;
   let forceFbImagePost = false;
+  let forceRetry = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceFbImagePost = body.force_fb_image_post === true;
+    forceRetry = body.force_retry === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
@@ -1524,6 +1526,13 @@ Deno.serve(async (req) => {
         await log("warn", `Facebook image post step failed: ${fbErr.message}`);
         return json({ error: fbErr.message }, 500);
       }
+    }
+    if (forceRetry && run.status === "failed") {
+      await supabase.from("runs").update({ status: "running", current_step: "stitch", error_message: null, finished_at: null, progress_pct: 70 }).eq("id", runId);
+      run.status = "running";
+      run.current_step = "stitch";
+      run.progress_pct = 70;
+      await log("info", "Force retry: reset run to running/stitch");
     }
     if (run.status !== "running") return json({ status: "not_running" });
     if (run.current_step === "done") return json({ status: "already_completed" });
