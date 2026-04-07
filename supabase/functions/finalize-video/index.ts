@@ -1447,10 +1447,12 @@ Deno.serve(async (req) => {
 
   let runId: string;
   let forceFbImagePost = false;
+  let forceRetry = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceFbImagePost = body.force_fb_image_post === true;
+    forceRetry = body.force_retry === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
