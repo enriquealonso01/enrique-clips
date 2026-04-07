@@ -1527,6 +1527,12 @@ Deno.serve(async (req) => {
         return json({ error: fbErr.message }, 500);
       }
     }
+    if (forceRetry && run.status === "failed") {
+      await supabase.from("runs").update({ status: "running", error_message: null, finished_at: null, progress_pct: 70 }).eq("id", runId);
+      run.status = "running";
+      run.current_step = "stitch";
+      await log("info", "Force retry: reset run to running/stitch");
+    }
     if (run.status !== "running") return json({ status: "not_running" });
     if (run.current_step === "done") return json({ status: "already_completed" });
 
