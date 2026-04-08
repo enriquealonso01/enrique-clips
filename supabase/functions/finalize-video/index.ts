@@ -2412,6 +2412,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     if (skipPublish) {
       await log("info", "skip_publish=true — skipping video publish and Facebook image post.");
     }
+    if (skipPublish) {
+      // skip publish entirely
+    } else {
     // Idempotency: skip if a publish job is already submitted/polling/completed
     const { data: existingJobs } = await supabase
       .from("publish_jobs")
