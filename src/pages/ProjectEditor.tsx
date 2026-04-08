@@ -433,6 +433,123 @@ export default function ProjectEditor() {
               </Collapsible>
             </CardContent>
           </Card>
+
+          {/* AI Config Fix */}
+          <Card>
+            <CardHeader>
+              <Collapsible open={aiFixOpen} onOpenChange={setAiFixOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" className="w-full justify-between p-0 h-auto">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Bot className="h-4 w-4" /> Fix Config with AI
+                    </CardTitle>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${aiFixOpen ? "rotate-180" : ""}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CardDescription className="mt-1">
+                  Describe what went wrong in the last video and let AI surgically fix the JSON config.
+                </CardDescription>
+                <CollapsibleContent>
+                  <CardContent className="px-0 pt-4 space-y-4">
+                    <div className="space-y-2">
+                      <Label>What went wrong?</Label>
+                      <Textarea
+                        value={aiFeedback}
+                        onChange={(e) => setAiFeedback(e.target.value)}
+                        placeholder="e.g. The workers appeared too early in scene 2, the camera was shaking, the reveal didn't feel dramatic enough..."
+                        rows={4}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="ai-rerun"
+                        checked={aiRerunAfterFix}
+                        onCheckedChange={(checked) => setAiRerunAfterFix(checked === true)}
+                      />
+                      <Label htmlFor="ai-rerun" className="text-sm cursor-pointer">
+                        Re-run pipeline without publishing after fix
+                      </Label>
+                    </div>
+                    <Button
+                      onClick={async () => {
+                        if (!aiFeedback.trim()) {
+                          toast({ title: "Error", description: "Please describe what went wrong", variant: "destructive" });
+                          return;
+                        }
+                        if (!promptConfigText.trim()) {
+                          toast({ title: "Error", description: "No JSON config to fix — generate one first", variant: "destructive" });
+                          return;
+                        }
+                        setAiFixLoading(true);
+                        try {
+                          const { data, error } = await supabase.functions.invoke("fix-config", {
+                            body: {
+                              user_feedback: aiFeedback,
+                              current_json: promptConfigText,
+                              documentation: "See PROMPT_CONFIG_REFERENCE.md for the full schema. The JSON must follow the structure documented there.",
+                            },
+                          });
+                          if (error) throw error;
+                          if (data?.error) throw new Error(data.error);
+                          const fixedJson = data.fixed_json;
+                          // Validate
+                          const parsed = JSON.parse(fixedJson);
+                          const validation = validatePromptConfig(parsed);
+                          if (!validation.valid) {
+                            setPromptConfigErrors(validation.errors);
+                            toast({ title: "AI returned invalid config", description: validation.errors[0], variant: "destructive" });
+                            setAiFixLoading(false);
+                            return;
+                          }
+                          setPromptConfigText(fixedJson);
+                          setPromptConfigErrors([]);
+                          setAiFeedback("");
+                          toast({ title: "Config fixed!", description: "AI has updated the JSON config. Review the changes." });
+
+                          // Auto-save and re-run if checked
+                          if (aiRerunAfterFix) {
+                            const { id, created_at, updated_at, ...updates } = form as any;
+                            updates.prompt_config_json = parsed;
+                            await supabase.from("projects").update(updates).eq("id", projectId!);
+                            queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+
+                            // Create a new run
+                            const { data: newRun, error: runErr } = await supabase
+                              .from("runs")
+                              .insert({ project_id: projectId!, status: "queued" as const })
+                              .select()
+                              .single();
+                            if (runErr || !newRun) {
+                              toast({ title: "Error", description: "Failed to create run", variant: "destructive" });
+                            } else {
+                              // Trigger pipeline with skip_publish
+                              await supabase.functions.invoke("run-pipeline", {
+                                body: { run_id: newRun.id, skip_publish: true },
+                              });
+                              toast({ title: "Pipeline started", description: "Running without publish. Check Runs tab for progress." });
+                              queryClient.invalidateQueries({ queryKey: ["project-runs", projectId] });
+                            }
+                          }
+                        } catch (err: any) {
+                          toast({ title: "AI Fix Failed", description: err.message, variant: "destructive" });
+                        } finally {
+                          setAiFixLoading(false);
+                        }
+                      }}
+                      disabled={aiFixLoading || !aiFeedback.trim()}
+                      className="w-full"
+                    >
+                      {aiFixLoading ? (
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fixing with AI...</>
+                      ) : (
+                        <><Bot className="mr-2 h-4 w-4" /> Fix with AI</>
+                      )}
+                    </Button>
+                  </CardContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </CardHeader>
+          </Card>
         </TabsContent>
 
         {/* Video Generator Tab */}
