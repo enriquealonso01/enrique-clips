@@ -337,7 +337,7 @@ Deno.serve(async (req) => {
         started_at: new Date().toISOString(),
         current_step: "plan",
         progress_pct: 0,
-        generated_metadata: { resolved_prompt_config: resolvedConfig },
+        generated_metadata: { resolved_prompt_config: resolvedConfig, ...(skipPublish ? { skip_publish: true } : {}) },
       });
       await log("info", "Pipeline started");
     } else if (run.status !== "running") {
