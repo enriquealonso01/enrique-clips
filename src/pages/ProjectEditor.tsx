@@ -49,7 +49,7 @@ export default function ProjectEditor() {
   const [resolvedPreviewOpen, setResolvedPreviewOpen] = useState(false);
   const [aiFeedback, setAiFeedback] = useState("");
   const [aiFixLoading, setAiFixLoading] = useState(false);
-  const [aiRerunAfterFix, setAiRerunAfterFix] = useState(true);
+  const [aiRerunAfterFix, setAiRerunAfterFix] = useState(false);
   const [aiFixOpen, setAiFixOpen] = useState(false);
   const [aiFixLogs, setAiFixLogs] = useState<string[]>([]);
   const [showFixHistory, setShowFixHistory] = useState(false);
