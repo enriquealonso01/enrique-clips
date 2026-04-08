@@ -176,9 +176,11 @@ Deno.serve(async (req) => {
   // OpenAI client is initialized lazily in _shared/openai.ts
 
   let runId: string;
+  let skipPublish = false;
   try {
     const body = await req.json();
     runId = body.run_id;
+    skipPublish = body.skip_publish === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
