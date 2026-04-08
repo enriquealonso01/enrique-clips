@@ -224,9 +224,9 @@ Deno.serve(async (req) => {
 
     const historyId = historyRow.id;
 
-    try {
-      const currentJson = JSON.stringify(project.prompt_config_json ?? {}, null, 2);
-      const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
+    // Fire-and-forget: return immediately, process in background
+    const currentJson = JSON.stringify(project.prompt_config_json ?? {}, null, 2);
+    const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
 
 ${documentation || "See PROMPT_CONFIG_REFERENCE.md for the full schema."}
 
@@ -238,84 +238,90 @@ ${userFeedback}
 
 ${currentJson}`;
 
-      console.log(`fix-config: Starting ${CLAUDE_OPUS_MODEL} via fal.ai for project ${projectId}`);
+    console.log(`fix-config: Starting ${CLAUDE_OPUS_MODEL} via fal.ai for project ${projectId}`);
 
-      const aiResult = await runFalOpenRouterText({
-        systemPrompt: SYSTEM_PROMPT,
-        prompt: userPrompt,
-        model: CLAUDE_OPUS_MODEL,
-        temperature: 0.2,
-        maxTokens: 16_000,
-        maxWaitMs: FIX_CONFIG_MAX_WAIT_MS,
-        pollIntervalMs: 5_000,
-        onLog: (message) => console.log(`fix-config[${historyId}]: ${message}`),
-      });
+    // Background processing — don't await, return immediately
+    (async () => {
+      try {
+        const aiResult = await runFalOpenRouterText({
+          systemPrompt: SYSTEM_PROMPT,
+          prompt: userPrompt,
+          model: CLAUDE_OPUS_MODEL,
+          temperature: 0.2,
+          maxTokens: 16_000,
+          maxWaitMs: FIX_CONFIG_MAX_WAIT_MS,
+          pollIntervalMs: 5_000,
+          onLog: (message) => console.log(`fix-config[${historyId}]: ${message}`),
+        });
 
-      console.log(`fix-config: Received Claude Opus response (${aiResult.output.length} chars)`);
-      if (aiResult.usage) {
-        console.log(`fix-config: Usage ${JSON.stringify(aiResult.usage)}`);
-      }
-
-      const parsed = parseFixedConfig(aiResult.output);
-
-      const { error: projectUpdateError } = await sb
-        .from("projects")
-        .update({ prompt_config_json: parsed })
-        .eq("id", projectId);
-
-      if (projectUpdateError) {
-        throw new Error(`Failed to save fixed config: ${projectUpdateError.message}`);
-      }
-
-      let runId: string | null = null;
-      if (rerunAfterFix) {
-        const { data: newRun, error: runInsertError } = await sb
-          .from("runs")
-          .insert({ project_id: projectId, status: "queued" as const })
-          .select("id")
-          .single();
-
-        if (runInsertError) {
-          throw new Error(`Fixed config saved, but failed to create re-run: ${runInsertError.message}`);
+        console.log(`fix-config: Received Claude Opus response (${aiResult.output.length} chars)`);
+        if (aiResult.usage) {
+          console.log(`fix-config: Usage ${JSON.stringify(aiResult.usage)}`);
         }
 
-        if (newRun?.id) {
-          runId = newRun.id;
-          const pipelineResponse = await fetch(`${supabaseUrl}/functions/v1/run-pipeline`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${serviceKey}`,
-            },
-            body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
-          });
+        const parsed = parseFixedConfig(aiResult.output);
 
-          if (!pipelineResponse.ok) {
-            const pipelineText = await pipelineResponse.text();
-            console.error(`fix-config: Re-run trigger failed for ${runId}: ${pipelineResponse.status} ${pipelineText}`);
-          } else {
-            console.log(`fix-config: Pipeline triggered without publish (run ${runId})`);
+        const { error: projectUpdateError } = await sb
+          .from("projects")
+          .update({ prompt_config_json: parsed })
+          .eq("id", projectId);
+
+        if (projectUpdateError) {
+          throw new Error(`Failed to save fixed config: ${projectUpdateError.message}`);
+        }
+
+        let runId: string | null = null;
+        if (rerunAfterFix) {
+          const { data: newRun, error: runInsertError } = await sb
+            .from("runs")
+            .insert({ project_id: projectId, status: "queued" as const })
+            .select("id")
+            .single();
+
+          if (runInsertError) {
+            throw new Error(`Fixed config saved, but failed to create re-run: ${runInsertError.message}`);
+          }
+
+          if (newRun?.id) {
+            runId = newRun.id;
+            const pipelineResponse = await fetch(`${supabaseUrl}/functions/v1/run-pipeline`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${serviceKey}`,
+              },
+              body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
+            });
+
+            if (!pipelineResponse.ok) {
+              const pipelineText = await pipelineResponse.text();
+              console.error(`fix-config: Re-run trigger failed for ${runId}: ${pipelineResponse.status} ${pipelineText}`);
+            } else {
+              console.log(`fix-config: Pipeline triggered without publish (run ${runId})`);
+            }
           }
         }
+
+        await sb.from("ai_fix_history").update({
+          status: "completed",
+          result_json: parsed,
+          run_id: runId,
+          error_message: null,
+        }).eq("id", historyId);
+
+        console.log(`fix-config[${historyId}]: Completed successfully`);
+      } catch (processingError) {
+        const message = processingError instanceof Error ? processingError.message : String(processingError);
+        console.error("fix-config processing error:", processingError);
+        await sb.from("ai_fix_history").update({
+          status: "failed",
+          error_message: message,
+        }).eq("id", historyId);
       }
+    })();
 
-      await sb.from("ai_fix_history").update({
-        status: "completed",
-        result_json: parsed,
-        run_id: runId,
-        error_message: null,
-      }).eq("id", historyId);
-
-      return json({ ok: true, history_id: historyId });
-    } catch (processingError) {
-      const message = processingError instanceof Error ? processingError.message : String(processingError);
-      console.error("fix-config processing error:", processingError);
-      await sb.from("ai_fix_history").update({
-        status: "failed",
-        error_message: message,
-      }).eq("id", historyId);
-      return json({ error: message, history_id: historyId }, 500);
-    }
+    // Return immediately — client polls ai_fix_history for status
+    return json({ ok: true, history_id: historyId });
   } catch (err) {
     console.error("fix-config error:", err);
     return json({ error: err instanceof Error ? err.message : String(err) }, 500);
