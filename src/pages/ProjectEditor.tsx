@@ -51,6 +51,7 @@ export default function ProjectEditor() {
   const [aiFixLoading, setAiFixLoading] = useState(false);
   const [aiRerunAfterFix, setAiRerunAfterFix] = useState(true);
   const [aiFixOpen, setAiFixOpen] = useState(false);
+  const [aiFixLogs, setAiFixLogs] = useState<string[]>([]);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
