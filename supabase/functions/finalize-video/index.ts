@@ -2407,6 +2407,11 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     }
 
     // ===== STEP 6: PUBLISH =====
+    // Check skip_publish flag from run metadata
+    const skipPublish = ((run.generated_metadata as any)?.skip_publish === true);
+    if (skipPublish) {
+      await log("info", "skip_publish=true — skipping video publish and Facebook image post.");
+    }
     // Idempotency: skip if a publish job is already submitted/polling/completed
     const { data: existingJobs } = await supabase
       .from("publish_jobs")
