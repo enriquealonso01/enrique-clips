@@ -80,6 +80,23 @@ export default function ProjectEditor() {
     enabled: !!projectId,
   });
 
+  // Fetch AI fix history
+  const { data: fixHistory, refetch: refetchFixHistory } = useQuery({
+    queryKey: ["ai-fix-history", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ai_fix_history" as any)
+        .select("*")
+        .eq("project_id", projectId!)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return data as any[];
+    },
+    enabled: !!projectId && showFixHistory,
+    refetchInterval: showFixHistory ? 5000 : false,
+  });
+
   const KLING_PRESETS = ["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"];
 
   useEffect(() => {
