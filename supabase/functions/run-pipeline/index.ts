@@ -176,9 +176,11 @@ Deno.serve(async (req) => {
   // OpenAI client is initialized lazily in _shared/openai.ts
 
   let runId: string;
+  let skipPublish = false;
   try {
     const body = await req.json();
     runId = body.run_id;
+    skipPublish = body.skip_publish === true;
   } catch {
     return json({ error: "run_id required" }, 400);
   }
@@ -335,7 +337,7 @@ Deno.serve(async (req) => {
         started_at: new Date().toISOString(),
         current_step: "plan",
         progress_pct: 0,
-        generated_metadata: { resolved_prompt_config: resolvedConfig },
+        generated_metadata: { resolved_prompt_config: resolvedConfig, ...(skipPublish ? { skip_publish: true } : {}) },
       });
       await log("info", "Pipeline started");
     } else if (run.status !== "running") {
