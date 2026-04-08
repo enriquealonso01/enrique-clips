@@ -14,6 +14,53 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_fix_history: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          feedback: string
+          id: string
+          project_id: string
+          rerun_triggered: boolean
+          result_json: Json | null
+          run_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          feedback: string
+          id?: string
+          project_id: string
+          rerun_triggered?: boolean
+          result_json?: Json | null
+          run_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          feedback?: string
+          id?: string
+          project_id?: string
+          rerun_triggered?: boolean
+          result_json?: Json | null
+          run_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_fix_history_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       assets: {
         Row: {
           created_at: string

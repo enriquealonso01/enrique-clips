@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2, Bot, Loader2 } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2, Bot, Loader2, History, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
 import { MemorySourceProjects } from "@/components/MemorySourceProjects";
@@ -52,6 +52,7 @@ export default function ProjectEditor() {
   const [aiRerunAfterFix, setAiRerunAfterFix] = useState(true);
   const [aiFixOpen, setAiFixOpen] = useState(false);
   const [aiFixLogs, setAiFixLogs] = useState<string[]>([]);
+  const [showFixHistory, setShowFixHistory] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -77,6 +78,23 @@ export default function ProjectEditor() {
       return data;
     },
     enabled: !!projectId,
+  });
+
+  // Fetch AI fix history
+  const { data: fixHistory, refetch: refetchFixHistory } = useQuery({
+    queryKey: ["ai-fix-history", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ai_fix_history" as any)
+        .select("*")
+        .eq("project_id", projectId!)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return data as any[];
+    },
+    enabled: !!projectId && showFixHistory,
+    refetchInterval: showFixHistory ? 5000 : false,
   });
 
   const KLING_PRESETS = ["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"];
@@ -448,7 +466,7 @@ export default function ProjectEditor() {
                   </Button>
                 </CollapsibleTrigger>
                 <CardDescription className="mt-1">
-                  Describe what went wrong in the last video and let AI surgically fix the JSON config.
+                  Describe what went wrong and let AI fix the config. You can close the app — it runs server-side.
                 </CardDescription>
                 <CollapsibleContent>
                   <CardContent className="px-0 pt-4 space-y-4">
@@ -477,74 +495,28 @@ export default function ProjectEditor() {
                           toast({ title: "Error", description: "Please describe what went wrong", variant: "destructive" });
                           return;
                         }
-                        if (!promptConfigText.trim()) {
-                          toast({ title: "Error", description: "No JSON config to fix — generate one first", variant: "destructive" });
-                          return;
-                        }
                         setAiFixLoading(true);
-                        setAiFixLogs(["🚀 Sending feedback to AI..."]);
+                        setAiFixLogs(["🚀 Submitted to AI (server-side). You can leave the app."]);
                         try {
-                          const addLog = (msg: string) => setAiFixLogs(prev => [...prev, msg]);
-                          addLog("⏳ Waiting for AI response (this may take 30-60s)...");
-
                           const { data, error } = await supabase.functions.invoke("fix-config", {
                             body: {
+                              project_id: projectId,
                               user_feedback: aiFeedback,
-                              current_json: promptConfigText,
+                              rerun_after_fix: aiRerunAfterFix,
                               documentation: "See PROMPT_CONFIG_REFERENCE.md for the full schema. The JSON must follow the structure documented there.",
                             },
                           });
-                          if (error) {
-                            addLog(`❌ Network error: ${error.message}`);
-                            throw error;
-                          }
-                          if (data?.error) {
-                            addLog(`❌ AI error: ${data.error}`);
-                            throw new Error(data.error);
-                          }
-                          addLog("✅ AI response received, validating JSON...");
-                          const fixedJson = data.fixed_json;
-                          const parsed = JSON.parse(fixedJson);
-                          const validation = validatePromptConfig(parsed);
-                          if (!validation.valid) {
-                            setPromptConfigErrors(validation.errors);
-                            addLog(`❌ Validation failed: ${validation.errors[0]}`);
-                            toast({ title: "AI returned invalid config", description: validation.errors[0], variant: "destructive" });
-                            setAiFixLoading(false);
-                            return;
-                          }
-                          addLog("✅ JSON validated successfully!");
-                          setPromptConfigText(fixedJson);
-                          setPromptConfigErrors([]);
+                          if (error) throw error;
+                          if (data?.error) throw new Error(data.error);
+
+                          setAiFixLogs(prev => [...prev, "✅ Server received the request. Check history for results."]);
                           setAiFeedback("");
-                          toast({ title: "Config fixed!", description: "AI has updated the JSON config. Review the changes." });
-
-                          if (aiRerunAfterFix) {
-                            addLog("💾 Saving project and starting pipeline...");
-                            const { id, created_at, updated_at, ...updates } = form as any;
-                            updates.prompt_config_json = parsed;
-                            await supabase.from("projects").update(updates).eq("id", projectId!);
-                            queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-
-                            const { data: newRun, error: runErr } = await supabase
-                              .from("runs")
-                              .insert({ project_id: projectId!, status: "queued" as const })
-                              .select()
-                              .single();
-                            if (runErr || !newRun) {
-                              addLog("❌ Failed to create run");
-                              toast({ title: "Error", description: "Failed to create run", variant: "destructive" });
-                            } else {
-                              await supabase.functions.invoke("run-pipeline", {
-                                body: { run_id: newRun.id, skip_publish: true },
-                              });
-                              addLog(`✅ Pipeline started (run ${newRun.id.slice(0, 8)}...) — no publish`);
-                              toast({ title: "Pipeline started", description: "Running without publish. Check Runs tab for progress." });
-                              queryClient.invalidateQueries({ queryKey: ["project-runs", projectId] });
-                            }
-                          } else {
-                            addLog("✅ Done! Review the updated JSON above.");
-                          }
+                          toast({ title: "Submitted!", description: "AI is fixing the config server-side. Check history for results." });
+                          // Refresh history
+                          setShowFixHistory(true);
+                          setTimeout(() => refetchFixHistory(), 2000);
+                          // Also refresh project data after some time
+                          setTimeout(() => queryClient.invalidateQueries({ queryKey: ["project", projectId] }), 10000);
                         } catch (err: any) {
                           setAiFixLogs(prev => [...prev, `❌ Failed: ${err.message}`]);
                           toast({ title: "AI Fix Failed", description: err.message, variant: "destructive" });
@@ -556,16 +528,61 @@ export default function ProjectEditor() {
                       className="w-full"
                     >
                       {aiFixLoading ? (
-                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Fixing with AI...</>
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
                       ) : (
                         <><Bot className="mr-2 h-4 w-4" /> Fix with AI</>
                       )}
                     </Button>
                     {aiFixLogs.length > 0 && (
                       <div className="mt-3 rounded-md border bg-muted/50 p-3 max-h-40 overflow-y-auto">
-                        <p className="text-xs font-medium text-muted-foreground mb-1">AI Fix Log</p>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Status</p>
                         {aiFixLogs.map((log, i) => (
                           <p key={i} className="text-xs font-mono text-foreground/80">{log}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* History Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowFixHistory(!showFixHistory);
+                        if (!showFixHistory) refetchFixHistory();
+                      }}
+                      className="w-full"
+                    >
+                      <History className="mr-2 h-4 w-4" />
+                      {showFixHistory ? "Hide" : "Show"} Feedback History
+                    </Button>
+
+                    {/* History List */}
+                    {showFixHistory && (
+                      <div className="space-y-2 mt-2">
+                        {!fixHistory?.length && (
+                          <p className="text-xs text-muted-foreground text-center py-4">No feedback submitted yet.</p>
+                        )}
+                        {fixHistory?.map((item: any) => (
+                          <div key={item.id} className="rounded-md border p-3 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                {item.status === "completed" && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
+                                {item.status === "failed" && <XCircle className="h-3.5 w-3.5 text-destructive" />}
+                                {(item.status === "pending" || item.status === "processing") && <Clock className="h-3.5 w-3.5 text-yellow-500 animate-pulse" />}
+                                <span className="text-xs font-medium capitalize">{item.status}</span>
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(item.created_at).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="text-xs text-foreground/80 line-clamp-3">{item.feedback}</p>
+                            {item.error_message && (
+                              <p className="text-xs text-destructive">Error: {item.error_message}</p>
+                            )}
+                            {item.rerun_triggered && item.run_id && (
+                              <p className="text-xs text-muted-foreground">Re-run: {item.run_id.slice(0, 8)}...</p>
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}

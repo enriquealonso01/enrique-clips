@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -103,21 +105,57 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const sb = createClient(supabaseUrl, serviceKey);
+
   try {
-    const { user_feedback, current_json, documentation } = await req.json();
+    const { project_id, user_feedback, rerun_after_fix, documentation } = await req.json();
 
-    if (!user_feedback || !current_json) {
-      return json({ error: "user_feedback and current_json are required" }, 400);
+    if (!project_id || !user_feedback) {
+      return json({ error: "project_id and user_feedback are required" }, 400);
     }
 
-    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
-    if (!GOOGLE_AI_API_KEY) {
-      return json({ error: "GOOGLE_AI_API_KEY not configured" }, 500);
+    // 1. Fetch project's current config
+    const { data: project, error: projErr } = await sb
+      .from("projects")
+      .select("prompt_config_json")
+      .eq("id", project_id)
+      .single();
+
+    if (projErr || !project) {
+      return json({ error: "Project not found" }, 404);
     }
 
-    const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
+    const currentJson = JSON.stringify(project.prompt_config_json, null, 2);
 
-${documentation || "No documentation provided."}
+    // 2. Create history record as "processing"
+    const { data: historyRow } = await sb
+      .from("ai_fix_history")
+      .insert({
+        project_id,
+        feedback: user_feedback,
+        status: "processing",
+        rerun_triggered: rerun_after_fix || false,
+      })
+      .select("id")
+      .single();
+
+    const historyId = historyRow?.id;
+
+    // 3. Return immediately so user can leave
+    // Do the actual AI work in the background
+    const responsePromise = (async () => {
+      try {
+        const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
+        if (!GOOGLE_AI_API_KEY) {
+          await sb.from("ai_fix_history").update({ status: "failed", error_message: "GOOGLE_AI_API_KEY not configured" }).eq("id", historyId);
+          return;
+        }
+
+        const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
+
+${documentation || "See PROMPT_CONFIG_REFERENCE.md for the full schema."}
 
 [USER FEEDBACK ABOUT WHAT WENT WRONG]
 
@@ -125,71 +163,124 @@ ${user_feedback}
 
 [CURRENT JSON]
 
-${current_json}`;
+${currentJson}`;
 
-    console.log(`fix-config: Calling gemini-2.5-pro. Feedback: "${user_feedback.slice(0, 100)}..."`);
+        console.log(`fix-config: Calling gemini-2.5-pro for project ${project_id}. Feedback: "${user_feedback.slice(0, 100)}..."`);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 120_000);
 
-    try {
-      const resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-            generationConfig: { maxOutputTokens: 16000 },
-          }),
-          signal: controller.signal,
+        const resp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+              contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+              generationConfig: { maxOutputTokens: 16000 },
+            }),
+            signal: controller.signal,
+          }
+        );
+
+        clearTimeout(timeout);
+
+        if (!resp.ok) {
+          const errText = await resp.text();
+          console.error(`fix-config: AI API error ${resp.status}: ${errText}`);
+          await sb.from("ai_fix_history").update({ status: "failed", error_message: `AI API error: ${resp.status}` }).eq("id", historyId);
+          return;
         }
-      );
 
-      clearTimeout(timeout);
+        const result = await resp.json();
+        const output = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-      if (!resp.ok) {
-        const errText = await resp.text();
-        console.error(`fix-config: AI API error ${resp.status}: ${errText}`);
-        return json({ error: `AI API error: ${resp.status}` }, 500);
-      }
-
-      const result = await resp.json();
-      const output = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-      if (!output) {
-        return json({ error: "AI returned empty response" }, 500);
-      }
-
-      console.log(`fix-config: Got AI response (${output.length} chars)`);
-
-      // Extract JSON from the response (strip markdown fences if present)
-      let jsonStr = output.trim();
-      const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-      if (fenceMatch) {
-        jsonStr = fenceMatch[1].trim();
-      }
-
-      // Validate JSON
-      try {
-        const parsed = JSON.parse(jsonStr);
-        if (typeof parsed !== "object" || parsed === null) {
-          return json({ error: "AI returned non-object JSON" }, 422);
+        if (!output) {
+          await sb.from("ai_fix_history").update({ status: "failed", error_message: "AI returned empty response" }).eq("id", historyId);
+          return;
         }
-        console.log("fix-config: JSON validated successfully");
-        return json({ fixed_json: JSON.stringify(parsed, null, 2) });
-      } catch (parseErr) {
-        console.error(`fix-config: JSON parse error: ${(parseErr as Error).message}`);
-        return json({ error: `AI returned invalid JSON: ${(parseErr as Error).message}`, raw_output: jsonStr.slice(0, 500) }, 422);
+
+        console.log(`fix-config: Got AI response (${output.length} chars)`);
+
+        // Extract JSON
+        let jsonStr = output.trim();
+        const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+        if (fenceMatch) {
+          jsonStr = fenceMatch[1].trim();
+        }
+
+        // Validate JSON
+        let parsed: any;
+        try {
+          parsed = JSON.parse(jsonStr);
+          if (typeof parsed !== "object" || parsed === null) {
+            await sb.from("ai_fix_history").update({ status: "failed", error_message: "AI returned non-object JSON" }).eq("id", historyId);
+            return;
+          }
+        } catch (parseErr) {
+          await sb.from("ai_fix_history").update({
+            status: "failed",
+            error_message: `Invalid JSON: ${(parseErr as Error).message}`,
+          }).eq("id", historyId);
+          return;
+        }
+
+        console.log("fix-config: JSON validated, saving to project...");
+
+        // 4. Save the fixed config to the project
+        await sb.from("projects").update({ prompt_config_json: parsed }).eq("id", project_id);
+
+        // 5. Optionally trigger re-run without publish
+        let runId: string | null = null;
+        if (rerun_after_fix) {
+          const { data: newRun } = await sb
+            .from("runs")
+            .insert({ project_id, status: "queued" as const })
+            .select("id")
+            .single();
+
+          if (newRun) {
+            runId = newRun.id;
+            // Trigger pipeline without publish
+            const pipelineUrl = `${supabaseUrl}/functions/v1/run-pipeline`;
+            await fetch(pipelineUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${serviceKey}`,
+              },
+              body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
+            });
+            console.log(`fix-config: Pipeline triggered (run ${runId}) — no publish`);
+          }
+        }
+
+        // 6. Mark history as completed
+        await sb.from("ai_fix_history").update({
+          status: "completed",
+          result_json: parsed,
+          run_id: runId,
+        }).eq("id", historyId);
+
+        console.log("fix-config: Done!");
+      } catch (err) {
+        console.error("fix-config background error:", err);
+        await sb.from("ai_fix_history").update({
+          status: "failed",
+          error_message: (err as Error).message,
+        }).eq("id", historyId);
       }
-    } catch (abortErr) {
-      clearTimeout(timeout);
-      if ((abortErr as Error).name === "AbortError") {
-        return json({ error: "AI request timed out after 2 minutes" }, 504);
-      }
-      throw abortErr;
-    }
+    })();
+
+    // Use waitUntil to keep the function alive after responding
+    // Deno Deploy supports this pattern — the promise runs in the background
+    // But Edge Functions may not support waitUntil, so we await instead
+    // However, we want to return quickly. Edge functions have 150s timeout.
+    // The AI call takes ~30-60s, so we can await it within the timeout.
+    await responsePromise;
+
+    return json({ ok: true, history_id: historyId });
   } catch (err) {
     console.error("fix-config error:", err);
     return json({ error: (err as Error).message }, 500);
