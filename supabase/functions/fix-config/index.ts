@@ -110,9 +110,9 @@ Deno.serve(async (req) => {
       return json({ error: "user_feedback and current_json are required" }, 400);
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      return json({ error: "LOVABLE_API_KEY not configured" }, 500);
+    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
+    if (!GOOGLE_AI_API_KEY) {
+      return json({ error: "GOOGLE_AI_API_KEY not configured" }, 500);
     }
 
     const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
@@ -127,28 +127,25 @@ ${user_feedback}
 
 ${current_json}`;
 
-    console.log(`fix-config: Calling gemini-2.5-pro via Lovable AI. Feedback: "${user_feedback.slice(0, 100)}..."`);
+    console.log(`fix-config: Calling gemini-2.5-pro. Feedback: "${user_feedback.slice(0, 100)}..."`);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min timeout
+    const timeout = setTimeout(() => controller.abort(), 120_000);
 
     try {
-      const resp = await fetch("https://ai.lovable.dev/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${LOVABLE_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-pro",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: 16000,
-        }),
-        signal: controller.signal,
-      });
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+            generationConfig: { maxOutputTokens: 16000 },
+          }),
+          signal: controller.signal,
+        }
+      );
 
       clearTimeout(timeout);
 
@@ -159,7 +156,7 @@ ${current_json}`;
       }
 
       const result = await resp.json();
-      const output = result?.choices?.[0]?.message?.content || "";
+      const output = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
       if (!output) {
         return json({ error: "AI returned empty response" }, 500);
