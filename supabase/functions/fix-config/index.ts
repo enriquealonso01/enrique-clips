@@ -165,31 +165,62 @@ ${user_feedback}
 
 ${currentJson}`;
 
-        console.log(`fix-config: Calling gemini-2.5-pro for project ${project_id}. Feedback: "${user_feedback.slice(0, 100)}..."`);
+        // Retry logic with fallback model
+        const models = ["gemini-2.5-pro", "gemini-2.5-pro", "gemini-2.5-flash"];
+        let resp: Response | null = null;
+        let lastError = "";
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 120_000);
+        for (let attempt = 0; attempt < models.length; attempt++) {
+          const model = models[attempt];
+          console.log(`fix-config: Attempt ${attempt + 1}/${models.length} using ${model} for project ${project_id}. Feedback: "${user_feedback.slice(0, 100)}..."`);
 
-        const resp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-              contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-              generationConfig: { maxOutputTokens: 16000 },
-            }),
-            signal: controller.signal,
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 120_000);
+
+          try {
+            const r = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GOOGLE_AI_API_KEY}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+                  contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+                  generationConfig: { maxOutputTokens: 16000 },
+                }),
+                signal: controller.signal,
+              }
+            );
+            clearTimeout(timeout);
+
+            if (r.ok) {
+              resp = r;
+              break;
+            }
+
+            const errText = await r.text();
+            lastError = `AI API error: ${r.status}`;
+            console.error(`fix-config: Attempt ${attempt + 1} failed (${r.status}): ${errText}`);
+
+            if (r.status === 503 && attempt < models.length - 1) {
+              const wait = (attempt + 1) * 15;
+              console.log(`fix-config: Waiting ${wait}s before retry...`);
+              await new Promise(resolve => setTimeout(resolve, wait * 1000));
+              continue;
+            }
+          } catch (fetchErr) {
+            clearTimeout(timeout);
+            lastError = (fetchErr as Error).message;
+            console.error(`fix-config: Attempt ${attempt + 1} fetch error: ${lastError}`);
+            if (attempt < models.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 10_000));
+              continue;
+            }
           }
-        );
+        }
 
-        clearTimeout(timeout);
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          console.error(`fix-config: AI API error ${resp.status}: ${errText}`);
-          await sb.from("ai_fix_history").update({ status: "failed", error_message: `AI API error: ${resp.status}` }).eq("id", historyId);
+        if (!resp) {
+          await sb.from("ai_fix_history").update({ status: "failed", error_message: lastError }).eq("id", historyId);
           return;
         }
 
