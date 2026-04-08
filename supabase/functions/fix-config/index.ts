@@ -1,10 +1,13 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { CLAUDE_OPUS_MODEL, runFalOpenRouterText } from "../_shared/falOpenrouter.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+const FIX_CONFIG_MAX_WAIT_MS = 15 * 60_000;
 
 const SYSTEM_PROMPT = `You are an expert JSON configuration editor for a video-generation pipeline.
 
@@ -100,220 +103,221 @@ function json(data: unknown, status = 200) {
   });
 }
 
+function extractFencedContent(raw: string): string {
+  const trimmed = raw.trim();
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return fenceMatch?.[1]?.trim() || trimmed;
+}
+
+function extractBalancedObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\") {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseFixedConfig(output: string): Record<string, unknown> {
+  const primary = extractFencedContent(output);
+  const candidates = [primary];
+  const extractedObject = extractBalancedObject(primary);
+
+  if (extractedObject && extractedObject !== primary) {
+    candidates.push(extractedObject);
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error("Invalid JSON: model response was not a valid JSON object");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!supabaseUrl || !serviceKey) {
+    return json({ error: "Server configuration is incomplete" }, 500);
+  }
+
   const sb = createClient(supabaseUrl, serviceKey);
 
   try {
-    const { project_id, user_feedback, rerun_after_fix, documentation } = await req.json();
+    const body = await req.json();
+    const projectId = typeof body?.project_id === "string" ? body.project_id.trim() : "";
+    const userFeedback = typeof body?.user_feedback === "string" ? body.user_feedback.trim() : "";
+    const rerunAfterFix = body?.rerun_after_fix === true;
+    const documentation = typeof body?.documentation === "string" ? body.documentation : "";
 
-    if (!project_id || !user_feedback) {
+    if (!projectId || !userFeedback) {
       return json({ error: "project_id and user_feedback are required" }, 400);
     }
 
-    // 1. Fetch project's current config
     const { data: project, error: projErr } = await sb
       .from("projects")
       .select("prompt_config_json")
-      .eq("id", project_id)
+      .eq("id", projectId)
       .single();
 
     if (projErr || !project) {
       return json({ error: "Project not found" }, 404);
     }
 
-    const currentJson = JSON.stringify(project.prompt_config_json, null, 2);
-
-    // 2. Create history record as "processing"
-    const { data: historyRow } = await sb
+    const { data: historyRow, error: historyErr } = await sb
       .from("ai_fix_history")
       .insert({
-        project_id,
-        feedback: user_feedback,
+        project_id: projectId,
+        feedback: userFeedback,
         status: "processing",
-        rerun_triggered: rerun_after_fix || false,
+        rerun_triggered: rerunAfterFix,
       })
       .select("id")
       .single();
 
-    const historyId = historyRow?.id;
+    if (historyErr || !historyRow?.id) {
+      return json({ error: "Failed to create fix history entry" }, 500);
+    }
 
-    // 3. Return immediately so user can leave
-    // Do the actual AI work in the background
-    const responsePromise = (async () => {
-      try {
-        const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
-        if (!GOOGLE_AI_API_KEY) {
-          await sb.from("ai_fix_history").update({ status: "failed", error_message: "GOOGLE_AI_API_KEY not configured" }).eq("id", historyId);
-          return;
-        }
+    const historyId = historyRow.id;
 
-        const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
+    try {
+      const currentJson = JSON.stringify(project.prompt_config_json ?? {}, null, 2);
+      const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
 
 ${documentation || "See PROMPT_CONFIG_REFERENCE.md for the full schema."}
 
 [USER FEEDBACK ABOUT WHAT WENT WRONG]
 
-${user_feedback}
+${userFeedback}
 
 [CURRENT JSON]
 
 ${currentJson}`;
 
-        // Retry logic with fallback model
-        const models = ["gemini-2.5-pro", "gemini-2.5-pro", "gemini-2.5-flash"];
-        let resp: Response | null = null;
-        let lastError = "";
+      console.log(`fix-config: Starting ${CLAUDE_OPUS_MODEL} via fal.ai for project ${projectId}`);
 
-        for (let attempt = 0; attempt < models.length; attempt++) {
-          const model = models[attempt];
-          console.log(`fix-config: Attempt ${attempt + 1}/${models.length} using ${model} for project ${project_id}. Feedback: "${user_feedback.slice(0, 100)}..."`);
+      const aiResult = await runFalOpenRouterText({
+        systemPrompt: SYSTEM_PROMPT,
+        prompt: userPrompt,
+        model: CLAUDE_OPUS_MODEL,
+        temperature: 0.2,
+        maxTokens: 16_000,
+        maxWaitMs: FIX_CONFIG_MAX_WAIT_MS,
+        pollIntervalMs: 5_000,
+        onLog: (message) => console.log(`fix-config[${historyId}]: ${message}`),
+      });
 
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 120_000);
-
-          try {
-            const r = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GOOGLE_AI_API_KEY}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-                  contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-                  generationConfig: { maxOutputTokens: 16000 },
-                }),
-                signal: controller.signal,
-              }
-            );
-            clearTimeout(timeout);
-
-            if (r.ok) {
-              resp = r;
-              break;
-            }
-
-            const errText = await r.text();
-            lastError = `AI API error: ${r.status}`;
-            console.error(`fix-config: Attempt ${attempt + 1} failed (${r.status}): ${errText}`);
-
-            if (r.status === 503 && attempt < models.length - 1) {
-              const wait = (attempt + 1) * 15;
-              console.log(`fix-config: Waiting ${wait}s before retry...`);
-              await new Promise(resolve => setTimeout(resolve, wait * 1000));
-              continue;
-            }
-          } catch (fetchErr) {
-            clearTimeout(timeout);
-            lastError = (fetchErr as Error).message;
-            console.error(`fix-config: Attempt ${attempt + 1} fetch error: ${lastError}`);
-            if (attempt < models.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 10_000));
-              continue;
-            }
-          }
-        }
-
-        if (!resp) {
-          await sb.from("ai_fix_history").update({ status: "failed", error_message: lastError }).eq("id", historyId);
-          return;
-        }
-
-        const result = await resp.json();
-        const output = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-        if (!output) {
-          await sb.from("ai_fix_history").update({ status: "failed", error_message: "AI returned empty response" }).eq("id", historyId);
-          return;
-        }
-
-        console.log(`fix-config: Got AI response (${output.length} chars)`);
-
-        // Extract JSON
-        let jsonStr = output.trim();
-        const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-        if (fenceMatch) {
-          jsonStr = fenceMatch[1].trim();
-        }
-
-        // Validate JSON
-        let parsed: any;
-        try {
-          parsed = JSON.parse(jsonStr);
-          if (typeof parsed !== "object" || parsed === null) {
-            await sb.from("ai_fix_history").update({ status: "failed", error_message: "AI returned non-object JSON" }).eq("id", historyId);
-            return;
-          }
-        } catch (parseErr) {
-          await sb.from("ai_fix_history").update({
-            status: "failed",
-            error_message: `Invalid JSON: ${(parseErr as Error).message}`,
-          }).eq("id", historyId);
-          return;
-        }
-
-        console.log("fix-config: JSON validated, saving to project...");
-
-        // 4. Save the fixed config to the project
-        await sb.from("projects").update({ prompt_config_json: parsed }).eq("id", project_id);
-
-        // 5. Optionally trigger re-run without publish
-        let runId: string | null = null;
-        if (rerun_after_fix) {
-          const { data: newRun } = await sb
-            .from("runs")
-            .insert({ project_id, status: "queued" as const })
-            .select("id")
-            .single();
-
-          if (newRun) {
-            runId = newRun.id;
-            // Trigger pipeline without publish
-            const pipelineUrl = `${supabaseUrl}/functions/v1/run-pipeline`;
-            await fetch(pipelineUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${serviceKey}`,
-              },
-              body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
-            });
-            console.log(`fix-config: Pipeline triggered (run ${runId}) — no publish`);
-          }
-        }
-
-        // 6. Mark history as completed
-        await sb.from("ai_fix_history").update({
-          status: "completed",
-          result_json: parsed,
-          run_id: runId,
-        }).eq("id", historyId);
-
-        console.log("fix-config: Done!");
-      } catch (err) {
-        console.error("fix-config background error:", err);
-        await sb.from("ai_fix_history").update({
-          status: "failed",
-          error_message: (err as Error).message,
-        }).eq("id", historyId);
+      console.log(`fix-config: Received Claude Opus response (${aiResult.output.length} chars)`);
+      if (aiResult.usage) {
+        console.log(`fix-config: Usage ${JSON.stringify(aiResult.usage)}`);
       }
-    })();
 
-    // Use waitUntil to keep the function alive after responding
-    // Deno Deploy supports this pattern — the promise runs in the background
-    // But Edge Functions may not support waitUntil, so we await instead
-    // However, we want to return quickly. Edge functions have 150s timeout.
-    // The AI call takes ~30-60s, so we can await it within the timeout.
-    await responsePromise;
+      const parsed = parseFixedConfig(aiResult.output);
 
-    return json({ ok: true, history_id: historyId });
+      const { error: projectUpdateError } = await sb
+        .from("projects")
+        .update({ prompt_config_json: parsed })
+        .eq("id", projectId);
+
+      if (projectUpdateError) {
+        throw new Error(`Failed to save fixed config: ${projectUpdateError.message}`);
+      }
+
+      let runId: string | null = null;
+      if (rerunAfterFix) {
+        const { data: newRun, error: runInsertError } = await sb
+          .from("runs")
+          .insert({ project_id: projectId, status: "queued" as const })
+          .select("id")
+          .single();
+
+        if (runInsertError) {
+          throw new Error(`Fixed config saved, but failed to create re-run: ${runInsertError.message}`);
+        }
+
+        if (newRun?.id) {
+          runId = newRun.id;
+          const pipelineResponse = await fetch(`${supabaseUrl}/functions/v1/run-pipeline`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${serviceKey}`,
+            },
+            body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
+          });
+
+          if (!pipelineResponse.ok) {
+            const pipelineText = await pipelineResponse.text();
+            console.error(`fix-config: Re-run trigger failed for ${runId}: ${pipelineResponse.status} ${pipelineText}`);
+          } else {
+            console.log(`fix-config: Pipeline triggered without publish (run ${runId})`);
+          }
+        }
+      }
+
+      await sb.from("ai_fix_history").update({
+        status: "completed",
+        result_json: parsed,
+        run_id: runId,
+        error_message: null,
+      }).eq("id", historyId);
+
+      return json({ ok: true, history_id: historyId });
+    } catch (processingError) {
+      const message = processingError instanceof Error ? processingError.message : String(processingError);
+      console.error("fix-config processing error:", processingError);
+      await sb.from("ai_fix_history").update({
+        status: "failed",
+        error_message: message,
+      }).eq("id", historyId);
+      return json({ error: message, history_id: historyId }, 500);
+    }
   } catch (err) {
     console.error("fix-config error:", err);
-    return json({ error: (err as Error).message }, 500);
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });
