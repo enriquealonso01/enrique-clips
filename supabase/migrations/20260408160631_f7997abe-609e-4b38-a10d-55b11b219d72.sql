@@ -1,0 +1,1 @@
+UPDATE ai_fix_history SET status = 'failed', error_message = 'Edge function timed out (fixed in deploy)' WHERE status = 'processing';
