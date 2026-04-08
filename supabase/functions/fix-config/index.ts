@@ -125,7 +125,7 @@ function extractBalancedObject(raw: string): string | null {
       continue;
     }
 
-    if (ch === "\") {
+    if (ch === "\\") {
       escaped = true;
       continue;
     }
