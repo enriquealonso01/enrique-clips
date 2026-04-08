@@ -2715,6 +2715,7 @@ Rules:
     } catch (fbImgErr) {
       await log("warn", `Facebook image post step failed (non-fatal): ${fbImgErr.message}`);
     }
+    } // end skipPublish check for FB image post
 
     // ===== DONE =====
     await updateRun({
