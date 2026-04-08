@@ -1,6 +1,3 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { fal } from "https://esm.sh/@fal-ai/client@1";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -113,12 +110,10 @@ Deno.serve(async (req) => {
       return json({ error: "user_feedback and current_json are required" }, 400);
     }
 
-    const FAL_KEY = Deno.env.get("FAL_KEY");
-    if (!FAL_KEY) {
-      return json({ error: "FAL_KEY not configured" }, 500);
+    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
+    if (!GOOGLE_AI_API_KEY) {
+      return json({ error: "GOOGLE_AI_API_KEY not configured" }, 500);
     }
-
-    fal.config({ credentials: FAL_KEY });
 
     const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]
 
@@ -132,40 +127,68 @@ ${user_feedback}
 
 ${current_json}`;
 
-    console.log(`fix-config: Calling Claude Opus 4.6 via fal.ai. Feedback: "${user_feedback.slice(0, 100)}..."`);
+    console.log(`fix-config: Calling gemini-2.5-pro. Feedback: "${user_feedback.slice(0, 100)}..."`);
 
-    const result = await fal.subscribe("openrouter/router", {
-      input: {
-        prompt: userPrompt,
-        system_prompt: SYSTEM_PROMPT,
-        model: "anthropic/claude-opus-4-6",
-        max_tokens: 16000,
-      },
-    }) as any;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
 
-    const output = result?.data?.output || result?.output || "";
-
-    if (!output) {
-      return json({ error: "AI returned empty response" }, 500);
-    }
-
-    // Extract JSON from the response (strip markdown fences if present)
-    let jsonStr = output.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (fenceMatch) {
-      jsonStr = fenceMatch[1].trim();
-    }
-
-    // Validate JSON
     try {
-      const parsed = JSON.parse(jsonStr);
-      if (typeof parsed !== "object" || parsed === null) {
-        return json({ error: "AI returned non-object JSON" }, 422);
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+            generationConfig: { maxOutputTokens: 16000 },
+          }),
+          signal: controller.signal,
+        }
+      );
+
+      clearTimeout(timeout);
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`fix-config: AI API error ${resp.status}: ${errText}`);
+        return json({ error: `AI API error: ${resp.status}` }, 500);
       }
-      // Return the validated, re-serialized JSON
-      return json({ fixed_json: JSON.stringify(parsed, null, 2) });
-    } catch (parseErr) {
-      return json({ error: `AI returned invalid JSON: ${(parseErr as Error).message}`, raw_output: jsonStr.slice(0, 500) }, 422);
+
+      const result = await resp.json();
+      const output = result?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+      if (!output) {
+        return json({ error: "AI returned empty response" }, 500);
+      }
+
+      console.log(`fix-config: Got AI response (${output.length} chars)`);
+
+      // Extract JSON from the response (strip markdown fences if present)
+      let jsonStr = output.trim();
+      const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+      if (fenceMatch) {
+        jsonStr = fenceMatch[1].trim();
+      }
+
+      // Validate JSON
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (typeof parsed !== "object" || parsed === null) {
+          return json({ error: "AI returned non-object JSON" }, 422);
+        }
+        console.log("fix-config: JSON validated successfully");
+        return json({ fixed_json: JSON.stringify(parsed, null, 2) });
+      } catch (parseErr) {
+        console.error(`fix-config: JSON parse error: ${(parseErr as Error).message}`);
+        return json({ error: `AI returned invalid JSON: ${(parseErr as Error).message}`, raw_output: jsonStr.slice(0, 500) }, 422);
+      }
+    } catch (abortErr) {
+      clearTimeout(timeout);
+      if ((abortErr as Error).name === "AbortError") {
+        return json({ error: "AI request timed out after 2 minutes" }, 504);
+      }
+      throw abortErr;
     }
   } catch (err) {
     console.error("fix-config error:", err);
