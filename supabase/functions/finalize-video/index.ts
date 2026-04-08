@@ -2593,8 +2593,10 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         await log("error", `Publish step failed: ${err.message}`);
       }
     }
+    } // end skipPublish else
 
     // ===== STEP 6b: FACEBOOK IMAGE POST (fire-and-forget) =====
+    if (!skipPublish) {
     try {
       const fbEnabled = (project as any).facebook_image_post_enabled === true;
       const fbPlatformOn = (project as any).publish_platforms?.facebook !== false;
