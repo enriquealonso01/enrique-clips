@@ -46,6 +46,10 @@ export default function ProjectEditor() {
   const [promptConfigText, setPromptConfigText] = useState("");
   const [promptConfigErrors, setPromptConfigErrors] = useState<string[]>([]);
   const [resolvedPreviewOpen, setResolvedPreviewOpen] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState("");
+  const [aiFixLoading, setAiFixLoading] = useState(false);
+  const [aiRerunAfterFix, setAiRerunAfterFix] = useState(true);
+  const [aiFixOpen, setAiFixOpen] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
