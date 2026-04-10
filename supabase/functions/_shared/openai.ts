@@ -216,7 +216,7 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS): Promise<any> {
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<any> {
   const apiKey = getApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
@@ -224,9 +224,10 @@ async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMIN
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
