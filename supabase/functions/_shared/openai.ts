@@ -456,8 +456,8 @@ function sizeToAspectRatio(size?: string): string {
 
 function qualityToResolution(quality?: string): string {
   if (quality === "high") return "2K";
-  if (quality === "low") return "512";
-  return "1K"; // medium/default — 1K is the default output size
+  if (quality === "low") return "1K"; // gemini-3-pro-image-preview minimum is 1K
+  return "1K"; // medium/default
 }
 
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
