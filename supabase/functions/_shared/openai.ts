@@ -505,6 +505,8 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
+    // Use Flex pricing tier — 50% cheaper, may queue up to 15 min
+    service_tier: "FLEX",
   };
 
   // Single attempt per invocation — on 503 or timeout, throw for pipeline re-chain
