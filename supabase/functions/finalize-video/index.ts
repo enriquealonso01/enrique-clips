@@ -2156,6 +2156,11 @@ Deno.serve(async (req) => {
             await log("warn", `Post-production step failed: ${(composeStepErr as Error).message} — continuing with stitched video.`);
           }
 
+          // Guard: if no video was produced (e.g. Rendi failed and no fallback), fail gracefully
+          if (!finalVideo) {
+            throw new Error("No final video produced after stitching. Pipeline cannot continue.");
+          }
+
           const finalPath = `${project.id}/final/${runId}/final-video-${Date.now()}.mp4`;
           const { error: upErr } = await supabase.storage
             .from("project-assets")
