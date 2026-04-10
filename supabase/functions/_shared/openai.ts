@@ -513,7 +513,10 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   // Single attempt per invocation — on 503 or timeout, throw for pipeline re-chain
   const attemptStart = Date.now();
   try {
-    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS);
+    // X-Server-Timeout tells Gemini to keep the connection open longer for Flex queue
+    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
+      "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
+    });
     const latency = Date.now() - start;
 
     const candidate = result.candidates?.[0];
