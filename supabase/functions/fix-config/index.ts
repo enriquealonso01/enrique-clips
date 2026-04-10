@@ -293,7 +293,7 @@ Deno.serve(async (req) => {
             system_prompt: SYSTEM_PROMPT,
             model: CLAUDE_OPUS_MODEL,
             temperature: 0.2,
-            max_tokens: 16_000,
+            max_tokens: 128_000,
           },
         });
 
