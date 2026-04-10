@@ -259,8 +259,6 @@ export interface CallTextOptions {
   max_tokens?: number;
   premium?: boolean;
   endpoint?: string;
-  /** Called on each 503 retry so callers can emit heartbeat logs */
-  onRetry?: (attempt: number, waitSec: number) => void | Promise<void>;
 }
 
 // Keep OpenAI-compatible result shape for backward compat
@@ -353,9 +351,6 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
           latency_ms: Date.now() - start,
           error: `503 attempt ${attempt}`,
         });
-        if (opts.onRetry) {
-          try { await opts.onRetry(attempt, 60); } catch (_) { /* best-effort */ }
-        }
         await sleep(60_000);
         continue;
       }
