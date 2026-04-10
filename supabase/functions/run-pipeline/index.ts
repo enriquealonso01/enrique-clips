@@ -205,6 +205,17 @@ Deno.serve(async (req) => {
     return data?.status || "unknown";
   }
 
+  // ── Heartbeat: emit a debug log every 2 min so the watchdog knows we're alive ──
+  const heartbeatInterval = setInterval(async () => {
+    try {
+      await supabase.from("run_logs").insert({
+        run_id: runId,
+        level: "debug" as any,
+        message: "Pipeline heartbeat — still processing (AI API may be retrying).",
+      });
+    } catch (_) { /* best-effort */ }
+  }, 2 * 60 * 1000);
+
   /** Fire-and-forget: chain to the next step by calling ourselves */
   function chainNextStep() {
     const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/run-pipeline`;
