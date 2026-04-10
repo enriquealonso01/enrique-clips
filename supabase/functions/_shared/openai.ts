@@ -13,9 +13,9 @@ export const MODELS = {
   /** Premium reasoning — same as default for Gemini */
   TEXT_PREMIUM: "gemini-2.5-pro",
   /** Draft image generation */
-  IMAGE_DRAFT: "gemini-3-pro-image-preview",
+  IMAGE_DRAFT: "gemini-3.1-flash-lite-preview",
   /** Final image generation */
-  IMAGE_FINAL: "gemini-3-pro-image-preview",
+  IMAGE_FINAL: "gemini-3.1-flash-lite-preview",
 } as const;
 
 export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
@@ -456,7 +456,7 @@ function sizeToAspectRatio(size?: string): string {
 
 function qualityToResolution(quality?: string): string {
   if (quality === "high") return "2K";
-  if (quality === "low") return "1K"; // gemini-3-pro-image-preview minimum is 1K
+  if (quality === "low") return "1K"; // gemini-3.1-flash-lite-preview minimum is 1K
   return "1K"; // medium/default
 }
 
@@ -634,6 +634,7 @@ export async function callAI(
     "gpt-5": MODELS.TEXT_PREMIUM,
     "google/gemini-3-pro-image-preview": MODELS.IMAGE_DRAFT,
     "google/gemini-3.1-flash-image-preview": MODELS.IMAGE_DRAFT,
+    "google/gemini-3.1-flash-lite-preview": MODELS.IMAGE_DRAFT,
   };
   const mappedModel = model ? (modelMap[model] || model) : MODELS.TEXT_DEFAULT;
 
