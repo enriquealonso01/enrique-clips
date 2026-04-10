@@ -562,7 +562,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
     });
     throw err;
   }
-  throw new Image503RetryableError(attempt);
 }
 
 // ── Summarization helpers (for logging) ──────────────────
