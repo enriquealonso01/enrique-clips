@@ -497,14 +497,22 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
     }
   }
 
+  // Models that do NOT support the aspectRatio parameter
+  const NO_ASPECT_RATIO_MODELS = ["gemini-3.1-flash-lite-preview"];
+  const supportsAspectRatio = !NO_ASPECT_RATIO_MODELS.includes(model);
+
+  const imageConfig: any = {
+    imageSize: qualityToResolution(opts.quality),
+  };
+  if (supportsAspectRatio) {
+    imageConfig.aspectRatio = sizeToAspectRatio(opts.size);
+  }
+
   const body: any = {
     contents: [{ parts }],
     generationConfig: {
       responseModalities: ["IMAGE"],
-      imageConfig: {
-        aspectRatio: sizeToAspectRatio(opts.size),
-        imageSize: qualityToResolution(opts.quality),
-      },
+      imageConfig,
     },
     // Use Flex pricing tier — Gemini REST expects lowercase `flex`
     service_tier: "flex",
