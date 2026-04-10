@@ -34,7 +34,7 @@ This project uses **Google Gemini directly** for all AI-driven text and image ge
 
 1. **Default to `gemini-2.5-pro`** — strong reasoning for planning and overlays
 2. **Use `gemini-2.5-flash` for metadata** — classification/tagging doesn't need deep reasoning
-3. **Use `gemini-3-pro-image-preview` for images** — supports text-to-image and image-to-image natively
+3. **Use `gemini-3-pro-image-preview` for images** — next-gen model with Flex pricing tier, default 1K output
 4. **Prefer one high-quality response** over multiple chained requests
 5. **Reuse prior outputs** (style bible, plan) instead of regenerating
 

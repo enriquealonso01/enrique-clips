@@ -13,9 +13,9 @@ export const MODELS = {
   /** Premium reasoning — same as default for Gemini */
   TEXT_PREMIUM: "gemini-2.5-pro",
   /** Draft image generation */
-  IMAGE_DRAFT: "gemini-2.5-flash-image",
+  IMAGE_DRAFT: "gemini-3-pro-image-preview",
   /** Final image generation */
-  IMAGE_FINAL: "gemini-2.5-flash-image",
+  IMAGE_FINAL: "gemini-3-pro-image-preview",
 } as const;
 
 export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
@@ -451,7 +451,7 @@ function sizeToAspectRatio(size?: string): string {
 function qualityToResolution(quality?: string): string {
   if (quality === "high") return "2K";
   if (quality === "low") return "512";
-  return "1K"; // medium/default
+  return "1K"; // medium/default — 1K is the default output size
 }
 
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
