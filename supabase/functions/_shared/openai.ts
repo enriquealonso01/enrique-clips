@@ -259,6 +259,8 @@ export interface CallTextOptions {
   max_tokens?: number;
   premium?: boolean;
   endpoint?: string;
+  /** Called on each 503 retry so callers can emit heartbeat logs */
+  onRetry?: (attempt: number, waitSec: number) => void | Promise<void>;
 }
 
 // Keep OpenAI-compatible result shape for backward compat
