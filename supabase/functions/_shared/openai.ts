@@ -23,9 +23,12 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 180_000;
-const IMAGE_503_RETRY_DELAY_MS = 60_000;
-// One image request per invocation on 503, then re-chain after 60s (unlimited across invocations)
-const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 0;
+// Image generation timeout — must fit within Edge Function limits (~150s).
+// Flex pricing tier can take 15+ minutes; we use 120s per attempt and re-chain on timeout.
+const IMAGE_TIMEOUT_MS = 120_000;
+const IMAGE_RETRY_DELAY_MS = 30_000; // Wait before re-chain on timeout/503
+// Max total wait time per image across re-chains (30 minutes)
+const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
 class GeminiApiError extends Error {
   status: number;
