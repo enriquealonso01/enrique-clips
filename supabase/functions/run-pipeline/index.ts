@@ -1004,14 +1004,20 @@ Generate the timed text frames.`,
         }
       }
 
-      // Generate keyframes for pending scenes (may not finish all — that's OK, we'll re-chain)
+      // Generate keyframes for pending scenes — ONE per invocation to maximize
+      // time budget for Flex-tier responses (can take minutes per image).
       let generatedCount = 0;
       const stepStartTime = Date.now();
+      // Track per-scene retry attempts in metadata for 30-min max enforcement
+      const keyframeAttempts: Record<number, { count: number; first_at: number }> = metadataState.keyframe_attempts || {};
+      const MAX_IMAGE_WAIT_MS = 30 * 60 * 1000; // 30 minutes max per scene
+
       for (const scene of pendingScenes) {
         // Time-budget guard: if we've used >80s, re-chain to avoid edge function timeout
-        // (reduced from 100s — a single AI image call can take 60s+, so 100s left no margin)
         if (Date.now() - stepStartTime > 80_000) {
           await log("info", `Time budget reached after ${generatedCount} keyframes. Re-chaining for remaining ${pendingScenes.length - generatedCount} scenes.`);
+          metadataState.keyframe_attempts = keyframeAttempts;
+          await updateRun({ generated_metadata: metadataState });
           chainNextStep();
           return json({ status: "keyframes_time_budget", generated: generatedCount, remaining: pendingScenes.length - generatedCount });
         }
@@ -1021,7 +1027,21 @@ Generate the timed text frames.`,
           return json({ status: "halted" });
         }
 
-        await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title}`);
+        // Check 30-min max for this scene
+        const sceneAttempt = keyframeAttempts[scene.scene_index] || { count: 0, first_at: Date.now() };
+        if (sceneAttempt.count > 0 && (Date.now() - sceneAttempt.first_at) > MAX_IMAGE_WAIT_MS) {
+          await log("warn", `Keyframe K${scene.scene_index} exceeded 30-min retry limit (${sceneAttempt.count} attempts). Skipping.`);
+          await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
+          generatedCount++;
+          continue;
+        }
+
+        // Update attempt tracking
+        sceneAttempt.count++;
+        if (sceneAttempt.count === 1) sceneAttempt.first_at = Date.now();
+        keyframeAttempts[scene.scene_index] = sceneAttempt;
+
+        await log("info", `Generating end keyframe K${scene.scene_index} for: ${scene.scene_title} (attempt ${sceneAttempt.count})`);
 
         try {
           // Find the previous scene for delta computation
@@ -1086,12 +1106,16 @@ Generate the timed text frames.`,
             await log("warn", `No image data for keyframe K${scene.scene_index} after retry`);
           }
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
+          // Clear retry tracking on success
+          delete keyframeAttempts[scene.scene_index];
           generatedCount++;
         } catch (sceneErr) {
           if (sceneErr instanceof Image503RetryableError) {
-            await log("warn", `Keyframe K${scene.scene_index} got 503 (attempt ${sceneErr.attempts}). Re-chaining to retry in ~60s...`);
+            await log("warn", `Keyframe K${scene.scene_index} retriable (${sceneErr.reason}, attempt ${sceneAttempt.count}). Re-chaining...`);
+            metadataState.keyframe_attempts = keyframeAttempts;
+            await updateRun({ generated_metadata: metadataState });
             chainNextStep();
-            return json({ status: "keyframe_503_rechain", run_id: runId });
+            return json({ status: "keyframe_retriable_rechain", run_id: runId, reason: sceneErr.reason });
           }
           await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
           await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
@@ -1103,8 +1127,9 @@ Generate the timed text frames.`,
         await updateRun({ progress_pct: progress });
       }
 
-      // All keyframes done — advance to kling
-      await updateRun({ current_step: "kling", progress_pct: 40 });
+      // All keyframes done — clean up attempt tracking and advance to kling
+      delete metadataState.keyframe_attempts;
+      await updateRun({ current_step: "kling", progress_pct: 40, generated_metadata: metadataState });
       await log("info", "Chained keyframe generation complete. Chaining to kling step.");
       chainNextStep();
       return json({ status: "keyframes_complete", run_id: runId });

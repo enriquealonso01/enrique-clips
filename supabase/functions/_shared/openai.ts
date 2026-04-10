@@ -23,9 +23,12 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_TIMEOUT_MS = 180_000;
-const IMAGE_503_RETRY_DELAY_MS = 60_000;
-// One image request per invocation on 503, then re-chain after 60s (unlimited across invocations)
-const IMAGE_503_MAX_RETRIES_PER_INVOCATION = 0;
+// Image generation timeout — must fit within Edge Function limits (~150s).
+// Flex pricing tier can take 15+ minutes; we use 120s per attempt and re-chain on timeout.
+const IMAGE_TIMEOUT_MS = 120_000;
+const IMAGE_RETRY_DELAY_MS = 30_000; // Wait before re-chain on timeout/503
+// Max total wait time per image across re-chains (30 minutes)
+const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
 class GeminiApiError extends Error {
   status: number;
@@ -39,14 +42,16 @@ class GeminiApiError extends Error {
   }
 }
 
-/** Thrown when image generation hits a 503 and exhausted per-invocation retries.
+/** Thrown when image generation hits a 503/timeout and should be retried via re-chain.
  *  The pipeline should catch this and re-chain to retry later. */
 export class Image503RetryableError extends Error {
   attempts: number;
-  constructor(attempts: number) {
-    super(`Image generation got 503 after ${attempts} attempt(s). Pipeline should re-chain to retry.`);
+  reason: string;
+  constructor(attempts: number, reason = "503") {
+    super(`Image generation failed (${reason}) after ${attempts} attempt(s). Pipeline should re-chain to retry.`);
     this.name = "Image503RetryableError";
     this.attempts = attempts;
+    this.reason = reason;
   }
 }
 
@@ -502,75 +507,61 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
     },
   };
 
-  let attempt = 0;
-  while (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
-    attempt++;
-    const attemptStart = Date.now();
-    try {
-      const result = await geminiRequest(model, body);
-      const latency = Date.now() - start;
+  // Single attempt per invocation — on 503 or timeout, throw for pipeline re-chain
+  const attemptStart = Date.now();
+  try {
+    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS);
+    const latency = Date.now() - start;
 
-      const candidate = result.candidates?.[0];
-      const responseParts = candidate?.content?.parts || [];
+    const candidate = result.candidates?.[0];
+    const responseParts = candidate?.content?.parts || [];
 
-      const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
-      if (!imagePart) {
-        const textPart = responseParts.find((p: any) => p.text);
-        throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
-      }
-
-      const usage = result.usageMetadata ? {
-        prompt_tokens: result.usageMetadata.promptTokenCount,
-        completion_tokens: result.usageMetadata.candidatesTokenCount,
-        total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
-      } : undefined;
-
-      if (attempt > 1) {
-        console.log(`[AI] Image generation succeeded on attempt ${attempt} after 503 retry`);
-      }
-
-      logUsage({
-        endpoint, model, success: true, latency_ms: latency,
-        prompt_tokens: usage?.prompt_tokens,
-        completion_tokens: usage?.completion_tokens,
-        total_tokens: usage?.total_tokens,
-      });
-
-      return { b64_json: imagePart.inlineData.data, revised_prompt: undefined };
-    } catch (err) {
-      if (err instanceof GeminiApiError && err.status === 503) {
-        const latency = Date.now() - attemptStart;
-        logUsage({
-          endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false, latency_ms: latency,
-          error: `503 attempt ${attempt}`,
-        });
-
-        if (attempt <= IMAGE_503_MAX_RETRIES_PER_INVOCATION) {
-          console.warn(`[AI] Image 503 on attempt ${attempt}. Waiting ${IMAGE_503_RETRY_DELAY_MS / 1000}s before retry...`);
-          await sleep(IMAGE_503_RETRY_DELAY_MS);
-          continue;
-        }
-
-        // Exhausted per-invocation retries — enforce 60s wait before re-chain
-        console.warn(`[AI] Image 503 persists after ${attempt} attempt(s). Waiting ${IMAGE_503_RETRY_DELAY_MS / 1000}s before re-chain...`);
-        await sleep(IMAGE_503_RETRY_DELAY_MS);
-        // Throw retriable error for pipeline to re-chain (unlimited across invocations)
-        console.warn(`[AI] Throwing Image503RetryableError for pipeline re-chain after 60s wait.`);
-        throw new Image503RetryableError(attempt);
-      }
-
-      // Non-503 errors fail immediately
-      const latency = Date.now() - start;
-      logUsage({
-        endpoint, model, success: false, latency_ms: latency,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
+    const imagePart = responseParts.find((p: any) => p.inlineData?.mimeType?.startsWith("image/"));
+    if (!imagePart) {
+      const textPart = responseParts.find((p: any) => p.text);
+      throw new Error(`No image in Gemini response${textPart ? `: ${textPart.text.substring(0, 200)}` : ""}`);
     }
-  }
 
-  // Should not reach here, but safety net
-  throw new Image503RetryableError(attempt);
+    const usage = result.usageMetadata ? {
+      prompt_tokens: result.usageMetadata.promptTokenCount,
+      completion_tokens: result.usageMetadata.candidatesTokenCount,
+      total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+    } : undefined;
+
+    logUsage({
+      endpoint, model, success: true, latency_ms: latency,
+      prompt_tokens: usage?.prompt_tokens,
+      completion_tokens: usage?.completion_tokens,
+      total_tokens: usage?.total_tokens,
+    });
+
+    return { b64_json: imagePart.inlineData.data, revised_prompt: undefined };
+  } catch (err) {
+    const latency = Date.now() - attemptStart;
+
+    // 503 (overloaded) or timeout (AbortError / Flex queue delay) → retriable via re-chain
+    const isTimeout = (err as any)?.name === "AbortError" || 
+                      (err instanceof Error && err.message.includes("timed out"));
+    const is503 = err instanceof GeminiApiError && err.status === 503;
+
+    if (is503 || isTimeout) {
+      const reason = isTimeout ? "timeout" : "503";
+      console.warn(`[AI] Image ${reason} after ${(latency / 1000).toFixed(1)}s. Waiting ${IMAGE_RETRY_DELAY_MS / 1000}s before re-chain...`);
+      logUsage({
+        endpoint: `${endpoint}_${reason}`, model, success: false, latency_ms: latency,
+        error: `${reason}`,
+      });
+      await sleep(IMAGE_RETRY_DELAY_MS);
+      throw new Image503RetryableError(1, reason);
+    }
+
+    // Non-retriable errors fail immediately
+    logUsage({
+      endpoint, model, success: false, latency_ms: latency,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 // ── Summarization helpers (for logging) ──────────────────
