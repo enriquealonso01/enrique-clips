@@ -216,7 +216,7 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS): Promise<any> {
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<any> {
   const apiKey = getApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
@@ -224,9 +224,10 @@ async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMIN
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -505,12 +506,17 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
+    // Use Flex pricing tier — 50% cheaper, may queue up to 15 min
+    service_tier: "FLEX",
   };
 
   // Single attempt per invocation — on 503 or timeout, throw for pipeline re-chain
   const attemptStart = Date.now();
   try {
-    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS);
+    // X-Server-Timeout tells Gemini to keep the connection open longer for Flex queue
+    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
+      "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
+    });
     const latency = Date.now() - start;
 
     const candidate = result.candidates?.[0];
