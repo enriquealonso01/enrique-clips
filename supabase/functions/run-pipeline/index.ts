@@ -114,12 +114,18 @@ function compileKeyframePrompt(opts: {
 
   // 2. Scene delta — what changed vs previous scene
   let deltaBlock = "";
-  if (prevScene && prevScene.end_keyframe_prompt) {
+  if (sceneIndex === 0) {
+    // K0: the starting-state keyframe — use start_state_rules from config
+    const rulesText = startStateRules && startStateRules.length > 0
+      ? startStateRules.map(r => `- ${r}`).join("\n")
+      : "Show the starting conditions before any action begins.";
+    deltaBlock = `This is K0 — the STARTING STATE keyframe that anchors the entire series. Show the environment/subject EXACTLY as it exists before the series begins.\n${rulesText}`;
+  } else if (prevScene && prevScene.end_keyframe_prompt) {
     deltaBlock = `Previous scene showed: "${prevScene.scene_title || "prior state"}". ` +
       `This scene advances to: "${scene.scene_title || "next state"}". ` +
       `Show clear visual progression from the previous frame.`;
   } else if (sceneIndex === 1) {
-    deltaBlock = `This is the OPENING frame. Show the initial untouched state.`;
+    deltaBlock = `This is the OPENING scene. Show clear visual progression from the reference image (K0 starting state).`;
   }
 
   // 3. Duplicate prevention — strengthen delta if scene descriptions are too similar
