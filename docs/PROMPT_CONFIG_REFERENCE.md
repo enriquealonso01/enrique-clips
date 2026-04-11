@@ -144,7 +144,7 @@ Controls how the AI planner breaks down your concept into scenes.
 | `first_scene_hook_rules`       | string[] | Rules for making Scene 1 grab attention.                                        | Override for different content styles: e.g., slow-burn documentaries might relax the "2-second hook" rule.  |
 | `viral_pacing_rules`           | string[] | Rules for energy escalation across scenes.                                      | Override for non-viral content: educational content might use steady pacing instead of escalation.          |
 | `scene_progression_rules`      | string[] | Rules for logical continuity between scenes.                                    | Add domain-specific rules: `"Architectural elements must follow real structural engineering logic"`.        |
-| `start_state_rules`            | string[] | Rules for the initial/opening state.                                            | Override when Scene 1 shouldn't be "untouched" — e.g., stories that start in media res.                     |
+| `start_state_rules`            | string[] | Rules for K0 (starting-state keyframe). Injected into the prompt compiler to define what the very first image looks like. K0 anchors the entire keyframe chain (K0 → K1 → K2 → ...). | For construction: describe empty site. For rescue/restoration: describe neglected/damaged state. Must match series concept — do NOT use generic "untouched" language for non-construction projects. |
 
 ### 3.3 `keyframes` — Image Generation Control
 
