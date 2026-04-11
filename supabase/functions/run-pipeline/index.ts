@@ -87,8 +87,9 @@ function compileKeyframePrompt(opts: {
   landmarkLocation?: string;
   landmarkEra?: string;
   topicSummary?: string;
+  startStateRules?: string[];
 }): CompiledKeyframePrompt {
-  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary } = opts;
+  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary, startStateRules } = opts;
 
   // 1. Identity lock — compress style bible to core visual anchors
   const identityParts: string[] = [];
