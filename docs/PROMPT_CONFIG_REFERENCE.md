@@ -49,7 +49,7 @@ The `prompt_config_json` is stored on the project and merged with system default
     "first_scene_hook_rules": [],      // Rules for making Scene 1 attention-grabbing
     "viral_pacing_rules": [],          // Rules for escalating energy across scenes
     "scene_progression_rules": [],     // Rules for logical continuity between scenes
-    "start_state_rules": []            // Rules for the initial untouched state
+    "start_state_rules": []            // Rules for K0 (starting-state keyframe). These are injected directly into the K0 prompt compiler to define what the very first image looks like. CRITICAL for visual consistency — K0 anchors the entire keyframe chain (K0 → K1 → K2 → ...). For construction series: describe the empty site. For rescue/restoration series: describe the neglected/damaged state. Must match the series concept.
   },
 
   "keyframes": {
