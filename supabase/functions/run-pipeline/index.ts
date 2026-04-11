@@ -936,13 +936,89 @@ Generate the timed text frames.`,
         return json({ status: "keyframes_already_done" });
       }
 
-      // Get the last generated keyframe URL as chain reference, or fall back to initial image
+      // Get the last generated keyframe URL as chain reference
       let prevKeyframeUrl: string | null = null;
 
-      // Check if the scene before the first pending one has a keyframe
+      // ── K0: Generate starting-state keyframe if not yet created ──
+      const resolvedConfig = metadata.resolved_prompt_config || {};
+      const startStateRules = resolvedConfig?.planning?.start_state_rules || [];
+      const { data: existingK0 } = await supabase
+        .from("assets")
+        .select("supabase_path")
+        .eq("run_id", runId)
+        .eq("type", "initial_image")
+        .limit(1);
+
+      if (!existingK0 || existingK0.length === 0) {
+        await log("info", "Generating K0 (starting-state keyframe) via prompt compiler...");
+        const k0Compiled = compileKeyframePrompt({
+          sceneIndex: 0,
+          totalScenes: scenes.length,
+          aspectRatio: project.aspect_ratio || "9:16",
+          scene: {
+            scene_title: "Starting State",
+            scene_description: scenes[0]?.scene_description || "",
+            end_keyframe_prompt: startStateRules.length > 0
+              ? `Starting state: ${startStateRules.join(". ")}`
+              : `The starting environment before any action begins. Series concept: ${metadata.landmark_name || conceptPrompt || project.title}`,
+          },
+          prevScene: null,
+          styleBible,
+          conceptPrompt: conceptPrompt || "",
+          landmarkName: metadata.landmark_name || "",
+          landmarkLocation: metadata.landmark_location || "",
+          landmarkEra: metadata.landmark_era || "",
+          topicSummary: run.topic_summary || "",
+          startStateRules,
+        });
+        await log("debug", `Compiled K0 prompt: ${k0Compiled.debugSummary}`);
+
+        try {
+          const k0Result = await callAI(
+            [{ role: "user", content: k0Compiled.prompt }],
+            undefined, undefined,
+            "google/gemini-3-pro-image-preview",
+            ["image", "text"]
+          );
+
+          const k0AssetId = await extractAndUploadImage(
+            k0Result,
+            `${project.id}/keyframes/${runId}/scene-0-start`,
+            "initial_image",
+            { run_id: runId, purpose: "k0_starting_state", keyframe_type: "start", scene_index: 0 }
+          );
+          if (k0AssetId) {
+            await log("info", "K0 (starting-state keyframe) saved");
+            const { data: k0Asset } = await supabase
+              .from("assets")
+              .select("supabase_path")
+              .eq("id", k0AssetId)
+              .single();
+            if (k0Asset) {
+              const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(k0Asset.supabase_path);
+              prevKeyframeUrl = urlData.publicUrl;
+            }
+          } else {
+            await log("warn", "K0 image extraction failed — continuing without visual anchor");
+          }
+        } catch (k0Err) {
+          if (k0Err instanceof Image503RetryableError) {
+            await log("warn", `K0 got 503. Re-chaining to retry...`);
+            chainNextStep();
+            return json({ status: "k0_503_rechain", run_id: runId });
+          }
+          await log("warn", `K0 generation failed: ${k0Err.message} — continuing without it`);
+        }
+      } else {
+        // K0 already exists — use it as starting chain reference
+        const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(existingK0[0].supabase_path);
+        prevKeyframeUrl = urlData.publicUrl;
+        await log("info", "K0 already exists, using as chain anchor.");
+      }
+
+      // Check if the scene before the first pending one has a keyframe (for resume)
       const firstPendingIndex = pendingScenes[0].scene_index;
       if (firstPendingIndex > 1) {
-        // Find keyframe of previous scene
         const prevScene = scenes.find(s => s.scene_index === firstPendingIndex - 1);
         if (prevScene) {
           const { data: prevKf } = await supabase
@@ -956,20 +1032,6 @@ Generate the timed text frames.`,
             const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(prevKf[0].supabase_path);
             prevKeyframeUrl = urlData.publicUrl;
           }
-        }
-      }
-
-      // Fall back to initial image
-      if (!prevKeyframeUrl) {
-        const { data: initialAssets } = await supabase
-          .from("assets")
-          .select("supabase_path")
-          .eq("run_id", runId)
-          .eq("type", "initial_image")
-          .limit(1);
-        if (initialAssets && initialAssets.length > 0) {
-          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(initialAssets[0].supabase_path);
-          prevKeyframeUrl = urlData.publicUrl;
         }
       }
 
