@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
+import { PROMPT_CONFIG_DOCUMENTATION } from "../_shared/promptConfigDoc.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,8 +11,8 @@ const corsHeaders = {
 const FAL_OPENROUTER_ENDPOINT = "openrouter/router";
 const CLAUDE_OPUS_MODEL = "anthropic/claude-opus-4.6";
 const POLL_INTERVAL_MS = 5_000;
-const MAX_EDGE_RUNTIME_MS = 120_000; // self-chain before edge timeout
-const MAX_POLL_CHAINS = 60; // max ~60 * 2min = 2 hours
+const MAX_EDGE_RUNTIME_MS = 120_000;
+const MAX_POLL_CHAINS = 60;
 
 const SYSTEM_PROMPT = `You are an expert JSON configuration editor for a video-generation pipeline.
 
@@ -78,6 +79,12 @@ EDITING RULES
 - Do not include placeholder text in the output.
 - The output must be directly usable by the application.
 
+7. PRESERVE ALL TOP-LEVEL SECTIONS
+- The output JSON MUST contain every top-level key that exists in the input JSON.
+- Do not omit or drop any section (global, planning, keyframes, motion, overlays, metadata, audio, voiceover, pipeline, memory, version) even if you are not changing it.
+- If a section is not relevant to the fix, copy it through unchanged.
+- Dropping a top-level section is a critical error that will break the pipeline.
+
 ==================================================
 PIPELINE ARCHITECTURE: K0 STARTING-STATE KEYFRAME
 ==================================================
@@ -114,9 +121,10 @@ FINAL INSTRUCTION
 ==================================================
 
 Produce the corrected JSON now.
-Return ONLY the final valid JSON.`;
+Return ONLY the final valid JSON.
+The output MUST contain every top-level key from the input JSON — do not drop any sections.`;
 
-function json(data: unknown, status = 200) {
+function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -139,12 +147,10 @@ function extractBalancedObject(raw: string): string | null {
 
   for (let i = start; i < raw.length; i++) {
     const ch = raw[i];
-
     if (escaped) { escaped = false; continue; }
     if (ch === "\\") { escaped = true; continue; }
     if (ch === '"') { inString = !inString; continue; }
     if (inString) continue;
-
     if (ch === "{") depth += 1;
     if (ch === "}") {
       depth -= 1;
@@ -171,6 +177,27 @@ function parseFixedConfig(output: string): Record<string, unknown> {
   throw new Error("Invalid JSON: model response was not a valid JSON object");
 }
 
+/**
+ * Validate that the fixed JSON preserves all top-level keys from the original.
+ * If keys are missing, merge them back from the original to prevent data loss.
+ */
+function validateAndMergeKeys(
+  fixed: Record<string, unknown>,
+  original: Record<string, unknown>
+): { merged: Record<string, unknown>; restoredKeys: string[] } {
+  const restoredKeys: string[] = [];
+  const merged = { ...fixed };
+
+  for (const key of Object.keys(original)) {
+    if (!(key in merged)) {
+      merged[key] = original[key];
+      restoredKeys.push(key);
+    }
+  }
+
+  return { merged, restoredKeys };
+}
+
 function getFalKey(): string {
   const key = Deno.env.get("FAL_KEY");
   if (!key) throw new Error("FAL_KEY is not configured");
@@ -184,7 +211,7 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey) return json({ error: "Server configuration incomplete" }, 500);
+  if (!supabaseUrl || !serviceKey) return jsonResponse({ error: "Server configuration incomplete" }, 500);
 
   const sb = createClient(supabaseUrl, serviceKey);
 
@@ -193,14 +220,14 @@ Deno.serve(async (req) => {
 
     // --- PHASE 3: Poll for fal.ai result (self-chaining) ---
     if (body?._internal_poll === true) {
-      const { historyId, projectId, falRequestId, rerunAfterFix, chainCount } = body;
+      const { historyId, projectId, falRequestId, rerunAfterFix, chainCount, originalTopLevelKeys } = body;
       const count = chainCount || 0;
 
       if (count > MAX_POLL_CHAINS) {
         await sb.from("ai_fix_history").update({
           status: "failed", error_message: "Timed out after too many poll chains",
         }).eq("id", historyId);
-        return json({ ok: false, error: "timeout" });
+        return jsonResponse({ ok: false, error: "timeout" });
       }
 
       try {
@@ -223,7 +250,21 @@ Deno.serve(async (req) => {
             }
 
             console.log(`fix-config[${historyId}]: Received response (${output.length} chars)`);
-            const parsed = parseFixedConfig(output);
+            let parsed = parseFixedConfig(output);
+
+            // Validate and restore any missing top-level keys
+            if (Array.isArray(originalTopLevelKeys) && originalTopLevelKeys.length > 0) {
+              const { data: currentProject } = await sb.from("projects")
+                .select("prompt_config_json").eq("id", projectId).single();
+              if (currentProject?.prompt_config_json) {
+                const original = currentProject.prompt_config_json as Record<string, unknown>;
+                const { merged, restoredKeys } = validateAndMergeKeys(parsed, original);
+                if (restoredKeys.length > 0) {
+                  console.log(`fix-config[${historyId}]: Restored dropped keys: ${restoredKeys.join(", ")}`);
+                }
+                parsed = merged;
+              }
+            }
 
             const { error: updateErr } = await sb.from("projects")
               .update({ prompt_config_json: parsed }).eq("id", projectId);
@@ -251,7 +292,7 @@ Deno.serve(async (req) => {
             }).eq("id", historyId);
 
             console.log(`fix-config[${historyId}]: Completed successfully`);
-            return json({ ok: true });
+            return jsonResponse({ ok: true });
           }
 
           if (status?.status === "FAILED") {
@@ -273,24 +314,25 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             _internal_poll: true,
             historyId, projectId, falRequestId, rerunAfterFix,
+            originalTopLevelKeys,
             chainCount: count + 1,
           }),
         }).catch((e) => console.error("fix-config: Self-chain failed:", e));
 
-        return json({ ok: true, chained: true });
+        return jsonResponse({ ok: true, chained: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`fix-config[${historyId}]: Poll error:`, message);
         await sb.from("ai_fix_history").update({
           status: "failed", error_message: message,
         }).eq("id", historyId);
-        return json({ ok: false, error: message }, 500);
+        return jsonResponse({ ok: false, error: message }, 500);
       }
     }
 
     // --- PHASE 2: Submit to fal.ai (called internally) ---
     if (body?._internal_submit === true) {
-      const { historyId, projectId, userFeedback, rerunAfterFix, documentation } = body;
+      const { historyId, projectId, userFeedback, rerunAfterFix } = body;
 
       try {
         const { data: project } = await sb.from("projects")
@@ -298,11 +340,14 @@ Deno.serve(async (req) => {
         if (!project) throw new Error("Project not found");
 
         const currentJson = JSON.stringify(project.prompt_config_json ?? {}, null, 2);
-        const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]\n\n${documentation || "See PROMPT_CONFIG_REFERENCE.md for the full schema."}\n\n[USER FEEDBACK ABOUT WHAT WENT WRONG]\n\n${userFeedback}\n\n[CURRENT JSON]\n\n${currentJson}`;
+        const originalTopLevelKeys = Object.keys(project.prompt_config_json ?? {});
+
+        // Use the embedded full documentation instead of the placeholder
+        const userPrompt = `[JSON STRUCTURE / PIPELINE DOCUMENTATION]\n\n${PROMPT_CONFIG_DOCUMENTATION}\n\n[USER FEEDBACK ABOUT WHAT WENT WRONG]\n\n${userFeedback}\n\n[CURRENT JSON]\n\n${currentJson}`;
 
         fal.config({ credentials: getFalKey() });
 
-        console.log(`fix-config[${historyId}]: Submitting to ${CLAUDE_OPUS_MODEL}`);
+        console.log(`fix-config[${historyId}]: Submitting to ${CLAUDE_OPUS_MODEL} (doc: ${PROMPT_CONFIG_DOCUMENTATION.length} chars, json: ${currentJson.length} chars)`);
         const submitResponse: any = await fal.queue.submit(FAL_OPENROUTER_ENDPOINT, {
           input: {
             prompt: userPrompt,
@@ -320,25 +365,26 @@ Deno.serve(async (req) => {
 
         console.log(`fix-config[${historyId}]: Queued as ${falRequestId}, starting poll chain`);
 
-        // Dispatch polling phase
+        // Dispatch polling phase — pass originalTopLevelKeys for validation
         fetch(`${supabaseUrl}/functions/v1/fix-config`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
           body: JSON.stringify({
             _internal_poll: true,
             historyId, projectId, falRequestId, rerunAfterFix,
+            originalTopLevelKeys,
             chainCount: 0,
           }),
         }).catch((e) => console.error("fix-config: Poll dispatch failed:", e));
 
-        return json({ ok: true });
+        return jsonResponse({ ok: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`fix-config[${historyId}]: Submit error:`, message);
         await sb.from("ai_fix_history").update({
           status: "failed", error_message: message,
         }).eq("id", historyId);
-        return json({ ok: false, error: message }, 500);
+        return jsonResponse({ ok: false, error: message }, 500);
       }
     }
 
@@ -346,20 +392,19 @@ Deno.serve(async (req) => {
     const projectId = typeof body?.project_id === "string" ? body.project_id.trim() : "";
     const userFeedback = typeof body?.user_feedback === "string" ? body.user_feedback.trim() : "";
     const rerunAfterFix = body?.rerun_after_fix === true;
-    const documentation = typeof body?.documentation === "string" ? body.documentation : "";
 
     if (!projectId || !userFeedback) {
-      return json({ error: "project_id and user_feedback are required" }, 400);
+      return jsonResponse({ error: "project_id and user_feedback are required" }, 400);
     }
 
     const { data: project, error: projErr } = await sb.from("projects")
       .select("prompt_config_json").eq("id", projectId).single();
-    if (projErr || !project) return json({ error: "Project not found" }, 404);
+    if (projErr || !project) return jsonResponse({ error: "Project not found" }, 404);
 
     const { data: historyRow, error: historyErr } = await sb.from("ai_fix_history")
       .insert({ project_id: projectId, feedback: userFeedback, status: "processing", rerun_triggered: rerunAfterFix })
       .select("id").single();
-    if (historyErr || !historyRow?.id) return json({ error: "Failed to create fix history entry" }, 500);
+    if (historyErr || !historyRow?.id) return jsonResponse({ error: "Failed to create fix history entry" }, 500);
 
     const historyId = historyRow.id;
     console.log(`fix-config: Accepted for project ${projectId}, dispatching submit`);
@@ -370,13 +415,13 @@ Deno.serve(async (req) => {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
       body: JSON.stringify({
         _internal_submit: true,
-        historyId, projectId, userFeedback, rerunAfterFix, documentation,
+        historyId, projectId, userFeedback, rerunAfterFix,
       }),
     }).catch((e) => console.error("fix-config: Submit dispatch failed:", e));
 
-    return json({ ok: true, history_id: historyId });
+    return jsonResponse({ ok: true, history_id: historyId });
   } catch (err) {
     console.error("fix-config error:", err);
-    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 });

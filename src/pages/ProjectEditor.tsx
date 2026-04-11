@@ -503,7 +503,6 @@ export default function ProjectEditor() {
                               project_id: projectId,
                               user_feedback: aiFeedback,
                               rerun_after_fix: aiRerunAfterFix,
-                              documentation: "See PROMPT_CONFIG_REFERENCE.md for the full schema. The JSON must follow the structure documented there.",
                             },
                           });
                           if (error) throw error;
