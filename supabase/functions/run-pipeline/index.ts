@@ -636,58 +636,8 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         await log("warn", `Topic summary generation failed: ${err.message}`);
       }
 
-      // ── 1b: Generate initial consistency image (now using the SPECIFIC landmark) ──
-      // Time-budget guard
-      if (Date.now() - planStartTime > 60_000) {
-        await log("info", "Plan step time budget reached after scene creation. Re-chaining for image & style bible.");
-        Object.assign(metadataState, {
-          landmark_name: landmarkName,
-          landmark_location: landmarkLocation,
-          landmark_era: landmarkEra,
-          resolved_prompt_config: resolvedConfig,
-        });
-        await updateRun({ current_step: "plan", generated_metadata: metadataState });
-        chainNextStep();
-        return json({ status: "plan_rechaining_for_images", run_id: runId });
-      }
-
-      try {
-        const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
-        const landmarkContext = landmarkName
-          ? `The chosen landmark is: ${landmarkName}, located at ${landmarkLocation}, from ${landmarkEra}. Show the exact real construction site of ${landmarkName} BEFORE the structure exists.`
-          : "";
-        const initialImagePrompt = conceptPrompt
-          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\n${landmarkContext}\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: Show ONLY the untouched, unmodified starting environment of the exact site where ${landmarkName || "the structure"} will be built. No activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
-          : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
-
-        const imageResult = await callAI(
-          [{ role: "user", content: initialImagePrompt }],
-          undefined, undefined,
-          "google/gemini-3-pro-image-preview",
-          ["image", "text"]
-        );
-
-        const assetId = await extractAndUploadImage(
-          imageResult,
-          `${project.id}/initial-image/${runId}/reference`,
-          "initial_image",
-          { run_id: runId, purpose: "run_consistency_anchor" }
-        );
-        if (assetId) {
-          await log("info", `Initial consistency image generated for ${landmarkName || "series"}`);
-        } else {
-          await log("warn", "Could not extract image from AI response — continuing without initial image");
-        }
-        await updateRun({ progress_pct: 15 });
-      } catch (err) {
-        if (err instanceof Image503RetryableError) {
-          await log("warn", `Initial image got 503 (attempt ${err.attempts}). Re-chaining to retry in ~60s...`);
-          chainNextStep();
-          return json({ status: "image_503_rechain", run_id: runId });
-        }
-        await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
-        await updateRun({ progress_pct: 15 });
-      }
+      // ── K0 (initial image) is now generated in the keyframes step using the prompt compiler ──
+      // This avoids it being skipped when the plan step re-chains due to time budget.
 
       } // end if (!scenesAlreadyCreated)
 
