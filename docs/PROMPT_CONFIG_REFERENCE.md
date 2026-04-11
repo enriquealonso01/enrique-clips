@@ -10,8 +10,8 @@ This system generates short-form AI videos (TikTok, Reels, Shorts) through a ful
 
 | Step | Name                 | What Happens                                                                                                                                                                                        |
 | ---- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | **Plan**             | AI generates an initial reference image, a Style Bible (visual consistency anchor), and a structured scene plan with behaviors and motion grammar. AI-generated overlay text is also produced here. |
-| 2    | **Keyframes**        | For each scene, AI generates a high-quality end-frame image using the Style Bible and scene prompts. Each keyframe builds on the previous one for visual continuity.                                |
+| 1    | **Plan**             | AI generates a Style Bible (visual consistency anchor) and a structured scene plan with behaviors and motion grammar. AI-generated overlay text is also produced here. |
+| 2    | **Keyframes**        | First, K0 (the starting-state keyframe) is generated using `start_state_rules` from the config — this anchors the visual identity. Then, for each scene (K1–Kn), AI generates a high-quality end-frame image chained from the previous keyframe. |
 | 3    | **Video Generation** | Each scene's keyframe is sent to a video generator (Kling, Pika, or Vidu) to produce a motion clip.                                                                                                 |
 | 4    | **Polling**          | The system polls the video generator until all clips are ready.                                                                                                                                     |
 | 5    | **Stitch**           | All clips are concatenated into one video. Background music is added. Overlays (text and images) are burned in via FFmpeg.                                                                          |
@@ -49,7 +49,7 @@ The `prompt_config_json` is stored on the project and merged with system default
     "first_scene_hook_rules": [],      // Rules for making Scene 1 attention-grabbing
     "viral_pacing_rules": [],          // Rules for escalating energy across scenes
     "scene_progression_rules": [],     // Rules for logical continuity between scenes
-    "start_state_rules": []            // Rules for the initial untouched state
+    "start_state_rules": []            // Rules for K0 (starting-state keyframe). These are injected directly into the K0 prompt compiler to define what the very first image looks like. CRITICAL for visual consistency — K0 anchors the entire keyframe chain (K0 → K1 → K2 → ...). For construction series: describe the empty site. For rescue/restoration series: describe the neglected/damaged state. Must match the series concept.
   },
 
   "keyframes": {
@@ -144,7 +144,7 @@ Controls how the AI planner breaks down your concept into scenes.
 | `first_scene_hook_rules`       | string[] | Rules for making Scene 1 grab attention.                                        | Override for different content styles: e.g., slow-burn documentaries might relax the "2-second hook" rule.  |
 | `viral_pacing_rules`           | string[] | Rules for energy escalation across scenes.                                      | Override for non-viral content: educational content might use steady pacing instead of escalation.          |
 | `scene_progression_rules`      | string[] | Rules for logical continuity between scenes.                                    | Add domain-specific rules: `"Architectural elements must follow real structural engineering logic"`.        |
-| `start_state_rules`            | string[] | Rules for the initial/opening state.                                            | Override when Scene 1 shouldn't be "untouched" — e.g., stories that start in media res.                     |
+| `start_state_rules`            | string[] | Rules for K0 (starting-state keyframe). Injected into the prompt compiler to define what the very first image looks like. K0 anchors the entire keyframe chain (K0 → K1 → K2 → ...). | For construction: describe empty site. For rescue/restoration: describe neglected/damaged state. Must match series concept — do NOT use generic "untouched" language for non-construction projects. |
 
 ### 3.3 `keyframes` — Image Generation Control
 
