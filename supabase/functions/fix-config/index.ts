@@ -79,6 +79,22 @@ EDITING RULES
 - The output must be directly usable by the application.
 
 ==================================================
+PIPELINE ARCHITECTURE: K0 STARTING-STATE KEYFRAME
+==================================================
+
+The pipeline generates a K0 (starting-state) keyframe as the FIRST image in the keyframes step, BEFORE any scene keyframes (K1, K2, ...).
+K0 is generated using the Keyframe Prompt Compiler with \`planning.start_state_rules\` injected directly into the prompt.
+K0 anchors the entire visual chain: K0 → K1 → K2 → ... → Kn. Each keyframe receives the previous one as a visual reference.
+
+CRITICAL: \`start_state_rules\` must accurately describe the starting state for the series concept:
+- Construction/build series: describe the empty, undeveloped site
+- Rescue/restoration series: describe the neglected, damaged, or abandoned state
+- Story series: describe the opening scene environment
+- Do NOT use generic "untouched/no structures" language — it must match the project's concept
+
+If the user reports visual jumps between the opening and subsequent scenes, the most likely fix is adjusting \`start_state_rules\` to better match the series concept.
+
+==================================================
 REASONING GUIDELINES
 ==================================================
 
