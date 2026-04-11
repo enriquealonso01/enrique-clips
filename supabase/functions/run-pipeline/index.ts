@@ -87,8 +87,9 @@ function compileKeyframePrompt(opts: {
   landmarkLocation?: string;
   landmarkEra?: string;
   topicSummary?: string;
+  startStateRules?: string[];
 }): CompiledKeyframePrompt {
-  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary } = opts;
+  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary, startStateRules } = opts;
 
   // 1. Identity lock — compress style bible to core visual anchors
   const identityParts: string[] = [];
@@ -113,12 +114,18 @@ function compileKeyframePrompt(opts: {
 
   // 2. Scene delta — what changed vs previous scene
   let deltaBlock = "";
-  if (prevScene && prevScene.end_keyframe_prompt) {
+  if (sceneIndex === 0) {
+    // K0: the starting-state keyframe — use start_state_rules from config
+    const rulesText = startStateRules && startStateRules.length > 0
+      ? startStateRules.map(r => `- ${r}`).join("\n")
+      : "Show the starting conditions before any action begins.";
+    deltaBlock = `This is K0 — the STARTING STATE keyframe that anchors the entire series. Show the environment/subject EXACTLY as it exists before the series begins.\n${rulesText}`;
+  } else if (prevScene && prevScene.end_keyframe_prompt) {
     deltaBlock = `Previous scene showed: "${prevScene.scene_title || "prior state"}". ` +
       `This scene advances to: "${scene.scene_title || "next state"}". ` +
       `Show clear visual progression from the previous frame.`;
   } else if (sceneIndex === 1) {
-    deltaBlock = `This is the OPENING frame. Show the initial untouched state.`;
+    deltaBlock = `This is the OPENING scene. Show clear visual progression from the reference image (K0 starting state).`;
   }
 
   // 3. Duplicate prevention — strengthen delta if scene descriptions are too similar
@@ -629,58 +636,8 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         await log("warn", `Topic summary generation failed: ${err.message}`);
       }
 
-      // ── 1b: Generate initial consistency image (now using the SPECIFIC landmark) ──
-      // Time-budget guard
-      if (Date.now() - planStartTime > 60_000) {
-        await log("info", "Plan step time budget reached after scene creation. Re-chaining for image & style bible.");
-        Object.assign(metadataState, {
-          landmark_name: landmarkName,
-          landmark_location: landmarkLocation,
-          landmark_era: landmarkEra,
-          resolved_prompt_config: resolvedConfig,
-        });
-        await updateRun({ current_step: "plan", generated_metadata: metadataState });
-        chainNextStep();
-        return json({ status: "plan_rechaining_for_images", run_id: runId });
-      }
-
-      try {
-        const startStateRules = resolvedConfig.planning.start_state_rules.join("\n- ");
-        const landmarkContext = landmarkName
-          ? `The chosen landmark is: ${landmarkName}, located at ${landmarkLocation}, from ${landmarkEra}. Show the exact real construction site of ${landmarkName} BEFORE the structure exists.`
-          : "";
-        const initialImagePrompt = conceptPrompt
-          ? `Generate a single high-quality ${project.aspect_ratio} reference image showing ONLY the very first moment / opening scene of this series. This is the STARTING STATE before any action begins. Do NOT show any later events, progression, or results described in the series — only the pristine initial setting.\n\n${landmarkContext}\n\nSeries concept: "${conceptPrompt}"\n\n${startStateRules ? `START STATE RULES:\n- ${startStateRules}` : ""}\n\nIMPORTANT: Show ONLY the untouched, unmodified starting environment of the exact site where ${landmarkName || "the structure"} will be built. No activity, NO machinery, NO people, and NO structures. This image anchors visual consistency (lighting, color palette, environment) for all subsequent scenes. Style: cinematic, high detail, rich colors.${resolvedConfig.global.style_notes ? `\nStyle notes: ${resolvedConfig.global.style_notes}` : ""}`
-          : `Generate a high-quality ${project.aspect_ratio} cinematic reference image that can serve as a visual anchor for a short video series. Style: cinematic, high detail, rich colors, compelling subject.`;
-
-        const imageResult = await callAI(
-          [{ role: "user", content: initialImagePrompt }],
-          undefined, undefined,
-          "google/gemini-3-pro-image-preview",
-          ["image", "text"]
-        );
-
-        const assetId = await extractAndUploadImage(
-          imageResult,
-          `${project.id}/initial-image/${runId}/reference`,
-          "initial_image",
-          { run_id: runId, purpose: "run_consistency_anchor" }
-        );
-        if (assetId) {
-          await log("info", `Initial consistency image generated for ${landmarkName || "series"}`);
-        } else {
-          await log("warn", "Could not extract image from AI response — continuing without initial image");
-        }
-        await updateRun({ progress_pct: 15 });
-      } catch (err) {
-        if (err instanceof Image503RetryableError) {
-          await log("warn", `Initial image got 503 (attempt ${err.attempts}). Re-chaining to retry in ~60s...`);
-          chainNextStep();
-          return json({ status: "image_503_rechain", run_id: runId });
-        }
-        await log("warn", `Initial image generation failed: ${err.message} — continuing without it`);
-        await updateRun({ progress_pct: 15 });
-      }
+      // ── K0 (initial image) is now generated in the keyframes step using the prompt compiler ──
+      // This avoids it being skipped when the plan step re-chains due to time budget.
 
       } // end if (!scenesAlreadyCreated)
 
@@ -979,13 +936,89 @@ Generate the timed text frames.`,
         return json({ status: "keyframes_already_done" });
       }
 
-      // Get the last generated keyframe URL as chain reference, or fall back to initial image
+      // Get the last generated keyframe URL as chain reference
       let prevKeyframeUrl: string | null = null;
 
-      // Check if the scene before the first pending one has a keyframe
+      // ── K0: Generate starting-state keyframe if not yet created ──
+      const resolvedConfig = metadata.resolved_prompt_config || {};
+      const startStateRules = resolvedConfig?.planning?.start_state_rules || [];
+      const { data: existingK0 } = await supabase
+        .from("assets")
+        .select("supabase_path")
+        .eq("run_id", runId)
+        .eq("type", "initial_image")
+        .limit(1);
+
+      if (!existingK0 || existingK0.length === 0) {
+        await log("info", "Generating K0 (starting-state keyframe) via prompt compiler...");
+        const k0Compiled = compileKeyframePrompt({
+          sceneIndex: 0,
+          totalScenes: scenes.length,
+          aspectRatio: project.aspect_ratio || "9:16",
+          scene: {
+            scene_title: "Starting State",
+            scene_description: scenes[0]?.scene_description || "",
+            end_keyframe_prompt: startStateRules.length > 0
+              ? `Starting state: ${startStateRules.join(". ")}`
+              : `The starting environment before any action begins. Series concept: ${metadata.landmark_name || conceptPrompt || project.title}`,
+          },
+          prevScene: null,
+          styleBible,
+          conceptPrompt: conceptPrompt || "",
+          landmarkName: metadata.landmark_name || "",
+          landmarkLocation: metadata.landmark_location || "",
+          landmarkEra: metadata.landmark_era || "",
+          topicSummary: run.topic_summary || "",
+          startStateRules,
+        });
+        await log("debug", `Compiled K0 prompt: ${k0Compiled.debugSummary}`);
+
+        try {
+          const k0Result = await callAI(
+            [{ role: "user", content: k0Compiled.prompt }],
+            undefined, undefined,
+            "google/gemini-3-pro-image-preview",
+            ["image", "text"]
+          );
+
+          const k0AssetId = await extractAndUploadImage(
+            k0Result,
+            `${project.id}/keyframes/${runId}/scene-0-start`,
+            "initial_image",
+            { run_id: runId, purpose: "k0_starting_state", keyframe_type: "start", scene_index: 0 }
+          );
+          if (k0AssetId) {
+            await log("info", "K0 (starting-state keyframe) saved");
+            const { data: k0Asset } = await supabase
+              .from("assets")
+              .select("supabase_path")
+              .eq("id", k0AssetId)
+              .single();
+            if (k0Asset) {
+              const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(k0Asset.supabase_path);
+              prevKeyframeUrl = urlData.publicUrl;
+            }
+          } else {
+            await log("warn", "K0 image extraction failed — continuing without visual anchor");
+          }
+        } catch (k0Err) {
+          if (k0Err instanceof Image503RetryableError) {
+            await log("warn", `K0 got 503. Re-chaining to retry...`);
+            chainNextStep();
+            return json({ status: "k0_503_rechain", run_id: runId });
+          }
+          await log("warn", `K0 generation failed: ${k0Err.message} — continuing without it`);
+        }
+      } else {
+        // K0 already exists — use it as starting chain reference
+        const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(existingK0[0].supabase_path);
+        prevKeyframeUrl = urlData.publicUrl;
+        await log("info", "K0 already exists, using as chain anchor.");
+      }
+
+      // Check if the scene before the first pending one has a keyframe (for resume)
       const firstPendingIndex = pendingScenes[0].scene_index;
       if (firstPendingIndex > 1) {
-        // Find keyframe of previous scene
         const prevScene = scenes.find(s => s.scene_index === firstPendingIndex - 1);
         if (prevScene) {
           const { data: prevKf } = await supabase
@@ -999,20 +1032,6 @@ Generate the timed text frames.`,
             const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(prevKf[0].supabase_path);
             prevKeyframeUrl = urlData.publicUrl;
           }
-        }
-      }
-
-      // Fall back to initial image
-      if (!prevKeyframeUrl) {
-        const { data: initialAssets } = await supabase
-          .from("assets")
-          .select("supabase_path")
-          .eq("run_id", runId)
-          .eq("type", "initial_image")
-          .limit(1);
-        if (initialAssets && initialAssets.length > 0) {
-          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(initialAssets[0].supabase_path);
-          prevKeyframeUrl = urlData.publicUrl;
         }
       }
 
