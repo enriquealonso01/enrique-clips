@@ -10,8 +10,8 @@ This system generates short-form AI videos (TikTok, Reels, Shorts) through a ful
 
 | Step | Name                 | What Happens                                                                                                                                                                                        |
 | ---- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | **Plan**             | AI generates an initial reference image, a Style Bible (visual consistency anchor), and a structured scene plan with behaviors and motion grammar. AI-generated overlay text is also produced here. |
-| 2    | **Keyframes**        | For each scene, AI generates a high-quality end-frame image using the Style Bible and scene prompts. Each keyframe builds on the previous one for visual continuity.                                |
+| 1    | **Plan**             | AI generates a Style Bible (visual consistency anchor) and a structured scene plan with behaviors and motion grammar. AI-generated overlay text is also produced here. |
+| 2    | **Keyframes**        | First, K0 (the starting-state keyframe) is generated using `start_state_rules` from the config — this anchors the visual identity. Then, for each scene (K1–Kn), AI generates a high-quality end-frame image chained from the previous keyframe. |
 | 3    | **Video Generation** | Each scene's keyframe is sent to a video generator (Kling, Pika, or Vidu) to produce a motion clip.                                                                                                 |
 | 4    | **Polling**          | The system polls the video generator until all clips are ready.                                                                                                                                     |
 | 5    | **Stitch**           | All clips are concatenated into one video. Background music is added. Overlays (text and images) are burned in via FFmpeg.                                                                          |
