@@ -427,9 +427,9 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
 
       return result;
     } catch (err) {
-      // 503 → wait 60s and retry (unlimited) — applies to both APIs
-      const is503 = (err instanceof GeminiApiError && err.status === 503) ||
-                     (err instanceof OpenAIApiError && err.status === 503);
+      // 503/504 → wait 60s and retry (unlimited) — applies to both APIs
+      const is503 = (err instanceof GeminiApiError && (err.status === 503 || err.status === 504)) ||
+                     (err instanceof OpenAIApiError && (err.status === 503 || err.status === 504));
       if (is503) {
         console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 60s before retry...`);
         logUsage({
@@ -635,7 +635,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
 
     const isTimeout = (err as any)?.name === "AbortError" || 
                       (err instanceof Error && err.message.includes("timed out"));
-    const is503 = err instanceof GeminiApiError && err.status === 503;
+    const is503 = err instanceof GeminiApiError && (err.status === 503 || err.status === 504);
 
     if (is503 || isTimeout) {
       const reason = isTimeout ? "timeout" : "503";
