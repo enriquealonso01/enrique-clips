@@ -512,7 +512,7 @@ async function stage11(sb: SB, runId: string, scenes: any[]) {
 
     try {
       // Submit to Vidu Q3 Turbo
-      const viduResp = await fetch("https://api.vidu.com/ent/v2/tasks/image2video", {
+      const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
         method: "POST",
         headers: {
           "Authorization": `Token ${VIDU_API_KEY}`,
@@ -520,11 +520,11 @@ async function stage11(sb: SB, runId: string, scenes: any[]) {
         },
         body: JSON.stringify({
           model: "viduq3-turbo",
-          images: [{ url: imageUrl, type: "subject_reference" }],
+          images: [imageUrl],
           prompt: `Subtle cinematic animation of scene: ${scene.prompt?.substring(0, 200) || "gentle motion"}. Slow emotional movements. No abrupt transitions.`,
-          duration: Math.min(requestDuration, 8), // Vidu max per clip
+          duration: Math.min(requestDuration, 16),
+          audio: false,
           resolution: "720p",
-          movement_amplitude: "auto",
         }),
       });
 
