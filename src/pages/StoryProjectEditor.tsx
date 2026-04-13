@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { StoryAssetUploader } from "@/components/story/StoryAssetUploader";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Play, Save } from "lucide-react";
+import { StoryStatusBadge } from "@/components/story/StoryStatusBadge";
+import { ArrowLeft, Play, Save, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 
 export default function StoryProjectEditor() {
