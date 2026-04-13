@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { StoryAssetUploader } from "@/components/story/StoryAssetUploader";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Play, Save } from "lucide-react";
+import { StoryStatusBadge } from "@/components/story/StoryStatusBadge";
+import { ArrowLeft, Play, Save, ExternalLink } from "lucide-react";
 import { useState, useEffect } from "react";
 
 export default function StoryProjectEditor() {
@@ -21,6 +22,21 @@ export default function StoryProjectEditor() {
     queryKey: ["story-project", projectId],
     queryFn: async () => {
       const { data, error } = await supabase.from("story_projects").select("*").eq("id", projectId!).single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!projectId,
+  });
+
+  const { data: runs } = useQuery({
+    queryKey: ["story-runs-for-project", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("story_runs")
+        .select("*")
+        .eq("project_id", projectId!)
+        .order("created_at", { ascending: false })
+        .limit(20);
       if (error) throw error;
       return data;
     },
@@ -195,6 +211,38 @@ export default function StoryProjectEditor() {
               <Switch checked={platforms[p] ?? true} onCheckedChange={(v) => setPlatforms({ ...platforms, [p]: v })} />
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Run History</CardTitle></CardHeader>
+        <CardContent>
+          {!runs || runs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No runs yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {runs.map((run) => (
+                <div
+                  key={run.id}
+                  className="flex items-center justify-between p-3 rounded-md border cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => navigate(`/story-runs/${run.id}`)}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <StoryStatusBadge status={run.status} />
+                    <span className="text-sm text-muted-foreground truncate">
+                      {new Date(run.created_at).toLocaleString()}
+                    </span>
+                    {(run.generated_metadata as any)?.story_title && (
+                      <span className="text-sm truncate hidden sm:inline">
+                        {(run.generated_metadata as any).story_title}
+                      </span>
+                    )}
+                  </div>
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
