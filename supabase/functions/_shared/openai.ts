@@ -1,39 +1,41 @@
 // ═══════════════════════════════════════════════════════════
-// Shared Google Gemini Integration Module
-// Direct Gemini REST API calls — no gateway proxy
+// Shared AI Integration Module
+// Routes text to OpenAI (gpt-5.3) or Gemini (flash), images to Gemini
 // ═══════════════════════════════════════════════════════════
 
 // ── Model Routing ────────────────────────────────────────
 
 export const MODELS = {
-  /** Default text model — high quality reasoning */
-  TEXT_DEFAULT: "gemini-2.5-pro",
+  /** Default text model — OpenAI gpt-5.3 */
+  TEXT_DEFAULT: "gpt-5.3-chat-latest",
   /** Cheap model for metadata, classification, tagging */
   TEXT_CHEAP: "gemini-2.5-flash",
-  /** Premium reasoning — same as default for Gemini */
-  TEXT_PREMIUM: "gemini-2.5-pro",
+  /** Premium reasoning — same as default */
+  TEXT_PREMIUM: "gpt-5.3-chat-latest",
   /** Draft image generation */
   IMAGE_DRAFT: "gemini-3-pro-image-preview",
   /** Final image generation */
   IMAGE_FINAL: "gemini-3-pro-image-preview",
 } as const;
 
-export type TextModel = typeof MODELS.TEXT_DEFAULT | typeof MODELS.TEXT_CHEAP | typeof MODELS.TEXT_PREMIUM;
+export type TextModel = string;
 export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
+const OPENAI_BASE = "https://api.openai.com/v1/chat/completions";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_GEMINI_TIMEOUT_MS = 180_000;
-// Image generation timeout — must fit within Edge Function limits (~150s).
-// Flex pricing tier can take 15+ minutes; we use 120s per attempt and re-chain on timeout.
+const DEFAULT_TIMEOUT_MS = 180_000;
 const IMAGE_TIMEOUT_MS = 120_000;
-const IMAGE_RETRY_DELAY_MS = 30_000; // Wait before re-chain on timeout/503
-// Max total wait time per image across re-chains (30 minutes)
+const IMAGE_RETRY_DELAY_MS = 30_000;
 const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
+
+/** Returns true if the model should be routed through OpenAI API */
+function isOpenAIModel(model: string): boolean {
+  return model.startsWith("gpt-") || model.startsWith("openai/");
+}
 
 class GeminiApiError extends Error {
   status: number;
   bodyPreview: string;
-
   constructor(status: number, bodyPreview: string) {
     super(`Gemini API error ${status}: ${bodyPreview}`);
     this.name = "GeminiApiError";
@@ -42,8 +44,17 @@ class GeminiApiError extends Error {
   }
 }
 
-/** Thrown when image generation hits a 503/timeout and should be retried via re-chain.
- *  The pipeline should catch this and re-chain to retry later. */
+class OpenAIApiError extends Error {
+  status: number;
+  bodyPreview: string;
+  constructor(status: number, bodyPreview: string) {
+    super(`OpenAI API error ${status}: ${bodyPreview}`);
+    this.name = "OpenAIApiError";
+    this.status = status;
+    this.bodyPreview = bodyPreview;
+  }
+}
+
 export class Image503RetryableError extends Error {
   attempts: number;
   reason: string;
@@ -59,9 +70,15 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getApiKey(): string {
+function getGeminiApiKey(): string {
   const key = Deno.env.get("GOOGLE_AI_API_KEY");
   if (!key) throw new Error("GOOGLE_AI_API_KEY is not configured");
+  return key;
+}
+
+function getOpenAIApiKey(): string {
+  const key = Deno.env.get("OPENAI_API_KEY");
+  if (!key) throw new Error("OPENAI_API_KEY is not configured");
   return key;
 }
 
@@ -107,7 +124,41 @@ function tryParseJSON(text: string): any | null {
   }
 }
 
-// ── OpenAI-to-Gemini Message Conversion ──────────────────
+// ── OpenAI API Call ──────────────────────────────────────
+
+async function openaiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<any> {
+  const apiKey = getOpenAIApiKey();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const resp = await fetch(OPENAI_BASE, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model, ...body }),
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new OpenAIApiError(resp.status, errText.substring(0, 500));
+    }
+
+    return resp.json();
+  } catch (err) {
+    if ((err as any)?.name === "AbortError") {
+      throw new Error(`OpenAI request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ── OpenAI-to-Gemini Message Conversion (for Gemini models) ──
 
 interface OpenAIMessage {
   role: "system" | "user" | "assistant";
@@ -125,7 +176,6 @@ function convertMessages(messages: OpenAIMessage[]): { systemInstruction?: { par
 
   for (const msg of messages) {
     if (msg.role === "system") {
-      // Gemini uses systemInstruction for system messages
       const text = typeof msg.content === "string" ? msg.content :
         Array.isArray(msg.content) ? msg.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n") : String(msg.content);
       if (systemInstruction) {
@@ -166,7 +216,6 @@ function convertMessages(messages: OpenAIMessage[]): { systemInstruction?: { par
 
 // ── OpenAI-to-Gemini Tool Conversion ─────────────────────
 
-/** Recursively strip `additionalProperties` from a schema object (Gemini doesn't support it) */
 function stripAdditionalProperties(obj: any): any {
   if (obj === null || obj === undefined || typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(stripAdditionalProperties);
@@ -216,8 +265,8 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_GEMINI_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<any> {
-  const apiKey = getApiKey();
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<any> {
+  const apiKey = getGeminiApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
   const controller = new AbortController();
@@ -261,7 +310,6 @@ export interface CallTextOptions {
   endpoint?: string;
 }
 
-// Keep OpenAI-compatible result shape for backward compat
 export interface CallTextResult {
   content: string | null;
   tool_calls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> | undefined;
@@ -269,82 +317,120 @@ export interface CallTextResult {
   raw: any;
 }
 
+/** Call OpenAI directly — messages are already in OpenAI format */
+async function callTextOpenAI(opts: CallTextOptions, model: string): Promise<CallTextResult> {
+  const body: any = {
+    messages: opts.messages,
+  };
+
+  if (opts.tools && opts.tools.length > 0) {
+    body.tools = opts.tools;
+    if (opts.tool_choice) body.tool_choice = opts.tool_choice;
+  }
+  if (opts.temperature !== undefined) body.temperature = opts.temperature;
+  if (opts.max_tokens) body.max_tokens = opts.max_tokens;
+
+  const result = await openaiRequest(model, body);
+
+  const choice = result.choices?.[0];
+  const message = choice?.message;
+
+  return {
+    content: message?.content || null,
+    tool_calls: message?.tool_calls,
+    usage: result.usage ? {
+      prompt_tokens: result.usage.prompt_tokens,
+      completion_tokens: result.usage.completion_tokens,
+      total_tokens: result.usage.total_tokens,
+    } : undefined,
+    raw: result,
+  };
+}
+
+/** Call Gemini — convert OpenAI format to Gemini format */
+async function callTextGemini(opts: CallTextOptions, model: string): Promise<CallTextResult> {
+  const { systemInstruction, contents } = convertMessages(opts.messages);
+
+  const body: any = { contents };
+  if (systemInstruction) body.systemInstruction = systemInstruction;
+
+  if (opts.tools && opts.tools.length > 0) {
+    body.tools = convertTools(opts.tools);
+    const toolConfig = convertToolChoice(opts.tool_choice);
+    if (toolConfig) body.toolConfig = toolConfig;
+  }
+
+  if (opts.temperature !== undefined || opts.max_tokens) {
+    body.generationConfig = {};
+    if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
+    if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
+  }
+
+  const result = await geminiRequest(model, body);
+
+  const candidate = result.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+
+  const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text);
+  const content = textParts.length > 0 ? textParts.join("") : null;
+
+  const functionCalls = parts.filter((p: any) => p.functionCall);
+  const tool_calls = functionCalls.length > 0
+    ? functionCalls.map((p: any, i: number) => ({
+        id: `call_${i}`,
+        type: "function" as const,
+        function: {
+          name: p.functionCall.name,
+          arguments: JSON.stringify(p.functionCall.args),
+        },
+      }))
+    : undefined;
+
+  const usage = result.usageMetadata ? {
+    prompt_tokens: result.usageMetadata.promptTokenCount,
+    completion_tokens: result.usageMetadata.candidatesTokenCount,
+    total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
+  } : undefined;
+
+  return { content, tool_calls, usage, raw: result };
+}
+
 export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
   const model = opts.model || MODELS.TEXT_DEFAULT;
   const endpoint = opts.endpoint || "text";
   const start = Date.now();
 
-  // Unlimited 503 retry loop with 60s waits
   let attempt = 0;
   while (true) {
     attempt++;
     try {
-      const { systemInstruction, contents } = convertMessages(opts.messages);
+      let result: CallTextResult;
 
-      const body: any = { contents };
-      if (systemInstruction) body.systemInstruction = systemInstruction;
-
-      if (opts.tools && opts.tools.length > 0) {
-        body.tools = convertTools(opts.tools);
-        const toolConfig = convertToolChoice(opts.tool_choice);
-        if (toolConfig) body.toolConfig = toolConfig;
+      if (isOpenAIModel(model)) {
+        result = await callTextOpenAI(opts, model);
+      } else {
+        result = await callTextGemini(opts, model);
       }
 
-      if (opts.temperature !== undefined || opts.max_tokens) {
-        body.generationConfig = {};
-        if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
-        if (opts.max_tokens) body.generationConfig.maxOutputTokens = opts.max_tokens;
-      }
-
-      const result = await geminiRequest(model, body);
       const latency = Date.now() - start;
 
-      const candidate = result.candidates?.[0];
-      const parts = candidate?.content?.parts || [];
-
-      // Extract text content
-      const textParts = parts.filter((p: any) => p.text).map((p: any) => p.text);
-      const content = textParts.length > 0 ? textParts.join("") : null;
-
-      // Extract function calls (convert to OpenAI format)
-      const functionCalls = parts.filter((p: any) => p.functionCall);
-      const tool_calls = functionCalls.length > 0
-        ? functionCalls.map((p: any, i: number) => ({
-            id: `call_${i}`,
-            type: "function" as const,
-            function: {
-              name: p.functionCall.name,
-              arguments: JSON.stringify(p.functionCall.args),
-            },
-          }))
-        : undefined;
-
-      const usage = result.usageMetadata ? {
-        prompt_tokens: result.usageMetadata.promptTokenCount,
-        completion_tokens: result.usageMetadata.candidatesTokenCount,
-        total_tokens: (result.usageMetadata.promptTokenCount || 0) + (result.usageMetadata.candidatesTokenCount || 0),
-      } : undefined;
-
       if (attempt > 1) {
-        console.log(`[AI] Text generation succeeded on attempt ${attempt} after 503 retries`);
+        console.log(`[AI] Text generation succeeded on attempt ${attempt} after retries`);
       }
 
       logUsage({
         endpoint, model, success: true, latency_ms: latency,
-        prompt_tokens: usage?.prompt_tokens,
-        completion_tokens: usage?.completion_tokens,
-        total_tokens: usage?.total_tokens,
+        prompt_tokens: result.usage?.prompt_tokens,
+        completion_tokens: result.usage?.completion_tokens,
+        total_tokens: result.usage?.total_tokens,
       });
 
-      return {
-        content,
-        tool_calls,
-        usage,
-        raw: result,
-      };
+      return result;
     } catch (err) {
-      // 503 → wait 60s and retry (unlimited)
-      if (err instanceof GeminiApiError && err.status === 503) {
+      // 503 → wait 60s and retry (unlimited) — applies to both APIs
+      const is503 = (err instanceof GeminiApiError && err.status === 503) ||
+                     (err instanceof OpenAIApiError && err.status === 503);
+      if (is503) {
         console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 60s before retry...`);
         logUsage({
           endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false,
@@ -352,6 +438,18 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
           error: `503 attempt ${attempt}`,
         });
         await sleep(60_000);
+        continue;
+      }
+
+      // OpenAI 429 rate limit → wait 30s and retry
+      if (err instanceof OpenAIApiError && err.status === 429) {
+        console.warn(`[AI] OpenAI 429 rate limit on attempt ${attempt} (${endpoint}). Waiting 30s...`);
+        logUsage({
+          endpoint: `${endpoint}_429_attempt_${attempt}`, model, success: false,
+          latency_ms: Date.now() - start,
+          error: `429 attempt ${attempt}`,
+        });
+        await sleep(30_000);
         continue;
       }
 
@@ -379,7 +477,6 @@ export interface CallStructuredOptions extends CallTextOptions {
 export async function callStructured<T = any>(opts: CallStructuredOptions): Promise<T> {
   const result = await callText(opts);
 
-  // If using tool calls, extract from tool call arguments
   if (result.tool_calls && result.tool_calls.length > 0) {
     const args = result.tool_calls[0].function.arguments;
     const parsed = tryParseJSON(args);
@@ -387,12 +484,10 @@ export async function callStructured<T = any>(opts: CallStructuredOptions): Prom
     throw new Error(`Failed to parse tool call JSON: ${args.substring(0, 200)}`);
   }
 
-  // If parsing as JSON content
   if (opts.parseJSON && result.content) {
     const parsed = tryParseJSON(result.content);
     if (parsed !== null) return parsed as T;
 
-    // Retry once with repair prompt
     console.log("[AI] JSON parse failed, retrying with repair prompt...");
     const repairResult = await callText({
       ...opts,
@@ -426,7 +521,6 @@ export interface CallImageOptions {
   quality?: string;
   n?: number;
   endpoint?: string;
-  /** Optional reference image as base64 data URI for image-to-image */
   referenceImage?: string;
 }
 
@@ -456,8 +550,8 @@ function sizeToAspectRatio(size?: string): string {
 
 function qualityToResolution(quality?: string): string {
   if (quality === "high") return "2K";
-  if (quality === "low") return "1K"; // gemini-3.1-flash-lite-preview minimum is 1K
-  return "1K"; // medium/default
+  if (quality === "low") return "1K";
+  return "1K";
 }
 
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
@@ -467,19 +561,16 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
 
   const parts: any[] = [{ text: opts.prompt }];
 
-  // Support image-to-image by including reference image
   if (opts.referenceImage) {
     const base64Match = opts.referenceImage.match(/^data:([^;]+);base64,(.+)$/s);
     if (base64Match) {
       parts.unshift({ inlineData: { mimeType: base64Match[1], data: base64Match[2] } });
     } else if (opts.referenceImage.startsWith("http")) {
-      // Fetch HTTP URL and convert to base64 for Gemini inlineData
       try {
         const imgResp = await fetch(opts.referenceImage);
         if (imgResp.ok) {
           const imgBuffer = await imgResp.arrayBuffer();
           const imgBytes = new Uint8Array(imgBuffer);
-          // Convert to base64
           let binary = "";
           for (let i = 0; i < imgBytes.length; i++) {
             binary += String.fromCharCode(imgBytes[i]);
@@ -506,14 +597,11 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
-    // Use Flex pricing tier — Gemini REST expects lowercase `flex`
     service_tier: "flex",
   };
 
-  // Single attempt per invocation — on 503 or timeout, throw for pipeline re-chain
   const attemptStart = Date.now();
   try {
-    // X-Server-Timeout tells Gemini to keep the connection open longer for Flex queue
     const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
       "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
     });
@@ -545,7 +633,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   } catch (err) {
     const latency = Date.now() - attemptStart;
 
-    // 503 (overloaded) or timeout (AbortError / Flex queue delay) → retriable via re-chain
     const isTimeout = (err as any)?.name === "AbortError" || 
                       (err instanceof Error && err.message.includes("timed out"));
     const is503 = err instanceof GeminiApiError && err.status === 503;
@@ -561,7 +648,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       throw new Image503RetryableError(1, reason);
     }
 
-    // Non-retriable errors fail immediately
     logUsage({
       endpoint, model, success: false, latency_ms: latency,
       error: err instanceof Error ? err.message : String(err),
@@ -570,7 +656,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   }
 }
 
-// ── Summarization helpers (for logging) ──────────────────
+// ── Summarization helpers ────────────────────────────────
 
 export function summarizeMessages(messages: Array<{ role: string; content: any }>): any[] {
   return messages.map(m => {
@@ -605,13 +691,12 @@ export function summarizeAIResponse(result: CallTextResult): any {
   if (result.content) {
     summary.text = result.content.length > 500 ? result.content.substring(0, 500) + "…[truncated]" : result.content;
   }
-  summary.finish_reason = result.raw.candidates?.[0]?.finishReason;
+  summary.finish_reason = result.raw.candidates?.[0]?.finishReason || result.raw.choices?.[0]?.finish_reason;
   summary.usage = result.usage;
   return summary;
 }
 
 // ── Pipeline-compatible wrapper ──────────────────────────
-// Drop-in replacement for the old callAI function
 
 export async function callAI(
   messages: Array<{ role: string; content: any }>,
@@ -622,7 +707,7 @@ export async function callAI(
   timeoutMs = 120000,
   retries = 1
 ): Promise<any> {
-  // Map old model names to Gemini models
+  // Map old model names
   const modelMap: Record<string, string> = {
     "google/gemini-2.5-pro": MODELS.TEXT_DEFAULT,
     "google/gemini-2.5-flash": MODELS.TEXT_CHEAP,
@@ -638,13 +723,12 @@ export async function callAI(
   };
   const mappedModel = model ? (modelMap[model] || model) : MODELS.TEXT_DEFAULT;
 
-  // Image generation path
+  // Image generation path (always Gemini)
   if (modalities?.includes("image")) {
     const textContent = Array.isArray(messages[0]?.content)
       ? messages[0].content.find((p: any) => p.type === "text")?.text || ""
       : String(messages[0]?.content || "");
 
-    // Check for reference image in the messages
     let referenceImage: string | undefined;
     for (const msg of messages) {
       if (Array.isArray(msg.content)) {
@@ -665,7 +749,6 @@ export async function callAI(
       referenceImage,
     });
 
-    // Return in the old format for backward compat
     return {
       choices: [{
         message: {
@@ -690,7 +773,6 @@ export async function callAI(
     endpoint: "pipeline_text",
   });
 
-  // Return in the old format for backward compat
   const response: any = {
     choices: [{
       message: {
@@ -698,7 +780,7 @@ export async function callAI(
         content: textResult.content,
         tool_calls: textResult.tool_calls,
       },
-      finish_reason: textResult.raw.candidates?.[0]?.finishReason || "stop",
+      finish_reason: textResult.raw.candidates?.[0]?.finishReason || textResult.raw.choices?.[0]?.finish_reason || "stop",
     }],
     usage: textResult.usage,
   };
