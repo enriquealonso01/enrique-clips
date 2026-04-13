@@ -12,6 +12,9 @@ import RunMonitor from "./pages/RunMonitor";
 import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import NotFound from "./pages/NotFound";
+import StoriesIndex from "./pages/StoriesIndex";
+import StoryProjectEditor from "./pages/StoryProjectEditor";
+import StoryRunMonitor from "./pages/StoryRunMonitor";
 
 const queryClient = new QueryClient();
 
@@ -33,6 +36,9 @@ function ProtectedRoutes() {
         <Route path="/projects/:projectId" element={<ProjectEditor />} />
         <Route path="/projects/:projectId/gallery" element={<ProjectGallery />} />
         <Route path="/runs/:runId" element={<RunMonitor />} />
+        <Route path="/stories" element={<StoriesIndex />} />
+        <Route path="/stories/:projectId" element={<StoryProjectEditor />} />
+        <Route path="/story-runs/:runId" element={<StoryRunMonitor />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
