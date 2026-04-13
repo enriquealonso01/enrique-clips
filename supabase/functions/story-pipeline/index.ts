@@ -249,6 +249,66 @@ async function stage4(sb: SB, runId: string, story: any) {
     }
   }
 
+  // ── Step 2b: Firecrawl web search — search for a real photo of the story ──
+  if (!firecrawlImageUrl) {
+    try {
+      const fcKey = Deno.env.get("FIRECRAWL_API_KEY");
+      if (fcKey) {
+        const searchQuery = `${story.title} photo`;
+        await log(sb, runId, "info", `Firecrawl search for image: "${searchQuery}"`);
+        const searchResp = await fetch("https://api.firecrawl.dev/v1/search", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${fcKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: searchQuery, limit: 5 }),
+        });
+        if (searchResp.ok) {
+          const searchData = await searchResp.json();
+          const results = searchData?.data || [];
+          for (const r of results) {
+            const md = r?.metadata || {};
+            const candidate = md.ogImage || md["og:image"] || md.twitterImage || md["twitter:image"] || null;
+            if (candidate && typeof candidate === "string" && candidate.startsWith("http")) {
+              try {
+                const check = await fetch(candidate, { method: "HEAD", redirect: "follow" });
+                const ct = check.headers.get("content-type") || "";
+                if (check.ok && ct.startsWith("image")) {
+                  firecrawlImageUrl = candidate;
+                  await log(sb, runId, "info", `Found image via Firecrawl search: ${candidate.substring(0, 100)}`);
+                  break;
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } else {
+          await log(sb, runId, "warn", `Firecrawl search failed: ${searchResp.status}`);
+        }
+      }
+    } catch (e) {
+      await log(sb, runId, "warn", `Firecrawl search error: ${(e as Error).message}`);
+    }
+
+    // If search found an image, download & store it
+    if (firecrawlImageUrl) {
+      try {
+        const imgResp = await fetch(firecrawlImageUrl);
+        if (imgResp.ok) {
+          const bytes = new Uint8Array(await imgResp.arrayBuffer());
+          const path = `story-runs/${runId}/real_image.png`;
+          const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
+            image_type: "article_image",
+            image_description: "Image found via web search",
+            characters_visible: [],
+            original_url: firecrawlImageUrl,
+            source: "firecrawl_search",
+          });
+          return { primary_url: signedUrl, image_type: "article_image", image_description: "Image found via web search", characters_visible: [], storage_path: path };
+        }
+      } catch (e) {
+        await log(sb, runId, "warn", `Failed to download search image: ${(e as Error).message}`);
+      }
+    }
+  }
+
   // ── Step 3: LLM fallback — ask OpenAI for a real image URL ──
   await log(sb, runId, "info", "No article image found via scraping. Trying LLM image research...");
   const result = await callStructured({
