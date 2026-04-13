@@ -665,6 +665,7 @@ export type Database = {
           is_enabled: boolean
           publish_defaults: Json
           publish_platforms: Json
+          target_duration_sec: number
           timezone: string
           title: string
           updated_at: string
@@ -679,6 +680,7 @@ export type Database = {
           is_enabled?: boolean
           publish_defaults?: Json
           publish_platforms?: Json
+          target_duration_sec?: number
           timezone?: string
           title?: string
           updated_at?: string
@@ -693,6 +695,7 @@ export type Database = {
           is_enabled?: boolean
           publish_defaults?: Json
           publish_platforms?: Json
+          target_duration_sec?: number
           timezone?: string
           title?: string
           updated_at?: string
