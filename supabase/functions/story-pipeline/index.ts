@@ -169,15 +169,15 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 
 async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
-  await log(sb, runId, "info", "Stage 4: Finding real image via AI search");
+  await log(sb, runId, "info", "Stage 4: Finding real image via Gemini search");
 
-  // Step 1: Ask OpenAI for a real image URL
+  // Step 1: Ask Gemini for a real image URL (better at grounded web search)
   const result = await callStructured({
     messages: [
       { role: "system", content: "You are an image researcher. Find the best real, publicly accessible image URL for a story. Priority: 1) real person 2) group/event 3) location 4) contextual. The URL MUST be a direct link to an actual image that exists on the internet (e.g. from Wikipedia, news sites, government sites). Do NOT invent or guess URLs. If you cannot find a real URL, set primary_url to null. Return ONLY JSON." },
       { role: "user", content: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${JSON.stringify(story.characters || [])}\nGuidance: ${story.image_search_guidance || "Find relevant real image"}\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"...","characters_visible":["..."]}` },
     ],
-    model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
+    model: MODELS.TEXT_CHEAP, parseJSON: true, endpoint: "story_real_image",
   });
 
   // Step 2: Validate the URL actually works
