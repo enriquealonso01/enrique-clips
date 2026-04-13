@@ -28,6 +28,21 @@ export default function StoryProjectEditor() {
     enabled: !!projectId,
   });
 
+  const { data: runs } = useQuery({
+    queryKey: ["story-runs-for-project", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("story_runs")
+        .select("*")
+        .eq("project_id", projectId!)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!projectId,
+  });
+
   const [title, setTitle] = useState("");
   const [timezone, setTimezone] = useState("America/New_York");
   const [targetDuration, setTargetDuration] = useState(60);
