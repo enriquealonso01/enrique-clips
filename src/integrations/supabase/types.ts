@@ -532,6 +532,7 @@ export type Database = {
           is_enabled: boolean
           last_triggered_at: string | null
           project_id: string
+          scheduled_post_time: string | null
           time_utc: string
         }
         Insert: {
@@ -541,6 +542,7 @@ export type Database = {
           is_enabled?: boolean
           last_triggered_at?: string | null
           project_id: string
+          scheduled_post_time?: string | null
           time_utc: string
         }
         Update: {
@@ -550,6 +552,7 @@ export type Database = {
           is_enabled?: boolean
           last_triggered_at?: string | null
           project_id?: string
+          scheduled_post_time?: string | null
           time_utc?: string
         }
         Relationships: [
