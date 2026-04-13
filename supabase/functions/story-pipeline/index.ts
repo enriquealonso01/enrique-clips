@@ -272,9 +272,14 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
 // STAGE 6: Final Narration Script
 // ══════════════════════════════════════════════════════════
 
-async function stage6(sb: SB, runId: string, story: any) {
+async function stage6(sb: SB, runId: string, story: any, targetDuration: number = 60) {
   await updateRun(sb, runId, { current_stage: "narration_script", progress_pct: 28 });
-  await log(sb, runId, "info", "Stage 6: Generating final narration script");
+  await log(sb, runId, "info", `Stage 6: Generating final narration script (target: ${targetDuration}s)`);
+
+  const minBeats = Math.max(4, Math.round(targetDuration / 12));
+  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
+  // Estimate words: ~2.5 words/sec for narration
+  const targetWords = Math.round(targetDuration * 2.5);
 
   const result = await callStructured({
     messages: [
@@ -288,12 +293,13 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
+- Target video duration: ${targetDuration} seconds (aim for ~${targetWords} words total)
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
 - Clear payoff at end
-- Optimized for 60-90 second short-form retention
-- 8-14 beats total
+- ${minBeats}-${maxBeats} beats total
+- ${targetDuration <= 60 ? "Keep it tight and punchy — every word counts" : targetDuration <= 120 ? "Standard pacing with room for emotional beats" : "Allow deeper storytelling with more descriptive beats"}
 
 Return JSON:
 {
@@ -306,7 +312,7 @@ Return JSON:
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_narration_script",
   });
 
-  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${result.full_script?.length || 0} chars`);
+  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${result.full_script?.length || 0} chars (~${Math.round((result.full_script?.split(/\s+/).length || 0) / 2.5)}s estimated)`);
   return result;
 }
 
