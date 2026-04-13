@@ -111,6 +111,20 @@ export default function StoryProjectEditor() {
             <Label>Timezone</Label>
             <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} />
           </div>
+          <div className="space-y-3">
+            <Label>Target Video Duration: {targetDuration}s</Label>
+            <Slider
+              value={[targetDuration]}
+              onValueChange={([v]) => setTargetDuration(v)}
+              min={30}
+              max={180}
+              step={5}
+              className="w-full"
+            />
+            <p className="text-xs text-muted-foreground">
+              {targetDuration <= 60 ? "Short & punchy" : targetDuration <= 120 ? "Standard length" : "Extended story"} — the pipeline will adapt beat count and pacing automatically.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
