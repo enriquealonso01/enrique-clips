@@ -29,6 +29,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const queryClient = useQueryClient();
   const [newTime, setNewTime] = useState("09:00");
   const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [newPostTime, setNewPostTime] = useState("");
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
@@ -45,9 +46,11 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
 
   const addSchedule = useMutation({
     mutationFn: async (time: string) => {
+      const insertData: any = { project_id: projectId, time_utc: time + ":00", days_of_week: newDays };
+      if (newPostTime) insertData.scheduled_post_time = newPostTime + ":00";
       const { error } = await supabase
         .from("schedules")
-        .insert({ project_id: projectId, time_utc: time + ":00", days_of_week: newDays } as any);
+        .insert(insertData);
       if (error) throw error;
     },
     onSuccess: () => {
