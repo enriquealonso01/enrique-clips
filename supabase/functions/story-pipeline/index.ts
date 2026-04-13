@@ -171,11 +171,17 @@ async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
   await log(sb, runId, "info", "Stage 4: Finding real image via OpenAI");
 
-  // Step 1: Ask OpenAI for a real image URL (Gemini 503s on this task)
+  // Step 1: Ask OpenAI for a real image URL with stricter sourcing guidance
   const result = await callStructured({
     messages: [
-      { role: "system", content: "You are an image researcher. Find the best real, publicly accessible image URL for a story. Priority: 1) real person 2) group/event 3) location 4) contextual. The URL MUST be a direct link to an actual image that exists on the internet (e.g. from Wikipedia, news sites, government sites). Do NOT invent or guess URLs. If you cannot find a real URL, set primary_url to null. Return ONLY JSON." },
-      { role: "user", content: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${JSON.stringify(story.characters || [])}\nGuidance: ${story.image_search_guidance || "Find relevant real image"}\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"...","characters_visible":["..."]}` },
+      {
+        role: "system",
+        content: "You are a meticulous image researcher for real-world wholesome stories. Return the best REAL, PUBLICLY ACCESSIBLE DIRECT image URL for the story.\n\nSearch priority:\n1) the source article's lead/hero image\n2) Wikimedia Commons / Wikipedia\n3) official organization or newsroom pages\n4) reputable news coverage\n5) a directly related real location/context image only if the exact people/event are unavailable\n\nRules:\n- Return ONLY direct image URLs that should resolve as image/*, ideally ending in .jpg, .jpeg, .png, or .webp.\n- Prefer documentary/news photos over illustrations, collages, logos, icons, screenshots, social-share cards, or watermarked stock images.\n- Do NOT return webpage URLs, gallery pages, guessed CDN paths, or URLs you are not confident exist.\n- If the source article likely contains the best image, prefer that exact image.\n- fallback_url should be a second-best direct image from a different trusted source when possible.\n- If no high-confidence direct image is available, set primary_url to null.\nReturn ONLY JSON."
+      },
+      {
+        role: "user",
+        content: `Story title: "${story.title}"\nHook: ${story.hook || ""}\nSummary: ${story.summary}\nSource article: ${story.source_url || "None"}\nCharacters: ${JSON.stringify(story.characters || [])}\nGroups: ${JSON.stringify(story.groups || [])}\nLocations: ${JSON.stringify(story.locations || [])}\nImage guidance: ${story.image_search_guidance || "Find the most relevant real image"}\n\nPick the single best exact-match or near-exact documentary image for this story. If an exact-match is not available, choose the most specific real contextual image tied to the people, organization, or location.\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"short factual description of the image","characters_visible":["names"]}`
+      },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
   });
