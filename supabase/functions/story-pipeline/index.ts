@@ -426,8 +426,14 @@ Return JSON:
 // ══════════════════════════════════════════════════════════
 
 async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: string) {
+  // Check which scene images already exist (from prior chain)
+  const { data: existingAssets } = await sb.from("story_assets")
+    .select("scene_index").eq("run_id", runId).eq("type", "scene_image");
+  const doneIndices = new Set((existingAssets || []).map((a: any) => a.scene_index));
+  const remaining = scenes.filter((_: any, i: number) => !doneIndices.has(i));
+
   await updateRun(sb, runId, { status: "scene_images_generating", current_stage: "scene_images_generating", progress_pct: 48 });
-  await log(sb, runId, "info", `Stage 10: Generating ${scenes.length} scene images`);
+  await log(sb, runId, "info", `Stage 10: Generating ${remaining.length} scene images (${doneIndices.size} already done)`);
 
   // Get cast reference image for consistency
   const { data: castUrl } = await sb.storage.from("project-assets").createSignedUrl(castImagePath, 3600);
