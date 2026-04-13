@@ -1514,6 +1514,13 @@ Deno.serve(async (req) => {
         formData.append("facebook_page_id", fbPageId);
         formData.append("facebook_media_type", "POSTS");
         formData.append("async_upload", "true");
+
+        // Add scheduled_date if set in run metadata
+        const fbRunMeta = (run.generated_metadata as any) || {};
+        if (fbRunMeta.publish_scheduled_date) {
+          formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
+          if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+        }
         const imgResp = await fetch(kfPublicUrl);
         const imgBlob = await imgResp.blob();
         formData.append("photos[]", imgBlob, "keyframe.png");
@@ -2704,6 +2711,13 @@ Rules:
           formData.append("facebook_page_id", fbPageId);
           formData.append("facebook_media_type", "POSTS");
           formData.append("async_upload", "true");
+
+          // Add scheduled_date if set in run metadata
+          const fbRunMeta = (run.generated_metadata as any) || {};
+          if (fbRunMeta.publish_scheduled_date) {
+            formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
+            if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+          }
 
           // Fetch image and append as file
           const imgResp = await fetch(kfPublicUrl);
