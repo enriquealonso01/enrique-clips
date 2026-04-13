@@ -753,11 +753,17 @@ serve(async (req) => {
       return new Response(JSON.stringify({ status: "chaining" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Stage 5: Cast image
+    // Stage 5: Cast image (retryable on timeout/503)
     let castResult: any;
     try {
       castResult = await stage5(sb, runId, story, realImage);
     } catch (err) {
+      // If it's a retryable image error, re-chain instead of failing
+      if ((err as any)?.name === "Image503RetryableError") {
+        await log(sb, runId, "warn", `Cast image timed out, re-chaining to retry...`);
+        await selfChain(runId, "stage5");
+        return new Response(JSON.stringify({ status: "chaining_retry" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       await failRun(sb, runId, `Cast image failed: ${(err as Error).message}`);
       return new Response(JSON.stringify({ error: "Cast failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
