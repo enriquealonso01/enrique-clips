@@ -82,6 +82,20 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules", projectId] }),
   });
 
+  const updatePostTime = useMutation({
+    mutationFn: async ({ id, time }: { id: string; time: string | null }) => {
+      const { error } = await supabase
+        .from("schedules")
+        .update({ scheduled_post_time: time } as any)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedules", projectId] });
+      toast({ title: "Post time updated" });
+    },
+  });
+
   const deleteSchedule = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("schedules").delete().eq("id", id);
