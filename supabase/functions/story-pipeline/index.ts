@@ -169,40 +169,114 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 
 async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
-  await log(sb, runId, "info", "Stage 4: Finding real image via OpenAI");
+  await log(sb, runId, "info", "Stage 4: Finding real image");
 
-  // Step 1: Ask OpenAI for a real image URL with stricter sourcing guidance
+  // ── Step 1: Firecrawl — scrape the source article for og:image / lead image ──
+  let firecrawlImageUrl: string | null = null;
+  if (story.source_url) {
+    try {
+      const fcKey = Deno.env.get("FIRECRAWL_API_KEY");
+      if (fcKey) {
+        await log(sb, runId, "info", `Scraping source article for images: ${story.source_url}`);
+        const fcResp = await fetch("https://api.firecrawl.dev/v1/scrape", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${fcKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: story.source_url,
+            formats: ["markdown", "links"],
+            onlyMainContent: false,
+          }),
+        });
+        if (fcResp.ok) {
+          const fcData = await fcResp.json();
+          const metadata = fcData?.data?.metadata || fcData?.metadata || {};
+          // Try og:image first, then twitter:image, then any image in metadata
+          const ogImage = metadata.ogImage || metadata["og:image"] || metadata.twitterImage || metadata["twitter:image"] || null;
+          if (ogImage && typeof ogImage === "string" && (ogImage.startsWith("http://") || ogImage.startsWith("https://"))) {
+            // Validate it's actually an image
+            try {
+              const check = await fetch(ogImage, { method: "HEAD", redirect: "follow" });
+              const ct = check.headers.get("content-type") || "";
+              if (check.ok && ct.startsWith("image")) {
+                firecrawlImageUrl = ogImage;
+                await log(sb, runId, "info", `Found og:image via Firecrawl: ${ogImage.substring(0, 100)}`);
+              }
+            } catch { /* skip invalid */ }
+          }
+
+          // If no og:image, try to find first content image from markdown
+          if (!firecrawlImageUrl) {
+            const md = fcData?.data?.markdown || fcData?.markdown || "";
+            const imgMatch = md.match(/!\[.*?\]\((https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|webp)[^\s)]*)\)/i);
+            if (imgMatch?.[1]) {
+              try {
+                const check = await fetch(imgMatch[1], { method: "HEAD", redirect: "follow" });
+                const ct = check.headers.get("content-type") || "";
+                if (check.ok && ct.startsWith("image")) {
+                  firecrawlImageUrl = imgMatch[1];
+                  await log(sb, runId, "info", `Found content image via Firecrawl: ${imgMatch[1].substring(0, 100)}`);
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } else {
+          await log(sb, runId, "warn", `Firecrawl scrape failed: ${fcResp.status}`);
+        }
+      }
+    } catch (e) {
+      await log(sb, runId, "warn", `Firecrawl error: ${(e as Error).message}`);
+    }
+  }
+
+  // ── Step 2: If Firecrawl found a valid image, download & store it ──
+  if (firecrawlImageUrl) {
+    try {
+      const imgResp = await fetch(firecrawlImageUrl);
+      if (imgResp.ok) {
+        const bytes = new Uint8Array(await imgResp.arrayBuffer());
+        const path = `story-runs/${runId}/real_image.png`;
+        const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
+          image_type: "article_image",
+          image_description: `Lead image from source article`,
+          characters_visible: [],
+          original_url: firecrawlImageUrl,
+          source: "firecrawl",
+        });
+        return { primary_url: signedUrl, image_type: "article_image", image_description: "Lead image from source article", characters_visible: [], storage_path: path };
+      }
+    } catch (e) {
+      await log(sb, runId, "warn", `Failed to download Firecrawl image: ${(e as Error).message}`);
+    }
+  }
+
+  // ── Step 3: LLM fallback — ask OpenAI for a real image URL ──
+  await log(sb, runId, "info", "No article image found via scraping. Trying LLM image research...");
   const result = await callStructured({
     messages: [
       {
         role: "system",
-        content: "You are a meticulous image researcher for real-world wholesome stories. Return the best REAL, PUBLICLY ACCESSIBLE DIRECT image URL for the story.\n\nSearch priority:\n1) the source article's lead/hero image\n2) Wikimedia Commons / Wikipedia\n3) official organization or newsroom pages\n4) reputable news coverage\n5) a directly related real location/context image only if the exact people/event are unavailable\n\nRules:\n- Return ONLY direct image URLs that should resolve as image/*, ideally ending in .jpg, .jpeg, .png, or .webp.\n- Prefer documentary/news photos over illustrations, collages, logos, icons, screenshots, social-share cards, or watermarked stock images.\n- Do NOT return webpage URLs, gallery pages, guessed CDN paths, or URLs you are not confident exist.\n- If the source article likely contains the best image, prefer that exact image.\n- fallback_url should be a second-best direct image from a different trusted source when possible.\n- If no high-confidence direct image is available, set primary_url to null.\nReturn ONLY JSON."
+        content: "You are a meticulous image researcher for real-world wholesome stories. Return the best REAL, PUBLICLY ACCESSIBLE DIRECT image URL for the story.\n\nSearch priority:\n1) Wikimedia Commons / Wikipedia\n2) official organization or newsroom pages\n3) reputable news coverage\n\nRules:\n- Return ONLY direct image URLs that resolve as image/*, ideally ending in .jpg, .jpeg, .png, or .webp.\n- Prefer documentary/news photos over illustrations, logos, icons, screenshots, or watermarked stock images.\n- Do NOT return webpage URLs, gallery pages, guessed CDN paths, or URLs you are not confident exist.\n- If no high-confidence direct image is available, set primary_url to null.\nReturn ONLY JSON."
       },
       {
         role: "user",
-        content: `Story title: "${story.title}"\nHook: ${story.hook || ""}\nSummary: ${story.summary}\nSource article: ${story.source_url || "None"}\nCharacters: ${JSON.stringify(story.characters || [])}\nGroups: ${JSON.stringify(story.groups || [])}\nLocations: ${JSON.stringify(story.locations || [])}\nImage guidance: ${story.image_search_guidance || "Find the most relevant real image"}\n\nPick the single best exact-match or near-exact documentary image for this story. If an exact-match is not available, choose the most specific real contextual image tied to the people, organization, or location.\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"short factual description of the image","characters_visible":["names"]}`
+        content: `Story title: "${story.title}"\nHook: ${story.hook || ""}\nSummary: ${story.summary}\nSource: ${story.source_url || "None"}\nCharacters: ${JSON.stringify(story.characters || [])}\nGroups: ${JSON.stringify(story.groups || [])}\nLocations: ${JSON.stringify(story.locations || [])}\nImage guidance: ${story.image_search_guidance || "Find the most relevant real image"}\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"short factual description","characters_visible":["names"]}`
       },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
   });
 
-  // Step 2: Validate the URL actually works
   let validUrl: string | null = null;
   for (const candidate of [result.primary_url, result.fallback_url]) {
     if (!candidate || candidate === "null") continue;
     try {
       const check = await fetch(candidate, { method: "HEAD", redirect: "follow" });
       const ct = check.headers.get("content-type") || "";
-      if (check.ok && ct.startsWith("image")) {
-        validUrl = candidate;
-        break;
-      }
+      if (check.ok && ct.startsWith("image")) { validUrl = candidate; break; }
     } catch { /* skip */ }
   }
 
   if (validUrl) {
-    // Download and store in our storage so the URL doesn't expire
-    await log(sb, runId, "info", `Real image found: ${validUrl.substring(0, 100)}`);
+    await log(sb, runId, "info", `Real image found via LLM: ${validUrl.substring(0, 100)}`);
     try {
       const imgResp = await fetch(validUrl);
       if (imgResp.ok) {
@@ -213,15 +287,16 @@ async function stage4(sb: SB, runId: string, story: any) {
           image_description: result.image_description || "",
           characters_visible: result.characters_visible || [],
           original_url: validUrl,
+          source: "llm_research",
         });
         return { ...result, primary_url: signedUrl, storage_path: path };
       }
     } catch (e) {
-      await log(sb, runId, "warn", `Failed to download real image: ${(e as Error).message}`);
+      await log(sb, runId, "warn", `Failed to download LLM image: ${(e as Error).message}`);
     }
   }
 
-  // Step 3: Fallback — generate photorealistic image with Gemini
+  // ── Step 4: Final fallback — generate photorealistic image with Gemini ──
   await log(sb, runId, "info", "No valid real image found. Generating photorealistic fallback with Gemini.");
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
   const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
@@ -238,6 +313,7 @@ async function stage4(sb: SB, runId: string, story: any) {
     image_type: "generated_photorealistic",
     image_description: `AI-generated photorealistic image for "${story.title}"`,
     characters_visible: (story.characters || []).map((c: any) => c.name),
+    source: "gemini_generation",
   });
 
   return {
