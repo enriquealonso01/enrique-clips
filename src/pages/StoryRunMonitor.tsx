@@ -73,7 +73,9 @@ export default function StoryRunMonitor() {
   const metadata = run.generated_metadata as any;
   const storyTitle = metadata?.story?.title;
   const storyHook = metadata?.story?.hook;
-  const realImageUrl = metadata?.real_image?.primary_url;
+  // Prefer the stored asset URL over the metadata URL (which may be a hallucinated external URL)
+  const realImageAsset = assets?.find((a) => a.type === "real_image");
+  const realImageUrl = realImageAsset?.signed_url_last || metadata?.real_image?.primary_url;
 
   return (
     <div className="space-y-6 max-w-4xl">
