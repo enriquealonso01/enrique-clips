@@ -1,0 +1,1 @@
+ALTER TABLE public.schedules ADD COLUMN scheduled_post_time_end time without time zone DEFAULT NULL;

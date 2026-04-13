@@ -533,6 +533,7 @@ export type Database = {
           last_triggered_at: string | null
           project_id: string
           scheduled_post_time: string | null
+          scheduled_post_time_end: string | null
           time_utc: string
         }
         Insert: {
@@ -543,6 +544,7 @@ export type Database = {
           last_triggered_at?: string | null
           project_id: string
           scheduled_post_time?: string | null
+          scheduled_post_time_end?: string | null
           time_utc: string
         }
         Update: {
@@ -553,6 +555,7 @@ export type Database = {
           last_triggered_at?: string | null
           project_id?: string
           scheduled_post_time?: string | null
+          scheduled_post_time_end?: string | null
           time_utc?: string
         }
         Relationships: [
