@@ -437,9 +437,11 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 
   for (let i = 0; i < scenes.length; i++) {
     if (shouldChain()) {
-      // Save progress and self-chain
+      // Merge progress into existing metadata (don't overwrite!)
+      const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+      const existingMeta = (cur?.generated_metadata as any) || {};
       await updateRun(sb, runId, {
-        generated_metadata: { scene_images_progress: i, total_scenes: scenes.length },
+        generated_metadata: { ...existingMeta, scene_images_progress: i, total_scenes: scenes.length },
         progress_pct: 48 + Math.round((i / scenes.length) * 12),
       });
       await log(sb, runId, "info", `Timeout guard: chaining at scene image ${i}/${scenes.length}`);
