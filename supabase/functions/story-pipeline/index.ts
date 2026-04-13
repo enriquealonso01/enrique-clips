@@ -442,6 +442,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
   const imageUrls: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
+    if (doneIndices.has(i)) { imageUrls.push(`story-runs/${runId}/scene_${i}.png`); continue; }
     if (shouldChain()) {
       // Merge progress into existing metadata (don't overwrite!)
       const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
