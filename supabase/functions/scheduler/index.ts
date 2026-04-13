@@ -89,16 +89,33 @@ Deno.serve(async (req) => {
       // Build initial generated_metadata with optional publish_scheduled_date
       const initialMetadata: Record<string, unknown> = {};
       if (schedule.scheduled_post_time) {
-        // Compute full ISO-8601 datetime: today in project TZ + scheduled_post_time
+        // Determine the actual post time — random within range if end is set
+        let postTimeStr: string = schedule.scheduled_post_time; // HH:MM:SS
+        if (schedule.scheduled_post_time_end) {
+          const [sh, sm] = schedule.scheduled_post_time.split(":").map(Number);
+          const [eh, em] = schedule.scheduled_post_time_end.split(":").map(Number);
+          const startMin = sh * 60 + sm;
+          const endMin = eh * 60 + em;
+          // Support overnight ranges (e.g. 22:00 → 02:00)
+          const totalRange = endMin >= startMin ? endMin - startMin : (1440 - startMin) + endMin;
+          const randomOffset = Math.floor(Math.random() * (totalRange + 1));
+          const pickedMin = (startMin + randomOffset) % 1440;
+          const pH = String(Math.floor(pickedMin / 60)).padStart(2, "0");
+          const pM = String(pickedMin % 60).padStart(2, "0");
+          postTimeStr = `${pH}:${pM}:00`;
+          console.log(`Schedule ${schedule.id}: random post time ${postTimeStr} (range ${schedule.scheduled_post_time}–${schedule.scheduled_post_time_end})`);
+        }
+
+        // Compute full ISO-8601 datetime: today in project TZ + chosen post time
         const localDateStr = now.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
-        const publishLocalStr = `${localDateStr}T${schedule.scheduled_post_time}`;
+        const publishLocalStr = `${localDateStr}T${postTimeStr}`;
         // If the scheduled post time has already passed today, schedule for tomorrow
         const scheduledLocal = new Date(new Date(publishLocalStr).toLocaleString("en-US", { timeZone: tz }));
         let publishDate = publishLocalStr;
         if (scheduledLocal <= localDate) {
           const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
           const tomorrowStr = tomorrow.toLocaleDateString("en-CA", { timeZone: tz });
-          publishDate = `${tomorrowStr}T${schedule.scheduled_post_time}`;
+          publishDate = `${tomorrowStr}T${postTimeStr}`;
         }
         initialMetadata.publish_scheduled_date = publishDate;
         initialMetadata.publish_timezone = tz;

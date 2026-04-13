@@ -30,6 +30,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const [newTime, setNewTime] = useState("09:00");
   const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
   const [newPostTime, setNewPostTime] = useState("");
+  const [newPostTimeEnd, setNewPostTimeEnd] = useState("");
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
@@ -48,6 +49,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     mutationFn: async (time: string) => {
       const insertData: any = { project_id: projectId, time_utc: time + ":00", days_of_week: newDays };
       if (newPostTime) insertData.scheduled_post_time = newPostTime + ":00";
+      if (newPostTimeEnd) insertData.scheduled_post_time_end = newPostTimeEnd + ":00";
       const { error } = await supabase
         .from("schedules")
         .insert(insertData);
@@ -83,10 +85,12 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   });
 
   const updatePostTime = useMutation({
-    mutationFn: async ({ id, time }: { id: string; time: string | null }) => {
+    mutationFn: async ({ id, time, timeEnd }: { id: string; time: string | null; timeEnd?: string | null }) => {
+      const updateData: any = { scheduled_post_time: time };
+      if (timeEnd !== undefined) updateData.scheduled_post_time_end = timeEnd;
       const { error } = await supabase
         .from("schedules")
-        .update({ scheduled_post_time: time } as any)
+        .update(updateData as any)
         .eq("id", id);
       if (error) throw error;
     },
@@ -133,7 +137,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Post Time (optional)</Label>
+              <Label>Post Time From (optional)</Label>
               <Input
                 type="time"
                 value={newPostTime}
@@ -142,8 +146,20 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 placeholder="Immediate"
               />
             </div>
+            {newPostTime && (
+              <div className="space-y-2">
+                <Label>Post Time To (optional)</Label>
+                <Input
+                  type="time"
+                  value={newPostTimeEnd}
+                  onChange={(e) => setNewPostTimeEnd(e.target.value)}
+                  className="max-w-[160px]"
+                  placeholder="Same as From"
+                />
+              </div>
+            )}
             <Button
-              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); }}
+              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); setNewPostTimeEnd(""); }}
               disabled={addSchedule.isPending || newDays.length === 0}
               size="sm"
             >
@@ -152,7 +168,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Leave "Post Time" empty to publish immediately when the video finishes.
+            Leave "Post Time" empty to publish immediately. Set both From and To for a random time in that range.
           </p>
           <div className="flex gap-2 flex-wrap">
             {WEEKDAYS.map((day) => (
@@ -180,7 +196,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
             {schedules.map((schedule) => {
               const timeDisplay = schedule.time_utc.slice(0, 5); // HH:MM
               const postTimeRaw = (schedule as any).scheduled_post_time;
+              const postTimeEndRaw = (schedule as any).scheduled_post_time_end;
               const postTimeDisplay = postTimeRaw ? postTimeRaw.slice(0, 5) : null;
+              const postTimeEndDisplay = postTimeEndRaw ? postTimeEndRaw.slice(0, 5) : null;
               const lastTriggered = schedule.last_triggered_at
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
@@ -189,6 +207,12 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               const daysLabel = scheduleDays.length === 7
                 ? "Every day"
                 : WEEKDAYS.filter((d) => scheduleDays.includes(d.value)).map((d) => d.label).join(", ");
+
+              const postLabel = postTimeDisplay
+                ? postTimeEndDisplay
+                  ? `Post ${postTimeDisplay}–${postTimeEndDisplay}`
+                  : `Post at ${postTimeDisplay}`
+                : "Post immediately";
 
               return (
                 <div
@@ -205,15 +229,14 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                       />
                       <div>
                         <p className="font-medium text-sm">
-                          Run {timeDisplay} · {daysLabel}
-                          {postTimeDisplay ? ` → Post at ${postTimeDisplay}` : " → Post immediately"}
+                          Run {timeDisplay} · {daysLabel} → {postLabel}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Last triggered: {lastTriggered}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       <Input
                         type="time"
                         value={postTimeDisplay || ""}
@@ -222,11 +245,28 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                           updatePostTime.mutate({
                             id: schedule.id,
                             time: val ? val + ":00" : null,
+                            timeEnd: val ? undefined : null, // clear end if clearing start
                           });
                         }}
-                        className="w-[120px] h-8 text-xs"
-                        placeholder="Immediate"
+                        className="w-[110px] h-8 text-xs"
+                        placeholder="From"
                       />
+                      {postTimeDisplay && (
+                        <Input
+                          type="time"
+                          value={postTimeEndDisplay || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updatePostTime.mutate({
+                              id: schedule.id,
+                              time: postTimeRaw,
+                              timeEnd: val ? val + ":00" : null,
+                            });
+                          }}
+                          className="w-[110px] h-8 text-xs"
+                          placeholder="To"
+                        />
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
