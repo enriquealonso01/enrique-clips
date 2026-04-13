@@ -101,6 +101,9 @@ async function stage1(sb: SB, runId: string) {
   const { data: run } = await sb.from("story_runs").select("*, story_projects(*)").eq("id", runId).single();
   if (!run) throw new Error("Run not found");
 
+  const project = run.story_projects as any;
+  const targetDuration = project?.target_duration_sec || 60;
+
   const { data: memory } = await sb.from("story_memory")
     .select("story_title, story_fingerprint")
     .eq("project_id", run.project_id)
@@ -108,32 +111,39 @@ async function stage1(sb: SB, runId: string) {
 
   const lastTitles = (memory || []).map((m: any) => m.story_title);
   const fingerprints = (memory || []).map((m: any) => m.story_fingerprint).filter(Boolean);
-  await log(sb, runId, "info", `Loaded ${lastTitles.length} previous story titles`);
+  await log(sb, runId, "info", `Loaded ${lastTitles.length} previous story titles. Target duration: ${targetDuration}s`);
 
-  return { run, project: run.story_projects, lastTitles, fingerprints, projectId: run.project_id };
+  return { run, project, lastTitles, fingerprints, projectId: run.project_id, targetDuration };
 }
 
 // ══════════════════════════════════════════════════════════
 // STAGE 2: Story Discovery
 // ══════════════════════════════════════════════════════════
 
-async function stage2(sb: SB, runId: string, lastTitles: string[]) {
+async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = 60) {
   await updateRun(sb, runId, { status: "researching_story", current_stage: "researching_story", progress_pct: 8 });
   await log(sb, runId, "info", "Stage 2: Discovering wholesome story via AI");
 
   const titlesBlock = lastTitles.length > 0
     ? `\n\nPREVIOUSLY USED TITLES (DO NOT reuse):\n${lastTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}` : "";
 
+  // Adapt beat count to target duration
+  const minBeats = Math.max(4, Math.round(targetDuration / 12));
+  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
+
   return await callStructured({
     messages: [
       { role: "system", content: "You are a viral short-form video researcher. Find real, wholesome, feel-good stories with strong hooks and emotional payoffs. Return ONLY valid JSON." },
-      { role: "user", content: `Find a NEW wholesome real-world story for a 60-90 second vertical video. Requirements:
+      { role: "user", content: `Find a NEW wholesome real-world story for a ${targetDuration}-second vertical video. Requirements:
 - Strong hook in first sentence
 - Emotional reward/payoff moment
 - Real characters, real events
-- Visual potential${titlesBlock}
+- Visual potential
+- Story depth should match a ${targetDuration}s video (${targetDuration <= 60 ? "concise and punchy" : targetDuration <= 120 ? "moderate depth with good pacing" : "deeper narrative with multiple beats"})${titlesBlock}
 
-Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}` },
+Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
+
+IMPORTANT: Provide ${minBeats}-${maxBeats} draft beats to fill ~${targetDuration} seconds of narration.` },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_discovery",
   });
@@ -262,9 +272,14 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
 // STAGE 6: Final Narration Script
 // ══════════════════════════════════════════════════════════
 
-async function stage6(sb: SB, runId: string, story: any) {
+async function stage6(sb: SB, runId: string, story: any, targetDuration: number = 60) {
   await updateRun(sb, runId, { current_stage: "narration_script", progress_pct: 28 });
-  await log(sb, runId, "info", "Stage 6: Generating final narration script");
+  await log(sb, runId, "info", `Stage 6: Generating final narration script (target: ${targetDuration}s)`);
+
+  const minBeats = Math.max(4, Math.round(targetDuration / 12));
+  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
+  // Estimate words: ~2.5 words/sec for narration
+  const targetWords = Math.round(targetDuration * 2.5);
 
   const result = await callStructured({
     messages: [
@@ -278,12 +293,13 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
+- Target video duration: ${targetDuration} seconds (aim for ~${targetWords} words total)
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
 - Clear payoff at end
-- Optimized for 60-90 second short-form retention
-- 8-14 beats total
+- ${minBeats}-${maxBeats} beats total
+- ${targetDuration <= 60 ? "Keep it tight and punchy — every word counts" : targetDuration <= 120 ? "Standard pacing with room for emotional beats" : "Allow deeper storytelling with more descriptive beats"}
 
 Return JSON:
 {
@@ -296,7 +312,7 @@ Return JSON:
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_narration_script",
   });
 
-  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${result.full_script?.length || 0} chars`);
+  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${result.full_script?.length || 0} chars (~${Math.round((result.full_script?.split(/\s+/).length || 0) / 2.5)}s estimated)`);
   return result;
 }
 
@@ -641,7 +657,7 @@ serve(async (req) => {
     if (resumeStage === "stage6") {
       await log(sb, runId, "info", "Resuming from stage 6 (narration)");
       const story = meta.story;
-      const script = await stage6(sb, runId, story);
+      const script = await stage6(sb, runId, story, meta.target_duration || 60);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script } });
 
       if (shouldChain()) { await selfChain(runId, "stage7"); return new Response(JSON.stringify({ status: "chaining" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -670,7 +686,7 @@ serve(async (req) => {
 
     if (resumeStage === "stage7") {
       const story = meta.story;
-      const script = meta.script || await stage6(sb, runId, story);
+      const script = meta.script || await stage6(sb, runId, story, meta.target_duration || 60);
       const narration = await stage7(sb, runId, script);
       const timedBeats = await stage8(sb, runId, script, narration.alignment);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script, narration: { path: narration.path }, timed_beats: timedBeats } });
@@ -707,7 +723,7 @@ serve(async (req) => {
     let story: any = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        story = await stage2(sb, runId, context.lastTitles);
+        story = await stage2(sb, runId, context.lastTitles, context.targetDuration);
         if (await stage3(sb, runId, story, context.fingerprints, context.lastTitles)) break;
         story = null;
       } catch (err) {
@@ -717,14 +733,14 @@ serve(async (req) => {
     }
     if (!story) { await failRun(sb, runId, "No valid story found after 3 attempts"); return new Response(JSON.stringify({ error: "No story" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
-    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { story } });
+    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { story, target_duration: context.targetDuration } });
 
     // Stage 4: Real image
     let realImage: any = null;
     try { realImage = await stage4(sb, runId, story); } catch (err) {
       await log(sb, runId, "warn", `Real image failed: ${(err as Error).message}`);
     }
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage }, progress_pct: 20 });
+    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, target_duration: context.targetDuration }, progress_pct: 20 });
 
     if (shouldChain()) {
       await selfChain(runId, "stage5");
@@ -744,7 +760,7 @@ serve(async (req) => {
     const fp = (story.summary || "").substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
     await sb.from("story_memory").insert({ project_id: context.projectId, run_id: runId, story_title: story.title, story_fingerprint: fp, source_url: story.source_url || null });
 
-    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { story, real_image: realImage, cast_image: castResult } });
+    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage6");
@@ -752,8 +768,8 @@ serve(async (req) => {
     }
 
     // Stage 6: Narration script
-    const script = await stage6(sb, runId, story);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script } });
+    const script = await stage6(sb, runId, story, context.targetDuration);
+    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage7");

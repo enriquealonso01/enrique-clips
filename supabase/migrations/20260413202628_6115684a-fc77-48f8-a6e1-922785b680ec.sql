@@ -1,0 +1,1 @@
+ALTER TABLE public.story_projects ADD COLUMN target_duration_sec integer NOT NULL DEFAULT 60;
