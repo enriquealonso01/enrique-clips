@@ -154,19 +154,43 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 }
 
 // ══════════════════════════════════════════════════════════
-// STAGE 4: Real Image Retrieval
+// STAGE 4: Real Image Generation (photorealistic via Gemini)
 // ══════════════════════════════════════════════════════════
 
 async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
-  await log(sb, runId, "info", "Stage 4: Finding real image");
-  return await callStructured({
-    messages: [
-      { role: "system", content: "You are an image researcher. Find the best real image URL for a story. Priority: 1) real person 2) group/event 3) location 4) contextual. Return ONLY JSON." },
-      { role: "user", content: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${JSON.stringify(story.characters || [])}\nGuidance: ${story.image_search_guidance || "Find relevant real image"}\n\nReturn: {"primary_url":"...","fallback_url":"...","image_type":"person|group|place|contextual","image_description":"...","characters_visible":["..."]}` },
-    ],
-    model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
+  await log(sb, runId, "info", "Stage 4: Generating photorealistic real image");
+
+  // Determine best subject for image
+  const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
+  const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
+
+  const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style.`;
+
+  const imageResult = await callImage({
+    prompt,
+    model: MODELS.IMAGE_FINAL,
+    size: "9:16",
+    quality: "high",
+    endpoint: "story_real_image",
   });
+
+  const path = `story-runs/${runId}/real_image.png`;
+  const bytes = Uint8Array.from(atob(imageResult.b64_json), c => c.charCodeAt(0));
+  const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
+    image_type: "generated_photorealistic",
+    image_description: `Photorealistic image for "${story.title}"`,
+    characters_visible: (story.characters || []).map((c: any) => c.name),
+  });
+
+  return {
+    primary_url: signedUrl,
+    fallback_url: signedUrl,
+    image_type: "generated_photorealistic",
+    image_description: `Photorealistic image for "${story.title}"`,
+    characters_visible: (story.characters || []).map((c: any) => c.name),
+    storage_path: path,
+  };
 }
 
 // ══════════════════════════════════════════════════════════
