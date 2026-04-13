@@ -86,10 +86,33 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Build initial generated_metadata with optional publish_scheduled_date
+      const initialMetadata: Record<string, unknown> = {};
+      if (schedule.scheduled_post_time) {
+        // Compute full ISO-8601 datetime: today in project TZ + scheduled_post_time
+        const localDateStr = now.toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+        const publishLocalStr = `${localDateStr}T${schedule.scheduled_post_time}`;
+        // If the scheduled post time has already passed today, schedule for tomorrow
+        const scheduledLocal = new Date(new Date(publishLocalStr).toLocaleString("en-US", { timeZone: tz }));
+        let publishDate = publishLocalStr;
+        if (scheduledLocal <= localDate) {
+          const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          const tomorrowStr = tomorrow.toLocaleDateString("en-CA", { timeZone: tz });
+          publishDate = `${tomorrowStr}T${schedule.scheduled_post_time}`;
+        }
+        initialMetadata.publish_scheduled_date = publishDate;
+        initialMetadata.publish_timezone = tz;
+        console.log(`Schedule ${schedule.id}: post will be scheduled at ${publishDate} (${tz})`);
+      }
+
       // Create a new run
       const { data: run, error: runErr } = await supabase
         .from("runs")
-        .insert({ project_id: project.id, status: "queued" as const })
+        .insert({
+          project_id: project.id,
+          status: "queued" as const,
+          generated_metadata: Object.keys(initialMetadata).length > 0 ? initialMetadata : {},
+        })
         .select()
         .single();
 
