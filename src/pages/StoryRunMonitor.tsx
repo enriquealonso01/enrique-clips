@@ -112,7 +112,10 @@ export default function StoryRunMonitor() {
             {realImageUrl && (
               <div className="mt-3">
                 <p className="text-xs text-muted-foreground mb-1">Real Image</p>
-                <img src={realImageUrl} alt="Story reference" className="rounded-md max-h-48 object-cover" />
+                <a href={realImageUrl} target="_blank" rel="noopener noreferrer">
+                  <img src={realImageUrl} alt="Story reference" className="rounded-md max-h-64 w-full object-cover border" crossOrigin="anonymous" />
+                </a>
+                <p className="text-xs text-muted-foreground mt-1 truncate">{realImageUrl}</p>
               </div>
             )}
           </CardContent>
