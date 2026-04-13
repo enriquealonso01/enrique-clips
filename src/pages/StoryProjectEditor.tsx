@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { StoryAssetUploader } from "@/components/story/StoryAssetUploader";
 import { toast } from "@/hooks/use-toast";
 import { ArrowLeft, Play, Save } from "lucide-react";
@@ -28,6 +29,7 @@ export default function StoryProjectEditor() {
 
   const [title, setTitle] = useState("");
   const [timezone, setTimezone] = useState("America/New_York");
+  const [targetDuration, setTargetDuration] = useState(60);
   const [platforms, setPlatforms] = useState<Record<string, boolean>>({ tiktok: true, youtube: true, facebook: true, instagram: true });
   const [configJson, setConfigJson] = useState<any>({});
 
@@ -35,6 +37,7 @@ export default function StoryProjectEditor() {
     if (project) {
       setTitle(project.title);
       setTimezone(project.timezone);
+      setTargetDuration((project as any).target_duration_sec || 60);
       setPlatforms(project.publish_platforms as Record<string, boolean>);
       setConfigJson(project.config_json || {});
     }
@@ -45,9 +48,10 @@ export default function StoryProjectEditor() {
       const { error } = await supabase.from("story_projects").update({
         title,
         timezone,
+        target_duration_sec: targetDuration,
         publish_platforms: platforms,
         config_json: configJson,
-      }).eq("id", projectId!);
+      } as any).eq("id", projectId!);
       if (error) throw error;
     },
     onSuccess: () => {
