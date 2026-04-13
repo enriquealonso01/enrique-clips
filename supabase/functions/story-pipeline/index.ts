@@ -120,23 +120,30 @@ async function stage1(sb: SB, runId: string) {
 // STAGE 2: Story Discovery
 // ══════════════════════════════════════════════════════════
 
-async function stage2(sb: SB, runId: string, lastTitles: string[]) {
+async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = 60) {
   await updateRun(sb, runId, { status: "researching_story", current_stage: "researching_story", progress_pct: 8 });
   await log(sb, runId, "info", "Stage 2: Discovering wholesome story via AI");
 
   const titlesBlock = lastTitles.length > 0
     ? `\n\nPREVIOUSLY USED TITLES (DO NOT reuse):\n${lastTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}` : "";
 
+  // Adapt beat count to target duration
+  const minBeats = Math.max(4, Math.round(targetDuration / 12));
+  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
+
   return await callStructured({
     messages: [
       { role: "system", content: "You are a viral short-form video researcher. Find real, wholesome, feel-good stories with strong hooks and emotional payoffs. Return ONLY valid JSON." },
-      { role: "user", content: `Find a NEW wholesome real-world story for a 60-90 second vertical video. Requirements:
+      { role: "user", content: `Find a NEW wholesome real-world story for a ${targetDuration}-second vertical video. Requirements:
 - Strong hook in first sentence
 - Emotional reward/payoff moment
 - Real characters, real events
-- Visual potential${titlesBlock}
+- Visual potential
+- Story depth should match a ${targetDuration}s video (${targetDuration <= 60 ? "concise and punchy" : targetDuration <= 120 ? "moderate depth with good pacing" : "deeper narrative with multiple beats"})${titlesBlock}
 
-Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}` },
+Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
+
+IMPORTANT: Provide ${minBeats}-${maxBeats} draft beats to fill ~${targetDuration} seconds of narration.` },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_discovery",
   });
