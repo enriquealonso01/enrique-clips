@@ -101,6 +101,9 @@ async function stage1(sb: SB, runId: string) {
   const { data: run } = await sb.from("story_runs").select("*, story_projects(*)").eq("id", runId).single();
   if (!run) throw new Error("Run not found");
 
+  const project = run.story_projects as any;
+  const targetDuration = project?.target_duration_sec || 60;
+
   const { data: memory } = await sb.from("story_memory")
     .select("story_title, story_fingerprint")
     .eq("project_id", run.project_id)
@@ -108,9 +111,9 @@ async function stage1(sb: SB, runId: string) {
 
   const lastTitles = (memory || []).map((m: any) => m.story_title);
   const fingerprints = (memory || []).map((m: any) => m.story_fingerprint).filter(Boolean);
-  await log(sb, runId, "info", `Loaded ${lastTitles.length} previous story titles`);
+  await log(sb, runId, "info", `Loaded ${lastTitles.length} previous story titles. Target duration: ${targetDuration}s`);
 
-  return { run, project: run.story_projects, lastTitles, fingerprints, projectId: run.project_id };
+  return { run, project, lastTitles, fingerprints, projectId: run.project_id, targetDuration };
 }
 
 // ══════════════════════════════════════════════════════════
