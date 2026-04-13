@@ -154,32 +154,73 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 }
 
 // ══════════════════════════════════════════════════════════
-// STAGE 4: Real Image Generation (photorealistic via Gemini)
+// STAGE 4: Real Image Retrieval (with Gemini fallback)
 // ══════════════════════════════════════════════════════════
 
 async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
-  await log(sb, runId, "info", "Stage 4: Generating photorealistic real image");
+  await log(sb, runId, "info", "Stage 4: Finding real image via AI search");
 
-  // Determine best subject for image
+  // Step 1: Ask OpenAI for a real image URL
+  const result = await callStructured({
+    messages: [
+      { role: "system", content: "You are an image researcher. Find the best real, publicly accessible image URL for a story. Priority: 1) real person 2) group/event 3) location 4) contextual. The URL MUST be a direct link to an actual image that exists on the internet (e.g. from Wikipedia, news sites, government sites). Do NOT invent or guess URLs. If you cannot find a real URL, set primary_url to null. Return ONLY JSON." },
+      { role: "user", content: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${JSON.stringify(story.characters || [])}\nGuidance: ${story.image_search_guidance || "Find relevant real image"}\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"...","characters_visible":["..."]}` },
+    ],
+    model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
+  });
+
+  // Step 2: Validate the URL actually works
+  let validUrl: string | null = null;
+  for (const candidate of [result.primary_url, result.fallback_url]) {
+    if (!candidate || candidate === "null") continue;
+    try {
+      const check = await fetch(candidate, { method: "HEAD", redirect: "follow" });
+      const ct = check.headers.get("content-type") || "";
+      if (check.ok && ct.startsWith("image")) {
+        validUrl = candidate;
+        break;
+      }
+    } catch { /* skip */ }
+  }
+
+  if (validUrl) {
+    // Download and store in our storage so the URL doesn't expire
+    await log(sb, runId, "info", `Real image found: ${validUrl.substring(0, 100)}`);
+    try {
+      const imgResp = await fetch(validUrl);
+      if (imgResp.ok) {
+        const bytes = new Uint8Array(await imgResp.arrayBuffer());
+        const path = `story-runs/${runId}/real_image.png`;
+        const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
+          image_type: result.image_type || "contextual",
+          image_description: result.image_description || "",
+          characters_visible: result.characters_visible || [],
+          original_url: validUrl,
+        });
+        return { ...result, primary_url: signedUrl, storage_path: path };
+      }
+    } catch (e) {
+      await log(sb, runId, "warn", `Failed to download real image: ${(e as Error).message}`);
+    }
+  }
+
+  // Step 3: Fallback — generate photorealistic image with Gemini
+  await log(sb, runId, "info", "No valid real image found. Generating photorealistic fallback with Gemini.");
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
   const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
-
   const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style.`;
 
   const imageResult = await callImage({
-    prompt,
-    model: MODELS.IMAGE_FINAL,
-    size: "9:16",
-    quality: "high",
-    endpoint: "story_real_image",
+    prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
+    endpoint: "story_real_image_fallback",
   });
 
   const path = `story-runs/${runId}/real_image.png`;
   const bytes = Uint8Array.from(atob(imageResult.b64_json), c => c.charCodeAt(0));
   const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
     image_type: "generated_photorealistic",
-    image_description: `Photorealistic image for "${story.title}"`,
+    image_description: `AI-generated photorealistic image for "${story.title}"`,
     characters_visible: (story.characters || []).map((c: any) => c.name),
   });
 
@@ -187,8 +228,8 @@ async function stage4(sb: SB, runId: string, story: any) {
     primary_url: signedUrl,
     fallback_url: signedUrl,
     image_type: "generated_photorealistic",
-    image_description: `Photorealistic image for "${story.title}"`,
-    characters_visible: (story.characters || []).map((c: any) => c.name),
+    image_description: result.image_description || `Photorealistic image for "${story.title}"`,
+    characters_visible: result.characters_visible || [],
     storage_path: path,
   };
 }
