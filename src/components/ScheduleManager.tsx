@@ -49,6 +49,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     mutationFn: async (time: string) => {
       const insertData: any = { project_id: projectId, time_utc: time + ":00", days_of_week: newDays };
       if (newPostTime) insertData.scheduled_post_time = newPostTime + ":00";
+      if (newPostTimeEnd) insertData.scheduled_post_time_end = newPostTimeEnd + ":00";
       const { error } = await supabase
         .from("schedules")
         .insert(insertData);
@@ -84,10 +85,12 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   });
 
   const updatePostTime = useMutation({
-    mutationFn: async ({ id, time }: { id: string; time: string | null }) => {
+    mutationFn: async ({ id, time, timeEnd }: { id: string; time: string | null; timeEnd?: string | null }) => {
+      const updateData: any = { scheduled_post_time: time };
+      if (timeEnd !== undefined) updateData.scheduled_post_time_end = timeEnd;
       const { error } = await supabase
         .from("schedules")
-        .update({ scheduled_post_time: time } as any)
+        .update(updateData as any)
         .eq("id", id);
       if (error) throw error;
     },
