@@ -723,7 +723,7 @@ serve(async (req) => {
     let story: any = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        story = await stage2(sb, runId, context.lastTitles);
+        story = await stage2(sb, runId, context.lastTitles, context.targetDuration);
         if (await stage3(sb, runId, story, context.fingerprints, context.lastTitles)) break;
         story = null;
       } catch (err) {
@@ -733,14 +733,14 @@ serve(async (req) => {
     }
     if (!story) { await failRun(sb, runId, "No valid story found after 3 attempts"); return new Response(JSON.stringify({ error: "No story" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
-    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { story } });
+    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { story, target_duration: context.targetDuration } });
 
     // Stage 4: Real image
     let realImage: any = null;
     try { realImage = await stage4(sb, runId, story); } catch (err) {
       await log(sb, runId, "warn", `Real image failed: ${(err as Error).message}`);
     }
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage }, progress_pct: 20 });
+    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, target_duration: context.targetDuration }, progress_pct: 20 });
 
     if (shouldChain()) {
       await selfChain(runId, "stage5");
@@ -760,7 +760,7 @@ serve(async (req) => {
     const fp = (story.summary || "").substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
     await sb.from("story_memory").insert({ project_id: context.projectId, run_id: runId, story_title: story.title, story_fingerprint: fp, source_url: story.source_url || null });
 
-    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { story, real_image: realImage, cast_image: castResult } });
+    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage6");
@@ -768,8 +768,8 @@ serve(async (req) => {
     }
 
     // Stage 6: Narration script
-    const script = await stage6(sb, runId, story);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script } });
+    const script = await stage6(sb, runId, story, context.targetDuration);
+    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage7");
