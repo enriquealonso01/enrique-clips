@@ -137,7 +137,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Post Time (optional)</Label>
+              <Label>Post Time From (optional)</Label>
               <Input
                 type="time"
                 value={newPostTime}
@@ -146,8 +146,20 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 placeholder="Immediate"
               />
             </div>
+            {newPostTime && (
+              <div className="space-y-2">
+                <Label>Post Time To (optional)</Label>
+                <Input
+                  type="time"
+                  value={newPostTimeEnd}
+                  onChange={(e) => setNewPostTimeEnd(e.target.value)}
+                  className="max-w-[160px]"
+                  placeholder="Same as From"
+                />
+              </div>
+            )}
             <Button
-              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); }}
+              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); setNewPostTimeEnd(""); }}
               disabled={addSchedule.isPending || newDays.length === 0}
               size="sm"
             >
@@ -156,7 +168,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Leave "Post Time" empty to publish immediately when the video finishes.
+            Leave "Post Time" empty to publish immediately. Set both From and To for a random time in that range.
           </p>
           <div className="flex gap-2 flex-wrap">
             {WEEKDAYS.map((day) => (
