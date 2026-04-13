@@ -2542,6 +2542,15 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
                 formData.append("user", project.uploadpost_profile_username);
               }
 
+              // Add scheduled_date if set in run metadata
+              const publishScheduledDate = metadata.publish_scheduled_date;
+              const publishTimezone = metadata.publish_timezone;
+              if (publishScheduledDate) {
+                formData.append("scheduled_date", publishScheduledDate);
+                if (publishTimezone) formData.append("timezone", publishTimezone);
+                await log("info", `Scheduling video post for ${publishScheduledDate} (${publishTimezone || "UTC"})`);
+              }
+
               for (const platform of group.platforms) {
                 formData.append("platform[]", platform);
               }
