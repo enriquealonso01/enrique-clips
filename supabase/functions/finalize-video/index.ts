@@ -1514,6 +1514,13 @@ Deno.serve(async (req) => {
         formData.append("facebook_page_id", fbPageId);
         formData.append("facebook_media_type", "POSTS");
         formData.append("async_upload", "true");
+
+        // Add scheduled_date if set in run metadata
+        const fbRunMeta = (run.generated_metadata as any) || {};
+        if (fbRunMeta.publish_scheduled_date) {
+          formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
+          if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+        }
         const imgResp = await fetch(kfPublicUrl);
         const imgBlob = await imgResp.blob();
         formData.append("photos[]", imgBlob, "keyframe.png");
@@ -2542,6 +2549,15 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
                 formData.append("user", project.uploadpost_profile_username);
               }
 
+              // Add scheduled_date if set in run metadata
+              const publishScheduledDate = metadata.publish_scheduled_date;
+              const publishTimezone = metadata.publish_timezone;
+              if (publishScheduledDate) {
+                formData.append("scheduled_date", publishScheduledDate);
+                if (publishTimezone) formData.append("timezone", publishTimezone);
+                await log("info", `Scheduling video post for ${publishScheduledDate} (${publishTimezone || "UTC"})`);
+              }
+
               for (const platform of group.platforms) {
                 formData.append("platform[]", platform);
               }
@@ -2695,6 +2711,13 @@ Rules:
           formData.append("facebook_page_id", fbPageId);
           formData.append("facebook_media_type", "POSTS");
           formData.append("async_upload", "true");
+
+          // Add scheduled_date if set in run metadata
+          const fbRunMeta = (run.generated_metadata as any) || {};
+          if (fbRunMeta.publish_scheduled_date) {
+            formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
+            if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+          }
 
           // Fetch image and append as file
           const imgResp = await fetch(kfPublicUrl);

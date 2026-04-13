@@ -29,6 +29,7 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const queryClient = useQueryClient();
   const [newTime, setNewTime] = useState("09:00");
   const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
+  const [newPostTime, setNewPostTime] = useState("");
 
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
@@ -45,9 +46,11 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
 
   const addSchedule = useMutation({
     mutationFn: async (time: string) => {
+      const insertData: any = { project_id: projectId, time_utc: time + ":00", days_of_week: newDays };
+      if (newPostTime) insertData.scheduled_post_time = newPostTime + ":00";
       const { error } = await supabase
         .from("schedules")
-        .insert({ project_id: projectId, time_utc: time + ":00", days_of_week: newDays } as any);
+        .insert(insertData);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -79,6 +82,20 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["schedules", projectId] }),
   });
 
+  const updatePostTime = useMutation({
+    mutationFn: async ({ id, time }: { id: string; time: string | null }) => {
+      const { error } = await supabase
+        .from("schedules")
+        .update({ scheduled_post_time: time } as any)
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["schedules", projectId] });
+      toast({ title: "Post time updated" });
+    },
+  });
+
   const deleteSchedule = useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase.from("schedules").delete().eq("id", id);
@@ -105,9 +122,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
       <CardContent className="space-y-4">
         {/* Add new schedule */}
         <div className="space-y-3">
-          <div className="flex items-end gap-3">
-            <div className="space-y-2 flex-1">
-              <Label>Time ({timezone})</Label>
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="space-y-2">
+              <Label>Run Time ({timezone})</Label>
               <Input
                 type="time"
                 value={newTime}
@@ -115,8 +132,18 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 className="max-w-[160px]"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Post Time (optional)</Label>
+              <Input
+                type="time"
+                value={newPostTime}
+                onChange={(e) => setNewPostTime(e.target.value)}
+                className="max-w-[160px]"
+                placeholder="Immediate"
+              />
+            </div>
             <Button
-              onClick={() => addSchedule.mutate(newTime)}
+              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); }}
               disabled={addSchedule.isPending || newDays.length === 0}
               size="sm"
             >
@@ -124,6 +151,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               Add
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Leave "Post Time" empty to publish immediately when the video finishes.
+          </p>
           <div className="flex gap-2 flex-wrap">
             {WEEKDAYS.map((day) => (
               <label key={day.value} className="flex items-center gap-1 text-sm cursor-pointer">
@@ -149,6 +179,8 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
           <div className="space-y-2">
             {schedules.map((schedule) => {
               const timeDisplay = schedule.time_utc.slice(0, 5); // HH:MM
+              const postTimeRaw = (schedule as any).scheduled_post_time;
+              const postTimeDisplay = postTimeRaw ? postTimeRaw.slice(0, 5) : null;
               const lastTriggered = schedule.last_triggered_at
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
@@ -172,20 +204,38 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                         }
                       />
                       <div>
-                        <p className="font-medium text-sm">{timeDisplay} · {daysLabel}</p>
+                        <p className="font-medium text-sm">
+                          Run {timeDisplay} · {daysLabel}
+                          {postTimeDisplay ? ` → Post at ${postTimeDisplay}` : " → Post immediately"}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           Last triggered: {lastTriggered}
                         </p>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => deleteSchedule.mutate(schedule.id)}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="time"
+                        value={postTimeDisplay || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updatePostTime.mutate({
+                            id: schedule.id,
+                            time: val ? val + ":00" : null,
+                          });
+                        }}
+                        className="w-[120px] h-8 text-xs"
+                        placeholder="Immediate"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteSchedule.mutate(schedule.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex gap-2 flex-wrap pl-10">
                     {WEEKDAYS.map((day) => (
