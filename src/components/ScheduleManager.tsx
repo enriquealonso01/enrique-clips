@@ -179,6 +179,8 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
           <div className="space-y-2">
             {schedules.map((schedule) => {
               const timeDisplay = schedule.time_utc.slice(0, 5); // HH:MM
+              const postTimeRaw = (schedule as any).scheduled_post_time;
+              const postTimeDisplay = postTimeRaw ? postTimeRaw.slice(0, 5) : null;
               const lastTriggered = schedule.last_triggered_at
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
@@ -202,20 +204,38 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                         }
                       />
                       <div>
-                        <p className="font-medium text-sm">{timeDisplay} · {daysLabel}</p>
+                        <p className="font-medium text-sm">
+                          Run {timeDisplay} · {daysLabel}
+                          {postTimeDisplay ? ` → Post at ${postTimeDisplay}` : " → Post immediately"}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           Last triggered: {lastTriggered}
                         </p>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => deleteSchedule.mutate(schedule.id)}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="time"
+                        value={postTimeDisplay || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updatePostTime.mutate({
+                            id: schedule.id,
+                            time: val ? val + ":00" : null,
+                          });
+                        }}
+                        className="w-[120px] h-8 text-xs"
+                        placeholder="Immediate"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteSchedule.mutate(schedule.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="flex gap-2 flex-wrap pl-10">
                     {WEEKDAYS.map((day) => (
