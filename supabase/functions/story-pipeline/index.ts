@@ -657,7 +657,7 @@ serve(async (req) => {
     if (resumeStage === "stage6") {
       await log(sb, runId, "info", "Resuming from stage 6 (narration)");
       const story = meta.story;
-      const script = await stage6(sb, runId, story);
+      const script = await stage6(sb, runId, story, meta.target_duration || 60);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script } });
 
       if (shouldChain()) { await selfChain(runId, "stage7"); return new Response(JSON.stringify({ status: "chaining" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -686,7 +686,7 @@ serve(async (req) => {
 
     if (resumeStage === "stage7") {
       const story = meta.story;
-      const script = meta.script || await stage6(sb, runId, story);
+      const script = meta.script || await stage6(sb, runId, story, meta.target_duration || 60);
       const narration = await stage7(sb, runId, script);
       const timedBeats = await stage8(sb, runId, script, narration.alignment);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script, narration: { path: narration.path }, timed_beats: timedBeats } });
