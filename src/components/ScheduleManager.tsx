@@ -196,7 +196,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
             {schedules.map((schedule) => {
               const timeDisplay = schedule.time_utc.slice(0, 5); // HH:MM
               const postTimeRaw = (schedule as any).scheduled_post_time;
+              const postTimeEndRaw = (schedule as any).scheduled_post_time_end;
               const postTimeDisplay = postTimeRaw ? postTimeRaw.slice(0, 5) : null;
+              const postTimeEndDisplay = postTimeEndRaw ? postTimeEndRaw.slice(0, 5) : null;
               const lastTriggered = schedule.last_triggered_at
                 ? new Date(schedule.last_triggered_at).toLocaleString()
                 : "Never";
@@ -205,6 +207,12 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               const daysLabel = scheduleDays.length === 7
                 ? "Every day"
                 : WEEKDAYS.filter((d) => scheduleDays.includes(d.value)).map((d) => d.label).join(", ");
+
+              const postLabel = postTimeDisplay
+                ? postTimeEndDisplay
+                  ? `Post ${postTimeDisplay}–${postTimeEndDisplay}`
+                  : `Post at ${postTimeDisplay}`
+                : "Post immediately";
 
               return (
                 <div
@@ -221,15 +229,14 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                       />
                       <div>
                         <p className="font-medium text-sm">
-                          Run {timeDisplay} · {daysLabel}
-                          {postTimeDisplay ? ` → Post at ${postTimeDisplay}` : " → Post immediately"}
+                          Run {timeDisplay} · {daysLabel} → {postLabel}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Last triggered: {lastTriggered}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       <Input
                         type="time"
                         value={postTimeDisplay || ""}
@@ -238,11 +245,28 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                           updatePostTime.mutate({
                             id: schedule.id,
                             time: val ? val + ":00" : null,
+                            timeEnd: val ? undefined : null, // clear end if clearing start
                           });
                         }}
-                        className="w-[120px] h-8 text-xs"
-                        placeholder="Immediate"
+                        className="w-[110px] h-8 text-xs"
+                        placeholder="From"
                       />
+                      {postTimeDisplay && (
+                        <Input
+                          type="time"
+                          value={postTimeEndDisplay || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updatePostTime.mutate({
+                              id: schedule.id,
+                              time: postTimeRaw,
+                              timeEnd: val ? val + ":00" : null,
+                            });
+                          }}
+                          className="w-[110px] h-8 text-xs"
+                          placeholder="To"
+                        />
+                      )}
                       <Button
                         variant="ghost"
                         size="icon"
