@@ -426,8 +426,14 @@ Return JSON:
 // ══════════════════════════════════════════════════════════
 
 async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: string) {
+  // Check which scene images already exist (from prior chain)
+  const { data: existingAssets } = await sb.from("story_assets")
+    .select("scene_index").eq("run_id", runId).eq("type", "scene_image");
+  const doneIndices = new Set((existingAssets || []).map((a: any) => a.scene_index));
+  const remaining = scenes.filter((_: any, i: number) => !doneIndices.has(i));
+
   await updateRun(sb, runId, { status: "scene_images_generating", current_stage: "scene_images_generating", progress_pct: 48 });
-  await log(sb, runId, "info", `Stage 10: Generating ${scenes.length} scene images`);
+  await log(sb, runId, "info", `Stage 10: Generating ${remaining.length} scene images (${doneIndices.size} already done)`);
 
   // Get cast reference image for consistency
   const { data: castUrl } = await sb.storage.from("project-assets").createSignedUrl(castImagePath, 3600);
@@ -436,10 +442,13 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
   const imageUrls: string[] = [];
 
   for (let i = 0; i < scenes.length; i++) {
+    if (doneIndices.has(i)) { imageUrls.push(`story-runs/${runId}/scene_${i}.png`); continue; }
     if (shouldChain()) {
-      // Save progress and self-chain
+      // Merge progress into existing metadata (don't overwrite!)
+      const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+      const existingMeta = (cur?.generated_metadata as any) || {};
       await updateRun(sb, runId, {
-        generated_metadata: { scene_images_progress: i, total_scenes: scenes.length },
+        generated_metadata: { ...existingMeta, scene_images_progress: i, total_scenes: scenes.length },
         progress_pct: 48 + Math.round((i / scenes.length) * 12),
       });
       await log(sb, runId, "info", `Timeout guard: chaining at scene image ${i}/${scenes.length}`);
@@ -503,7 +512,7 @@ async function stage11(sb: SB, runId: string, scenes: any[]) {
 
     try {
       // Submit to Vidu Q3 Turbo
-      const viduResp = await fetch("https://api.vidu.com/ent/v2/tasks/image2video", {
+      const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
         method: "POST",
         headers: {
           "Authorization": `Token ${VIDU_API_KEY}`,
@@ -511,11 +520,11 @@ async function stage11(sb: SB, runId: string, scenes: any[]) {
         },
         body: JSON.stringify({
           model: "viduq3-turbo",
-          images: [{ url: imageUrl, type: "subject_reference" }],
+          images: [imageUrl],
           prompt: `Subtle cinematic animation of scene: ${scene.prompt?.substring(0, 200) || "gentle motion"}. Slow emotional movements. No abrupt transitions.`,
-          duration: Math.min(requestDuration, 8), // Vidu max per clip
+          duration: Math.min(requestDuration, 16),
+          audio: false,
           resolution: "720p",
-          movement_amplitude: "auto",
         }),
       });
 
