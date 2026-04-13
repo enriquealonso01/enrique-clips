@@ -568,6 +568,219 @@ export type Database = {
           },
         ]
       }
+      story_assets: {
+        Row: {
+          created_at: string
+          id: string
+          metadata: Json | null
+          run_id: string | null
+          scene_index: number | null
+          signed_url_last: string | null
+          supabase_path: string
+          type: Database["public"]["Enums"]["story_asset_type"]
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          run_id?: string | null
+          scene_index?: number | null
+          signed_url_last?: string | null
+          supabase_path: string
+          type: Database["public"]["Enums"]["story_asset_type"]
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          run_id?: string | null
+          scene_index?: number | null
+          signed_url_last?: string | null
+          supabase_path?: string
+          type?: Database["public"]["Enums"]["story_asset_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "story_assets_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "story_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      story_memory: {
+        Row: {
+          created_at: string
+          id: string
+          project_id: string
+          run_id: string | null
+          source_url: string | null
+          story_fingerprint: string | null
+          story_title: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          project_id: string
+          run_id?: string | null
+          source_url?: string | null
+          story_fingerprint?: string | null
+          story_title: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          project_id?: string
+          run_id?: string | null
+          source_url?: string | null
+          story_fingerprint?: string | null
+          story_title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "story_memory_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "story_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "story_memory_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "story_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      story_projects: {
+        Row: {
+          background_music_path: string | null
+          config_json: Json | null
+          created_at: string
+          emoji_path: string | null
+          ending_audio_path: string | null
+          id: string
+          is_enabled: boolean
+          publish_defaults: Json
+          publish_platforms: Json
+          timezone: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          background_music_path?: string | null
+          config_json?: Json | null
+          created_at?: string
+          emoji_path?: string | null
+          ending_audio_path?: string | null
+          id?: string
+          is_enabled?: boolean
+          publish_defaults?: Json
+          publish_platforms?: Json
+          timezone?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          background_music_path?: string | null
+          config_json?: Json | null
+          created_at?: string
+          emoji_path?: string | null
+          ending_audio_path?: string | null
+          id?: string
+          is_enabled?: boolean
+          publish_defaults?: Json
+          publish_platforms?: Json
+          timezone?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      story_run_logs: {
+        Row: {
+          created_at: string
+          data: Json | null
+          id: string
+          level: Database["public"]["Enums"]["log_level"]
+          message: string
+          run_id: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json | null
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message: string
+          run_id: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json | null
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message?: string
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "story_run_logs_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "story_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      story_runs: {
+        Row: {
+          created_at: string
+          current_stage: string
+          error_message: string | null
+          finished_at: string | null
+          generated_metadata: Json | null
+          id: string
+          progress_pct: number
+          project_id: string
+          started_at: string | null
+          status: Database["public"]["Enums"]["story_run_status"]
+        }
+        Insert: {
+          created_at?: string
+          current_stage?: string
+          error_message?: string | null
+          finished_at?: string | null
+          generated_metadata?: Json | null
+          id?: string
+          progress_pct?: number
+          project_id: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["story_run_status"]
+        }
+        Update: {
+          created_at?: string
+          current_stage?: string
+          error_message?: string | null
+          finished_at?: string | null
+          generated_metadata?: Json | null
+          id?: string
+          progress_pct?: number
+          project_id?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["story_run_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "story_runs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "story_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tracks: {
         Row: {
           created_at: string
@@ -652,6 +865,38 @@ export type Database = {
         | "clip_requested"
         | "clip_ready"
         | "failed"
+      story_asset_type:
+        | "background_music"
+        | "ending_audio"
+        | "narration_audio"
+        | "real_image"
+        | "cast_reference_image"
+        | "scene_image"
+        | "scene_video_raw"
+        | "scene_video_trimmed"
+        | "captioned_story_video"
+        | "ending_visual_clip"
+        | "ending_audio_trimmed"
+        | "final_video"
+        | "emoji"
+      story_run_status:
+        | "queued"
+        | "researching_story"
+        | "story_selected"
+        | "cast_generated"
+        | "narration_generated"
+        | "beats_extracted"
+        | "scene_images_generating"
+        | "scenes_generating"
+        | "audio_mixing"
+        | "subtitles_processing"
+        | "end_card_rendering"
+        | "ready_to_publish"
+        | "publishing"
+        | "published"
+        | "paused"
+        | "failed"
+        | "cancelled"
       video_generator: "kling" | "pika" | "vidu" | "vidu_direct"
     }
     CompositeTypes: {
@@ -829,6 +1074,40 @@ export const Constants = {
         "clip_requested",
         "clip_ready",
         "failed",
+      ],
+      story_asset_type: [
+        "background_music",
+        "ending_audio",
+        "narration_audio",
+        "real_image",
+        "cast_reference_image",
+        "scene_image",
+        "scene_video_raw",
+        "scene_video_trimmed",
+        "captioned_story_video",
+        "ending_visual_clip",
+        "ending_audio_trimmed",
+        "final_video",
+        "emoji",
+      ],
+      story_run_status: [
+        "queued",
+        "researching_story",
+        "story_selected",
+        "cast_generated",
+        "narration_generated",
+        "beats_extracted",
+        "scene_images_generating",
+        "scenes_generating",
+        "audio_mixing",
+        "subtitles_processing",
+        "end_card_rendering",
+        "ready_to_publish",
+        "publishing",
+        "published",
+        "paused",
+        "failed",
+        "cancelled",
       ],
       video_generator: ["kling", "pika", "vidu", "vidu_direct"],
     },

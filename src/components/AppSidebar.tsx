@@ -1,4 +1,4 @@
-import { FolderKanban, Settings, Zap, LogOut } from "lucide-react";
+import { FolderKanban, BookOpen, Settings, Zap, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,6 +17,7 @@ import {
 
 const items = [
   { title: "Projects", url: "/", icon: FolderKanban },
+  { title: "Stories", url: "/stories", icon: BookOpen },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
