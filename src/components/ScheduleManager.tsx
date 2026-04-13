@@ -122,9 +122,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
       <CardContent className="space-y-4">
         {/* Add new schedule */}
         <div className="space-y-3">
-          <div className="flex items-end gap-3">
-            <div className="space-y-2 flex-1">
-              <Label>Time ({timezone})</Label>
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="space-y-2">
+              <Label>Run Time ({timezone})</Label>
               <Input
                 type="time"
                 value={newTime}
@@ -132,8 +132,18 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
                 className="max-w-[160px]"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Post Time (optional)</Label>
+              <Input
+                type="time"
+                value={newPostTime}
+                onChange={(e) => setNewPostTime(e.target.value)}
+                className="max-w-[160px]"
+                placeholder="Immediate"
+              />
+            </div>
             <Button
-              onClick={() => addSchedule.mutate(newTime)}
+              onClick={() => { addSchedule.mutate(newTime); setNewPostTime(""); }}
               disabled={addSchedule.isPending || newDays.length === 0}
               size="sm"
             >
@@ -141,6 +151,9 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
               Add
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Leave "Post Time" empty to publish immediately when the video finishes.
+          </p>
           <div className="flex gap-2 flex-wrap">
             {WEEKDAYS.map((day) => (
               <label key={day.value} className="flex items-center gap-1 text-sm cursor-pointer">
