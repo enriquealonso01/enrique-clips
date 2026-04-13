@@ -214,6 +214,38 @@ export default function StoryProjectEditor() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader><CardTitle>Run History</CardTitle></CardHeader>
+        <CardContent>
+          {!runs || runs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No runs yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {runs.map((run) => (
+                <div
+                  key={run.id}
+                  className="flex items-center justify-between p-3 rounded-md border cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => navigate(`/story-runs/${run.id}`)}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <StoryStatusBadge status={run.status} />
+                    <span className="text-sm text-muted-foreground truncate">
+                      {new Date(run.created_at).toLocaleString()}
+                    </span>
+                    {(run.generated_metadata as any)?.story_title && (
+                      <span className="text-sm truncate hidden sm:inline">
+                        {(run.generated_metadata as any).story_title}
+                      </span>
+                    )}
+                  </div>
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex gap-3">
         <Button onClick={() => save.mutate()} disabled={save.isPending}>
           <Save className="mr-2 h-4 w-4" /> Save
