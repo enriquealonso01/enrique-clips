@@ -6,9 +6,10 @@ import { StoryStatusBadge } from "@/components/story/StoryStatusBadge";
 import { StoryRunStages } from "@/components/story/StoryRunStages";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pause, Square, Play } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export default function StoryRunMonitor() {
   const { runId } = useParams<{ runId: string }>();
