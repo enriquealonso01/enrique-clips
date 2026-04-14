@@ -78,7 +78,7 @@ export default function StoryRunMonitor() {
       return;
     }
     if (audioRef.current) audioRef.current.pause();
-    const { data } = await supabase.storage.from("story-assets").createSignedUrl(assetPath, 300);
+    const { data } = await supabase.storage.from("project-assets").createSignedUrl(assetPath, 300);
     if (!data?.signedUrl) { toast.error("Could not get audio URL"); return; }
     const audio = new Audio(data.signedUrl);
     audio.onended = () => setPlayingAssetId(null);
