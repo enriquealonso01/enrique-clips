@@ -888,9 +888,11 @@ serve(async (req) => {
         return new Response(JSON.stringify({ status: "chaining_stage10" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       // Continue to stage 11
-      const tasks = await stage11(sb, runId, scenes);
+      const _projCfg = await getProjectConfig(sb, runId);
+      const _offPeak = !!_projCfg?.vidu_off_peak;
+      const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, vidu_tasks: tasks } });
-      await chainFunction("story-poll-vidu", { run_id: runId });
+      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -918,9 +920,11 @@ serve(async (req) => {
         return new Response(JSON.stringify({ status: "chaining_stage10" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const tasks = await stage11(sb, runId, scenes);
+      const _projCfg = await getProjectConfig(sb, runId);
+      const _offPeak = !!_projCfg?.vidu_off_peak;
+      const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
-      await chainFunction("story-poll-vidu", { run_id: runId });
+      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -969,9 +973,11 @@ serve(async (req) => {
       const imgResult = await stage10(sb, runId, scenes, castResult.path);
       if (imgResult.partial) { await selfChain(runId, "stage10_continue"); return new Response(JSON.stringify({ status: "chaining_stage10" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
-      const tasks = await stage11(sb, runId, scenes);
+      const _projCfg = await getProjectConfig(sb, runId);
+      const _offPeak = !!_projCfg?.vidu_off_peak;
+      const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
-      await chainFunction("story-poll-vidu", { run_id: runId });
+      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -997,9 +1003,11 @@ serve(async (req) => {
         return new Response(JSON.stringify({ status: "chaining_stage10" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const tasks = await stage11(sb, runId, scenes);
+      const _projCfg = await getProjectConfig(sb, runId);
+      const _offPeak = !!_projCfg?.vidu_off_peak;
+      const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, scenes, vidu_tasks: tasks } });
-      await chainFunction("story-poll-vidu", { run_id: runId });
+      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -1107,11 +1115,13 @@ serve(async (req) => {
 
     // Stage 11: Animate clips
     await checkCancelled(sb, runId);
-    const tasks = await stage11(sb, runId, scenes);
+    const _projCfg = await getProjectConfig(sb, runId);
+    const _offPeak = !!_projCfg?.vidu_off_peak;
+    const tasks = await stage11(sb, runId, scenes, _offPeak);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
 
     // Hand off to poller
-    await chainFunction("story-poll-vidu", { run_id: runId });
+    await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
 
     return new Response(JSON.stringify({ success: true, stage: "scenes_generating", story_title: story.title }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
