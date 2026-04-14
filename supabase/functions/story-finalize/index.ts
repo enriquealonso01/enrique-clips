@@ -287,7 +287,6 @@ Deno.serve(async (req) => {
             title: (meta.story?.title || "Story Video").substring(0, 100),
             language: "en",
             videoUrl: videoUrl,
-            hideCaptions: false,
           }),
         });
 
