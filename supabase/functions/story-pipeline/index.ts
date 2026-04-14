@@ -796,22 +796,49 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
 
   if (!sceneAssets?.length) throw new Error("No scene images found");
 
+  // Check for already-submitted clips (idempotency on re-chain)
+  const { data: existingClips } = await sb.from("story_assets")
+    .select("scene_index, metadata").eq("run_id", runId).eq("type", "scene_video_raw");
+  const submittedIndices = new Set(
+    (existingClips || [])
+      .filter(c => {
+        const m = c.metadata as any;
+        return m?.vidu_task_id && m.status !== "failed";
+      })
+      .map(c => c.scene_index)
+  );
+
   const tasks: { sceneIndex: number; taskId: string; targetDuration: number }[] = [];
 
+  // Include already-submitted tasks in the return value so metadata stays accurate
+  for (const existing of (existingClips || [])) {
+    const m = existing.metadata as any;
+    if (m?.vidu_task_id && m.status !== "failed" && existing.scene_index != null) {
+      tasks.push({ sceneIndex: existing.scene_index, taskId: m.vidu_task_id, targetDuration: m.target_duration || 4 });
+    }
+  }
+
   for (let i = 0; i < sceneAssets.length; i++) {
+    // Skip already-submitted scenes
+    if (submittedIndices.has(i)) {
+      await log(sb, runId, "debug", `Scene ${i} already submitted, skipping`);
+      continue;
+    }
+
+    // Check cancellation during long submission loops
+    await checkCancelled(sb, runId);
+
     const asset = sceneAssets[i];
     const scene = scenes[i] || {};
     const targetDuration = scene.target_duration || 4;
-    const requestDuration = Math.ceil(targetDuration); // Round up per Rule 3
+    const requestDuration = Math.ceil(targetDuration);
 
-    // Get public URL for the scene image
     const { data: signedData } = await sb.storage.from("project-assets")
       .createSignedUrl(asset.supabase_path, 3600);
     const imageUrl = signedData?.signedUrl;
     if (!imageUrl) { await log(sb, runId, "warn", `No URL for scene image ${i}`); continue; }
 
     try {
-      // Submit to Vidu Q3 Turbo
       const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
         method: "POST",
         headers: {
@@ -839,7 +866,6 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
       const taskId = viduData.task_id || viduData.id;
       tasks.push({ sceneIndex: i, taskId, targetDuration });
 
-      // Store clip asset placeholder with vidu task info
       await sb.from("story_assets").insert({
         run_id: runId,
         type: "scene_video_raw",
@@ -854,7 +880,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     }
   }
 
-  await log(sb, runId, "info", `All ${tasks.length} Vidu tasks submitted. Invoking poller.`);
+  await log(sb, runId, "info", `All ${tasks.length} Vidu tasks tracked. Invoking poller.`);
   return tasks;
 }
 
