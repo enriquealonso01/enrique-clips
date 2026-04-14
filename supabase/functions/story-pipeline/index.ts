@@ -175,15 +175,35 @@ async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: 
     headers: { Accept: "application/json", "X-Subscription-Token": key },
   });
   if (!resp.ok) {
-    console.error(`Brave image search failed: ${resp.status}`);
-    await resp.text(); // consume body
+    const body = await resp.text();
+    console.error(`Brave image search failed: ${resp.status} — ${body.substring(0, 300)}`);
     return [];
   }
   const data = await resp.json();
-  return (data.results || []).map((r: any) => ({
-    url: r.properties?.url || r.url || "",
+  console.log(`Brave image search: ${data.results?.length || 0} results for "${query.substring(0, 60)}"`);
+  const mapped = (data.results || []).map((r: any) => ({
+    url: r.properties?.url || r.thumbnail?.src || r.url || "",
     title: r.title || "",
   })).filter((r: any) => r.url && r.url.startsWith("http"));
+  return mapped;
+}
+
+// Fallback: Brave Web Search returns pages with thumbnail images
+async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ url: string; title: string }>> {
+  const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!key) return [];
+  const params = new URLSearchParams({ q: query, count: String(count) });
+  const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+    headers: { Accept: "application/json", "X-Subscription-Token": key },
+  });
+  if (!resp.ok) { await resp.text(); return []; }
+  const data = await resp.json();
+  const images: Array<{ url: string; title: string }> = [];
+  for (const r of data.web?.results || []) {
+    if (r.thumbnail?.src) images.push({ url: r.thumbnail.src, title: r.title || "" });
+  }
+  console.log(`Brave web search: ${images.length} thumbnail images for "${query.substring(0, 60)}"`);
+  return images;
 }
 
 async function validateImageUrl(url: string): Promise<boolean> {
