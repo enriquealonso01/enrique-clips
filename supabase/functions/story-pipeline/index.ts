@@ -80,8 +80,12 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
     if (!resp.ok) return undefined;
     const buffer = await resp.arrayBuffer();
     const bytes = new Uint8Array(buffer);
+    // Use chunk-based encoding to avoid stack overflow on large images
+    const CHUNK = 32768;
     let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+    }
     const b64 = btoa(binary);
     const mime = resp.headers.get("content-type") || "image/jpeg";
     return `data:${mime};base64,${b64}`;
