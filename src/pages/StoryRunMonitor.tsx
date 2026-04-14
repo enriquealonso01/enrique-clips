@@ -67,6 +67,31 @@ export default function StoryRunMonitor() {
     return () => { supabase.removeChannel(channel); };
   }, [runId, refetch]);
 
+  const [acting, setActing] = useState(false);
+
+  const isActive = run && !["failed", "cancelled", "published", "paused"].includes(run.status);
+  const isPaused = run?.status === "paused";
+
+  const updateStatus = async (status: string) => {
+    if (!runId) return;
+    setActing(true);
+    try {
+      const fields: any = { status };
+      if (status === "cancelled" || status === "failed") {
+        fields.finished_at = new Date().toISOString();
+        fields.error_message = status === "cancelled" ? "Cancelled by user" : run?.error_message;
+      }
+      const { error } = await supabase.from("story_runs").update(fields).eq("id", runId);
+      if (error) throw error;
+      toast.success(status === "cancelled" ? "Run cancelled" : status === "paused" ? "Run paused" : "Run resumed");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update run");
+    } finally {
+      setActing(false);
+    }
+  };
+
   if (!run) {
     return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading run...</div>;
   }
@@ -74,7 +99,6 @@ export default function StoryRunMonitor() {
   const metadata = run.generated_metadata as any;
   const storyTitle = metadata?.story?.title;
   const storyHook = metadata?.story?.hook;
-  // Prefer the stored asset URL over the metadata URL (which may be a hallucinated external URL)
   const realImageAsset = assets?.find((a) => a.type === "real_image");
   const realImageUrl = realImageAsset?.signed_url_last || metadata?.real_image?.primary_url;
 
@@ -86,6 +110,23 @@ export default function StoryRunMonitor() {
         </Button>
         <h1 className="text-xl font-bold tracking-tight">Story Run</h1>
         <StoryStatusBadge status={run.status} />
+        <div className="ml-auto flex gap-2">
+          {isPaused && (
+            <Button size="sm" variant="outline" disabled={acting} onClick={() => updateStatus("queued")}>
+              <Play className="h-4 w-4 mr-1" /> Resume
+            </Button>
+          )}
+          {isActive && (
+            <>
+              <Button size="sm" variant="outline" disabled={acting} onClick={() => updateStatus("paused")}>
+                <Pause className="h-4 w-4 mr-1" /> Pause
+              </Button>
+              <Button size="sm" variant="destructive" disabled={acting} onClick={() => updateStatus("cancelled")}>
+                <Square className="h-4 w-4 mr-1" /> Cancel
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
