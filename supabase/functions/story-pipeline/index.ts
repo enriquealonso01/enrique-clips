@@ -758,6 +758,57 @@ serve(async (req) => {
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (resumeStage === "stage5") {
+      await log(sb, runId, "info", "Resuming from stage 5 (cast image)");
+      const story = meta.story;
+      const realImage = meta.real_image || null;
+
+      let castResult: any;
+      try {
+        castResult = await stage5(sb, runId, story, realImage);
+      } catch (err) {
+        if ((err as any)?.name === "Image503RetryableError") {
+          await log(sb, runId, "warn", "Cast image timed out on resume, re-chaining...");
+          await selfChain(runId, "stage5");
+          return new Response(JSON.stringify({ status: "chaining_retry" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        await failRun(sb, runId, `Cast image failed: ${(err as Error).message}`);
+        return new Response(JSON.stringify({ error: "Cast failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Store story in memory
+      const projectId = meta.project_id || (await sb.from("story_runs").select("project_id").eq("id", runId).single()).data?.project_id;
+      const fp = (story.summary || "").substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
+      await sb.from("story_memory").insert({ project_id: projectId, run_id: runId, story_title: story.title, story_fingerprint: fp, source_url: story.source_url || null });
+
+      await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { ...meta, cast_image: castResult } });
+
+      if (shouldChain()) { await selfChain(runId, "stage6"); return new Response(JSON.stringify({ status: "chaining_stage6" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+
+      // Continue to stage 6+
+      const script = await stage6(sb, runId, story, meta.target_duration || 60);
+      await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script } });
+
+      if (shouldChain()) { await selfChain(runId, "stage7"); return new Response(JSON.stringify({ status: "chaining_stage7" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+
+      const narration = await stage7(sb, runId, script);
+      const timedBeats = await stage8(sb, runId, script, narration.alignment);
+      await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats } });
+
+      if (shouldChain()) { await selfChain(runId, "stage9"); return new Response(JSON.stringify({ status: "chaining_stage9" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+
+      const scenes = await stage9(sb, runId, story, timedBeats);
+      await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes } });
+
+      const imgResult = await stage10(sb, runId, scenes, castResult.path);
+      if (imgResult.partial) { await selfChain(runId, "stage10_continue"); return new Response(JSON.stringify({ status: "chaining_stage10" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+
+      const tasks = await stage11(sb, runId, scenes);
+      await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
+      await chainFunction("story-poll-vidu", { run_id: runId });
+      return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (resumeStage === "stage7") {
       const story = meta.story;
       const script = meta.script || await stage6(sb, runId, story, meta.target_duration || 60);
