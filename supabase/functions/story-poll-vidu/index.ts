@@ -121,6 +121,11 @@ Deno.serve(async (req) => {
     await sb.from("story_runs").update({ progress_pct: Math.min(progress, 70) }).eq("id", runId);
 
     if (!allDone) {
+      if (isOffPeak) {
+        // Off-peak: don't self-chain, wait for sweeper to poll again
+        await log("debug", `Off-peak: ${completedCount}/${total} done. Waiting for sweeper.`);
+        return json({ status: "off_peak_polling", completed: completedCount, total });
+      }
       // Self-re-invoke after 15s delay so polling continues automatically
       const selfUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-poll-vidu`;
       setTimeout(() => {
@@ -137,8 +142,10 @@ Deno.serve(async (req) => {
     }
 
     // All clips done — advance to finalization
-    await log("info", "All Vidu clips complete. Invoking story-finalize.");
+    await log("info", `All Vidu clips complete${isOffPeak ? " (off-peak)" : ""}. Invoking story-finalize.`);
+    // Resume from paused if off-peak
     await sb.from("story_runs").update({
+      status: "scenes_generating" as any,
       current_stage: "video_stitching",
       progress_pct: 72,
     }).eq("id", runId);
