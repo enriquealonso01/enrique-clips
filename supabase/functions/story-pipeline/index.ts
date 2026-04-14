@@ -102,6 +102,30 @@ async function uploadAndStoreAsset(sb: SB, runId: string, path: string, data: Ui
   return urlData?.signedUrl;
 }
 
+// Helper: get project config for a run
+async function getProjectConfig(sb: SB, runId: string): Promise<any> {
+  const { data: run } = await sb.from("story_runs").select("project_id").eq("id", runId).single();
+  if (!run) return {};
+  const { data: project } = await sb.from("story_projects").select("config_json").eq("id", run.project_id).single();
+  return (project as any)?.config_json || {};
+}
+
+// Helper: handle post-stage11 (off-peak pause or poll)
+async function postStage11(sb: SB, runId: string, tasks: any[], meta: any, offPeak: boolean) {
+  if (offPeak && tasks.length > 0) {
+    await log(sb, runId, "info", `All ${tasks.length} Vidu off-peak clips submitted. Pausing run for background polling.`);
+    await updateRun(sb, runId, {
+      status: "paused" as any,
+      progress_pct: 62,
+      generated_metadata: { ...meta, vidu_tasks: tasks, waiting_for: "vidu_off_peak", off_peak_submitted_at: new Date().toISOString() },
+    });
+    return "vidu_off_peak_paused";
+  }
+  await chainFunction("story-poll-vidu", { run_id: runId });
+  return "scenes_generating";
+}
+
+
 // ══════════════════════════════════════════════════════════
 // STAGE 1: Create Run
 // ══════════════════════════════════════════════════════════
