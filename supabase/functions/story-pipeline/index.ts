@@ -208,14 +208,40 @@ async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ u
 
 async function validateImageUrl(url: string): Promise<boolean> {
   try {
-    const resp = await fetch(url, { method: "HEAD", redirect: "follow" });
-    const ct = resp.headers.get("content-type") || "";
-    return resp.ok && ct.startsWith("image");
-  } catch { return false; }
+    const headResp = await fetch(url, { method: "HEAD", redirect: "follow" });
+    const headType = headResp.headers.get("content-type") || "";
+    if (headResp.ok && headType.startsWith("image")) return true;
+  } catch {
+    // Some CDNs reject HEAD requests; fall through to GET validation.
+  }
+
+  try {
+    const resp = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        Accept: "image/*,*/*;q=0.8",
+        Range: "bytes=0-0",
+      },
+    });
+    const contentType = resp.headers.get("content-type") || "";
+    return resp.ok && (
+      contentType.startsWith("image") ||
+      /\.(png|jpe?g|webp|gif|avif|bmp|svg)(\?|$)/i.test(resp.url)
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function aiRelevanceCheck(sb: SB, runId: string, imageUrl: string, story: any): Promise<boolean> {
   try {
+    const imageDataUrl = await fetchImageAsBase64(imageUrl);
+    if (!imageDataUrl) {
+      await log(sb, runId, "debug", `AI relevance skipped; could not fetch image bytes: ${imageUrl.substring(0, 120)}`);
+      return false;
+    }
+
     const resp = await callText({
       messages: [
         {
@@ -226,20 +252,21 @@ async function aiRelevanceCheck(sb: SB, runId: string, imageUrl: string, story: 
           role: "user",
           content: [
             { type: "text", text: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${(story.characters || []).map((c: any) => c.name).join(", ")}` },
-            { type: "image_url", image_url: { url: imageUrl } },
+            { type: "image_url", image_url: { url: imageDataUrl } },
           ] as any,
         },
       ],
       model: MODELS.TEXT_CHEAP,
       endpoint: "story_image_relevance",
     });
-    const text = typeof resp === "string" ? resp : resp?.text || JSON.stringify(resp);
+    const text = typeof resp === "string" ? resp : resp?.content || resp?.text || JSON.stringify(resp);
     const jsonMatch = text.match(/\{[\s\S]*?"relevant"[\s\S]*?\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       await log(sb, runId, "debug", `AI relevance check: relevant=${parsed.relevant}, reason=${parsed.reason}`);
       return !!parsed.relevant;
     }
+    await log(sb, runId, "debug", `AI relevance returned non-JSON: ${text.substring(0, 180)}`);
     return false;
   } catch (e) {
     await log(sb, runId, "warn", `AI relevance check error: ${(e as Error).message}`);
@@ -271,15 +298,18 @@ async function stage4(sb: SB, runId: string, story: any) {
     }
 
     for (const candidate of results) {
-      // Validate URL resolves to an image
       const valid = await validateImageUrl(candidate.url);
-      if (!valid) continue;
+      if (!valid) {
+        await log(sb, runId, "debug", `Rejected Brave image candidate (invalid image URL): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
-      // AI relevance check
       const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
-      if (!relevant) continue;
+      if (!relevant) {
+        await log(sb, runId, "debug", `Rejected Brave image candidate (not relevant): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
-      // Found a relevant image — download and store
       await log(sb, runId, "info", `Relevant image found: ${candidate.url.substring(0, 120)}`);
       try {
         const imgResp = await fetch(candidate.url);
@@ -318,11 +348,16 @@ async function stage4(sb: SB, runId: string, story: any) {
 
     for (const candidate of webResults) {
       const valid = await validateImageUrl(candidate.url);
-      if (!valid) continue;
+      if (!valid) {
+        await log(sb, runId, "debug", `Rejected web thumbnail (invalid image URL): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
       const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
-      if (!relevant) continue;
-
+      if (!relevant) {
+        await log(sb, runId, "debug", `Rejected web thumbnail (not relevant): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
       await log(sb, runId, "info", `Relevant web thumbnail found: ${candidate.url.substring(0, 120)}`);
       try {
         const imgResp = await fetch(candidate.url);
