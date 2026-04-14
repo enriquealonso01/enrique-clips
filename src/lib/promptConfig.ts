@@ -205,7 +205,7 @@ export const DEFAULT_PROMPT_CONFIG: PromptConfig = {
   },
   voiceover: {
     enabled: false,
-    voice_id: "fIGaHjfrR8KmMy0vGEVJ",
+    voice_id: "3RbK5MAeB6NkutT3d6qF",
     model: "eleven_multilingual_v2",
     speed: 0.83,
     stability: 0.36,
