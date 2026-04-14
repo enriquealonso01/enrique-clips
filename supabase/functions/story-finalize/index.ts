@@ -407,12 +407,24 @@ Deno.serve(async (req) => {
     let endCardUrl: string | null = null;
 
     if (realImageUrl) {
-      // Build end card with Rendi: grayscale real image, slow zoom, 5 seconds
-      // Rendi requires input keys starting with "in_"
+      // Build end card with Rendi: grayscale real image, slow zoom, emoji overlay, 5 seconds
       const endCardInputs: Record<string, string> = { in_real_img: realImageUrl };
       let endCardAudioInput = "";
       let endCardAudioFilter = "";
       let endCardAudioMap = "";
+      let emojiInput = "";
+      let emojiOverlayFilter = "";
+
+      // Emoji overlay
+      let emojiUrl: string | null = null;
+      if (project?.emoji_path) {
+        const { data: eUrl } = await sb.storage.from("project-assets").createSignedUrl(project.emoji_path, 3600);
+        emojiUrl = eUrl?.signedUrl || null;
+      }
+      if (emojiUrl) {
+        endCardInputs["in_emoji"] = emojiUrl;
+        // emoji is input index 1 when no audio, or 2 when audio present
+      }
 
       // Ending audio selection
       if (endingAudioUrl) {
@@ -420,20 +432,34 @@ Deno.serve(async (req) => {
         endCardAudioInput = " -i {{in_end_audio}}";
         const fadeIn = endingConfig.fade_in_ms ?? 250;
         const fadeOut = endingConfig.fade_out_ms ?? 400;
-        endCardAudioFilter = `;[1:a]atrim=0:5,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${5 - fadeOut / 1000}:d=${fadeOut / 1000}[aend]`;
+        const audioIdx = 1;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:5,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${5 - fadeOut / 1000}:d=${fadeOut / 1000}[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else if (bgMusicUrl) {
         endCardInputs["in_end_audio"] = bgMusicUrl;
         endCardAudioInput = " -i {{in_end_audio}}";
-        endCardAudioFilter = `;[1:a]atrim=0:5,afade=t=in:st=0:d=0.3,afade=t=out:st=4.6:d=0.4[aend]`;
+        const audioIdx = 1;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:5,afade=t=in:st=0:d=0.3,afade=t=out:st=4.6:d=0.4[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else {
         endCardAudioFilter = `;anullsrc=r=44100:cl=stereo:d=5[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       }
 
-      // FFmpeg: loop image for 5s, grayscale, slow zoom
-      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput} -filter_complex "[0:v]scale=1080:1920,format=gray,zoompan=z='min(zoom+0.001\\,1.05)':d=150:s=1080x1920:fps=30[vend]${endCardAudioFilter}" -map "[vend]"${endCardAudioMap} -c:v libx264 -preset fast -crf 23 -c:a aac -t 5 -movflags +faststart {{out_1}}`;
+      // Emoji overlay filter - emoji input index depends on whether audio is present
+      if (emojiUrl) {
+        const emojiIdx = endCardAudioInput ? 2 : 1;
+        emojiInput = " -i {{in_emoji}}";
+        // Scale emoji to ~200px, center it, overlay on top of grayscale+zoom video
+        emojiOverlayFilter = `;[vend][${emojiIdx}:v]overlay=(W-w)/2:(H-h)/2:enable='between(t\\,0\\,5)'[vfinal]`;
+      }
+
+      const vOutLabel = emojiUrl ? "vfinal" : "vend";
+
+      // FFmpeg: loop image for 5s, grayscale, slow zoom, optional emoji overlay
+      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput}${emojiInput} -filter_complex "[0:v]scale=1080:1920,format=gray,zoompan=z='min(zoom+0.001\\,1.05)':d=150:s=1080x1920:fps=30[vend]${emojiOverlayFilter}${endCardAudioFilter}" -map "[${vOutLabel}]"${endCardAudioMap} -c:v libx264 -preset fast -crf 23 -c:a aac -t 5 -movflags +faststart {{out_1}}`;
+
+      await log("info", `End card FFmpeg: ${endCardCmd.substring(0, 400)}...`);
 
       const endResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
@@ -456,7 +482,7 @@ Deno.serve(async (req) => {
           const pd = await p.json();
           if (pd.status === "SUCCESS") {
             endCardUrl = pd.output_files?.out_1?.storage_url;
-            await log("info", "End card rendered");
+            await log("info", "End card rendered with emoji overlay");
             break;
           }
           if (pd.status === "FAILED" || pd.status === "ERROR") {
