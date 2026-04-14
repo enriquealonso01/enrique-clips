@@ -43,7 +43,7 @@ async function checkCancelled(sb: SB, runId: string) {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-const PIPELINE_START = Date.now();
+let PIPELINE_START = Date.now();
 const GUARD_MS = 80_000; // self-chain before 150s timeout
 
 function shouldChain(): boolean {
