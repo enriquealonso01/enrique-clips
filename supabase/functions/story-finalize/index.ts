@@ -54,6 +54,14 @@ Deno.serve(async (req) => {
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
 
+    // ── Check for already-completed finalization (idempotency) ──
+    const { data: existingFinal } = await sb.from("story_assets")
+      .select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
+    if (existingFinal && existingFinal.length > 0) {
+      await log("info", "Final video already exists — skipping duplicate finalization");
+      return json({ status: "already_finalized", run_id: runId });
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
