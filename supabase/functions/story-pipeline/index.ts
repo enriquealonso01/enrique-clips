@@ -756,7 +756,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 
 async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
   await updateRun(sb, runId, { status: "scenes_generating", current_stage: "scenes_generating", progress_pct: 62 });
-  await log(sb, runId, "info", `Stage 11: Submitting ${scenes.length} scene clips to Vidu Q3 Turbo`);
+  await log(sb, runId, "info", `Stage 11: Submitting ${scenes.length} scene clips to Vidu Q3 Turbo${offPeak ? " (off-peak)" : ""}`);
 
   const VIDU_API_KEY = Deno.env.get("VIDU_API_KEY");
   if (!VIDU_API_KEY) throw new Error("VIDU_API_KEY not configured");
