@@ -437,7 +437,7 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
   await log(sb, runId, "info", "Stage 5: Generating cast/reference image");
 
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || "estimate"}`).join("\n");
-  const prompt = `Create a character lineup/reference sheet for a short video. All characters side by side, full body, labeled with names. Vertical 9:16 format, clean illustration.\n\nStory: "${story.title}"\n${story.summary}\n\nCharacters:\n${chars || "Create generic representatives"}\n\nReal image description: ${realImage?.image_description || "N/A"}`;
+  const prompt = `Create a character lineup/reference sheet in MODERN 2D CARTOON ILLUSTRATION STYLE for a short animated story video. Clean outlines, soft shading, vibrant colors, Pixar-meets-editorial-illustration aesthetic. All characters side by side, full body, labeled with names. Vertical 9:16 format.\n\nArt style: simplified proportions (slightly large heads, expressive eyes), consistent clothing colors, warm palette, NOT photorealistic, NOT anime.\n\nStory: "${story.title}"\n${story.summary}\n\nCharacters:\n${chars || "Create generic representatives"}\n\nDesign each character with distinctive, memorable features (unique hair color/style, outfit color, accessories) so they remain recognizable across all scenes.`;
 
   const refData = realImage?.primary_url ? await fetchImageAsBase64(realImage.primary_url) : undefined;
 
@@ -630,8 +630,18 @@ async function stage9(sb: SB, runId: string, story: any, timedBeats: any[]) {
 
   const result = await callStructured({
     messages: [
-      { role: "system", content: "You are a visual director for short-form emotional storytelling. Create scene descriptions optimized for AI image generation. Each scene must maintain character consistency and use the cast reference image style. Return ONLY valid JSON." },
-      { role: "user", content: `Generate one visual scene prompt per beat for this story video.
+      { role: "system", content: `You are a visual director for short-form emotional storytelling videos in a CONSISTENT CARTOON / ILLUSTRATED STYLE.
+
+Art style rules (apply to EVERY scene):
+- Modern 2D cartoon illustration, clean outlines, soft shading, vibrant but not neon colors
+- Characters: simplified proportions (slightly large heads, expressive eyes), consistent clothing colors and features across ALL scenes
+- Backgrounds: painterly, slightly stylized environments with warm lighting and soft gradients
+- Mood: Pixar-meets-editorial-illustration — emotionally resonant, family-friendly, polished
+- NO photorealism, NO 3D render look, NO anime/manga style
+- Maintain the SAME character design (face shape, hair, outfit colors) in every scene
+
+Return ONLY valid JSON.` },
+      { role: "user", content: `Generate one visual scene prompt per beat for this story video. Every prompt MUST describe the scene in the consistent cartoon illustration style defined above.
 
 Story: "${story.title}"
 Summary: ${story.summary}
@@ -641,12 +651,12 @@ Locations: ${JSON.stringify(story.locations)}
 Beats:
 ${timedBeats.map((b: any, i: number) => `Beat ${i}: "${b.text}" (${b.purpose}, ${b.duration?.toFixed(1)}s) — Visual: ${b.visual_intent}`).join("\n")}
 
-For each beat return a detailed image prompt. All characters must look consistent with the cast reference image.
+For each beat return a detailed image prompt. Start every prompt with "Cartoon illustration style:" and include character appearance details (hair color, outfit, distinguishing features) to ensure consistency across scenes.
 
 Return JSON:
 {
   "scenes": [
-    {"beat_index": 0, "prompt": "detailed scene description for AI image generation, vertical 9:16, cinematic lighting...", "characters_in_scene": ["names"], "location": "where", "target_duration": 3.65}
+    {"beat_index": 0, "prompt": "Cartoon illustration style: [detailed scene]...", "characters_in_scene": ["names"], "location": "where", "target_duration": 3.65}
   ]
 }` },
     ],
@@ -698,8 +708,9 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 
     const scene = scenes[i];
     try {
+      const cartoonPrefix = "Modern 2D cartoon illustration style, clean outlines, soft shading, vibrant colors, Pixar-meets-editorial-illustration look. ";
       const imgResult = await callImage({
-        prompt: `${scene.prompt}\n\nIMPORTANT: Use the cast reference image for character appearance consistency. Vertical 9:16 format. Cinematic, emotional lighting.`,
+        prompt: `${cartoonPrefix}${scene.prompt}\n\nIMPORTANT: Cartoon illustration style — NOT photorealistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Warm, emotionally resonant lighting.`,
         model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
         endpoint: `story_scene_image_${i}`,
         referenceImage: castRef,
