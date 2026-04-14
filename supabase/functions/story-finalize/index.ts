@@ -474,6 +474,7 @@ Deno.serve(async (req) => {
     // STAGE 18: Final Assembly
     // ══════════════════════════════════════════════════════
 
+    if (await checkCancelled()) return json({ status: "cancelled" });
     await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
 
     let finalVideoBytes: Uint8Array;
