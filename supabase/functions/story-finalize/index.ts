@@ -510,8 +510,8 @@ Deno.serve(async (req) => {
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      // Rendi requires input keys starting with "in_"
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset fast -crf 23 -c:a aac -movflags +faststart {{out_1}}`;
+      // Re-encode both inputs to ensure matching codecs/sample rates before concat
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1[v0];[0:a]aresample=44100[a0];[1:v]scale=1080:1920,setsar=1[v1];[1:a]aresample=44100[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
