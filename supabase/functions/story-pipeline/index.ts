@@ -433,7 +433,7 @@ async function stage4(sb: SB, runId: string, story: any) {
   await log(sb, runId, "info", "No relevant image found via any search. Generating photorealistic fallback with Gemini.");
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
   const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
-  const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style.`;
+  const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style. NO text, words, letters, watermarks, or typography in the image.`;
 
   const imageResult = await callImage({
     prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
@@ -741,7 +741,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
     try {
       const cartoonPrefix = "Modern 2D cartoon illustration style, clean outlines, soft shading, vibrant colors, Pixar-meets-editorial-illustration look. ";
       const imgResult = await callImage({
-        prompt: `${cartoonPrefix}${scene.prompt}\n\nIMPORTANT: Cartoon illustration style — NOT photorealistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Warm, emotionally resonant lighting.`,
+        prompt: `${cartoonPrefix}${scene.prompt}\n\nIMPORTANT: Cartoon illustration style — NOT photorealistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Warm, emotionally resonant lighting. NO text, words, letters, watermarks, or typography in the image.`,
         model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
         endpoint: `story_scene_image_${i}`,
         referenceImage: castRef,
