@@ -37,6 +37,13 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Check cancellation before starting
+    const { data: statusCheck } = await sb.from("story_runs").select("status").eq("id", runId).single();
+    if (statusCheck && ["cancelled", "failed"].includes(statusCheck.status)) {
+      await log("info", `Finalize aborted: run is ${statusCheck.status}`);
+      return json({ status: "aborted", reason: statusCheck.status });
+    }
+
     const { data: run } = await sb.from("story_runs").select("*, story_projects(*)").eq("id", runId).single();
     if (!run) return json({ error: "Run not found" }, 404);
 
