@@ -37,6 +37,15 @@ Deno.serve(async (req) => {
     await updateRun({ status: "failed", error_message: message, finished_at: new Date().toISOString() });
   }
 
+  async function checkCancelled(): Promise<boolean> {
+    const { data } = await sb.from("story_runs").select("status").eq("id", runId).single();
+    if (data && ["cancelled", "failed"].includes(data.status)) {
+      await log("info", `Finalize aborted: run is ${data.status}`);
+      return true;
+    }
+    return false;
+  }
+
   try {
     // Check cancellation before starting
     const { data: statusCheck } = await sb.from("story_runs").select("status").eq("id", runId).single();
@@ -247,6 +256,7 @@ Deno.serve(async (req) => {
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
     await updateRun({ progress_pct: 80 });
+    if (await checkCancelled()) return json({ status: "cancelled" });
 
     // ══════════════════════════════════════════════════════
     // STAGE 14: Subtitles via Submagic API
@@ -391,6 +401,7 @@ Deno.serve(async (req) => {
     // STAGE 15-17: End Card
     // ══════════════════════════════════════════════════════
 
+    if (await checkCancelled()) return json({ status: "cancelled" });
     await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
     await log("info", "Stage 15-17: Building 5-second grayscale end card");
 
@@ -463,6 +474,7 @@ Deno.serve(async (req) => {
     // STAGE 18: Final Assembly
     // ══════════════════════════════════════════════════════
 
+    if (await checkCancelled()) return json({ status: "cancelled" });
     await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
 
     let finalVideoBytes: Uint8Array;
@@ -512,13 +524,23 @@ Deno.serve(async (req) => {
           finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
         } else {
           await log("warn", "Final concat timed out — using captioned video without end card");
-          const fallbackDl = await fetch(storyVideoUrl!);
-          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
+          const { data: fallbackUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+          if (fallbackUrl?.signedUrl) {
+            const fallbackDl = await fetch(fallbackUrl.signedUrl);
+            finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
+          } else {
+            finalVideoBytes = storyBytes;
+          }
         }
       } else {
         await log("warn", "Final concat submit failed — using captioned video");
-        const fallbackDl = await fetch(storyVideoUrl!);
-        finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
+        const { data: fallbackUrl2 } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+        if (fallbackUrl2?.signedUrl) {
+          const fallbackDl = await fetch(fallbackUrl2.signedUrl);
+          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
+        } else {
+          finalVideoBytes = storyBytes;
+        }
       }
     } else {
       await log("info", "No end card — using captioned video as final");

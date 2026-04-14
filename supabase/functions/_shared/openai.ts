@@ -571,9 +571,11 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         if (imgResp.ok) {
           const imgBuffer = await imgResp.arrayBuffer();
           const imgBytes = new Uint8Array(imgBuffer);
+          // Use chunk-based encoding to avoid stack overflow on large images
+          const CHUNK = 32768;
           let binary = "";
-          for (let i = 0; i < imgBytes.length; i++) {
-            binary += String.fromCharCode(imgBytes[i]);
+          for (let i = 0; i < imgBytes.length; i += CHUNK) {
+            binary += String.fromCharCode(...imgBytes.subarray(i, Math.min(i + CHUNK, imgBytes.length)));
           }
           const b64 = btoa(binary);
           const mimeType = imgResp.headers.get("content-type") || "image/png";
