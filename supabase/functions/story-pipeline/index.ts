@@ -858,14 +858,14 @@ serve(async (req) => {
     }
     if (!story) { await failRun(sb, runId, "No valid story found after 3 attempts"); return new Response(JSON.stringify({ error: "No story" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
-    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { story, target_duration: context.targetDuration } });
+    await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { ...meta, story, target_duration: context.targetDuration } });
 
     // Stage 4: Real image
     let realImage: any = null;
     try { realImage = await stage4(sb, runId, story); } catch (err) {
       await log(sb, runId, "warn", `Real image failed: ${(err as Error).message}`);
     }
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, target_duration: context.targetDuration }, progress_pct: 20 });
+    await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, target_duration: context.targetDuration }, progress_pct: 20 });
 
     if (shouldChain()) {
       await selfChain(runId, "stage5");
@@ -891,7 +891,7 @@ serve(async (req) => {
     const fp = (story.summary || "").substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
     await sb.from("story_memory").insert({ project_id: context.projectId, run_id: runId, story_title: story.title, story_fingerprint: fp, source_url: story.source_url || null });
 
-    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration } });
+    await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage6");
@@ -900,7 +900,7 @@ serve(async (req) => {
 
     // Stage 6: Narration script
     const script = await stage6(sb, runId, story, context.targetDuration);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, target_duration: context.targetDuration } });
+    await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage7");
@@ -912,7 +912,7 @@ serve(async (req) => {
 
     // Stage 8: Beat timing
     const timedBeats = await stage8(sb, runId, script, narration.alignment);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats } });
+    await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats } });
 
     if (shouldChain()) {
       await selfChain(runId, "stage9");
@@ -921,7 +921,7 @@ serve(async (req) => {
 
     // Stage 9: Scene prompts
     const scenes = await stage9(sb, runId, story, timedBeats);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes } });
+    await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes } });
 
     // Stage 10: Scene images
     const imgResult = await stage10(sb, runId, scenes, castResult.path);
@@ -932,7 +932,7 @@ serve(async (req) => {
 
     // Stage 11: Animate clips
     const tasks = await stage11(sb, runId, scenes);
-    await updateRun(sb, runId, { generated_metadata: { story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
+    await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
 
     // Hand off to poller
     await chainFunction("story-poll-vidu", { run_id: runId });
