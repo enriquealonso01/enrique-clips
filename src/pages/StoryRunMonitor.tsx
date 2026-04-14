@@ -148,7 +148,7 @@ export default function StoryRunMonitor() {
     if (!assets) return null;
     const result: Record<string, typeof assets> = {};
     for (const [catKey, cat] of Object.entries(ASSET_CATEGORIES)) {
-      result[catKey] = assets.filter((a) => cat.types.includes(a.type));
+      result[catKey] = assets.filter((a) => (cat.types as readonly string[]).includes(a.type));
     }
     return result;
   }, [assets]);
