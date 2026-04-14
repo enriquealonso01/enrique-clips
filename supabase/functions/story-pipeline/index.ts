@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { callStructured, callText, callImage, MODELS } from "../_shared/openai.ts";
+import { callStructured, callText, callImage, MODELS, Image503RetryableError } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -722,7 +722,27 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
       imageUrls.push(url || path);
       await log(sb, runId, "info", `Scene image ${i + 1}/${scenes.length} generated`);
     } catch (err) {
-      await log(sb, runId, "error", `Scene image ${i} failed: ${(err as Error).message}`);
+      if (err instanceof Image503RetryableError) {
+        const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+        const existingMeta = (cur?.generated_metadata as any) || {};
+        await updateRun(sb, runId, {
+          generated_metadata: {
+            ...existingMeta,
+            scene_images_progress: i,
+            total_scenes: scenes.length,
+            scene_image_retry: {
+              scene_index: i,
+              reason: err.reason,
+              at: new Date().toISOString(),
+            },
+          },
+          progress_pct: 48 + Math.round((i / scenes.length) * 12),
+        });
+        await log(sb, runId, "warn", `Scene image ${i + 1}/${scenes.length} retriable (${err.reason}), re-chaining...`);
+        return { partial: true, completed: i, imageUrls };
+      }
+
+      await log(sb, runId, "error", `Scene image ${i + 1}/${scenes.length} failed: ${(err as Error).message}`);
       imageUrls.push(""); // placeholder
     }
   }
