@@ -256,6 +256,7 @@ Deno.serve(async (req) => {
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
     await updateRun({ progress_pct: 80 });
+    if (await checkCancelled()) return json({ status: "cancelled" });
 
     // ══════════════════════════════════════════════════════
     // STAGE 14: Subtitles via Submagic API
