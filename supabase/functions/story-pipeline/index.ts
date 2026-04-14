@@ -298,15 +298,18 @@ async function stage4(sb: SB, runId: string, story: any) {
     }
 
     for (const candidate of results) {
-      // Validate URL resolves to an image
       const valid = await validateImageUrl(candidate.url);
-      if (!valid) continue;
+      if (!valid) {
+        await log(sb, runId, "debug", `Rejected Brave image candidate (invalid image URL): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
-      // AI relevance check
       const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
-      if (!relevant) continue;
+      if (!relevant) {
+        await log(sb, runId, "debug", `Rejected Brave image candidate (not relevant): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
-      // Found a relevant image — download and store
       await log(sb, runId, "info", `Relevant image found: ${candidate.url.substring(0, 120)}`);
       try {
         const imgResp = await fetch(candidate.url);
@@ -345,11 +348,16 @@ async function stage4(sb: SB, runId: string, story: any) {
 
     for (const candidate of webResults) {
       const valid = await validateImageUrl(candidate.url);
-      if (!valid) continue;
+      if (!valid) {
+        await log(sb, runId, "debug", `Rejected web thumbnail (invalid image URL): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
 
       const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
-      if (!relevant) continue;
-
+      if (!relevant) {
+        await log(sb, runId, "debug", `Rejected web thumbnail (not relevant): ${candidate.url.substring(0, 120)}`);
+        continue;
+      }
       await log(sb, runId, "info", `Relevant web thumbnail found: ${candidate.url.substring(0, 120)}`);
       try {
         const imgResp = await fetch(candidate.url);
