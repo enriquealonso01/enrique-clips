@@ -150,12 +150,16 @@ Deno.serve(async (req) => {
     const dissolveDuration = 0.3;
     let filterParts: string[] = [];
     let lastLabel = "[0:v]";
+    let cumulativeOffset = 0;
 
     // Simple concat with xfade dissolves
     for (let i = 1; i < clipUrls.length; i++) {
       const outLabel = i < clipUrls.length - 1 ? `[v${i}]` : "[vout]";
-      const offset = Math.max(0, (timedBeats[i - 1]?.end_time || i * 4) - dissolveDuration);
-      filterParts.push(`${lastLabel}[${i}:v]xfade=transition=fade:duration=${dissolveDuration}:offset=${offset.toFixed(2)}${outLabel}`);
+      // Calculate offset from cumulative clip durations, not just beat end times
+      const clipDuration = timedBeats[i - 1]?.duration || 4;
+      cumulativeOffset += clipDuration - dissolveDuration;
+      const safeOffset = Math.max(0.1, cumulativeOffset);
+      filterParts.push(`${lastLabel}[${i}:v]xfade=transition=fade:duration=${dissolveDuration}:offset=${safeOffset.toFixed(2)}${outLabel}`);
       lastLabel = outLabel;
     }
 
