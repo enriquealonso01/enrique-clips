@@ -209,7 +209,7 @@ Deno.serve(async (req) => {
         ffmpeg_command: storyCmd,
         input_files: inputFiles,
         output_files: { out_1: "story_video.mp4" },
-        max_command_run_seconds: 120,
+        max_command_run_seconds: 60,
         vcpu_count: 8,
       }),
     });
