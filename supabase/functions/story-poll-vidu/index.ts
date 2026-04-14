@@ -54,6 +54,7 @@ Deno.serve(async (req) => {
     const { data: run } = await sb.from("story_runs").select("*").eq("id", runId).single();
     if (!run) return json({ error: "Run not found" });
     if (["cancelled", "failed", "published"].includes(run.status)) return json({ status: "not_active" });
+    const isOffPeak = run.status === "paused" && (run.generated_metadata as any)?.waiting_for === "vidu_off_peak";
 
     // Find pending story video assets
     const { data: clipAssets } = await sb.from("story_assets")
