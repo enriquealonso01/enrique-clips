@@ -522,9 +522,13 @@ Deno.serve(async (req) => {
         }
       } else {
         await log("warn", "Final concat submit failed — using captioned video");
-        const fallbackDl = await fetch(storyVideoUrl!);
-        finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
-      }
+        const { data: fallbackUrl2 } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+        if (fallbackUrl2?.signedUrl) {
+          const fallbackDl = await fetch(fallbackUrl2.signedUrl);
+          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
+        } else {
+          finalVideoBytes = storyBytes;
+        }
     } else {
       await log("info", "No end card — using captioned video as final");
       // Re-read captioned video from storage
