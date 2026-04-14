@@ -512,7 +512,7 @@ async function stage7(sb: SB, runId: string, script: any) {
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY not configured");
 
   // Use a warm, storytelling voice
-  const voiceId = "JBFqnCBsd6RMkjVDRZzb"; // George - warm narrator
+  const voiceId = "3RbK5MAeB6NkutT3d6qF";
   const fullText = script.full_script;
 
   const response = await fetch(

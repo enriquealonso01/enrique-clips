@@ -1729,7 +1729,7 @@ Deno.serve(async (req) => {
             const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
             const runMetadataForVO = (run.generated_metadata as any) || {};
             const resolvedConfigForVO: PromptConfig = runMetadataForVO.resolved_prompt_config || buildResolvedPromptConfig(project);
-            const voiceoverConfig = resolvedConfigForVO.voiceover || { enabled: false, voice_id: "JBFqnCBsd6RMkjVDRZzb", model: "eleven_multilingual_v2" };
+            const voiceoverConfig = resolvedConfigForVO.voiceover || { enabled: false, voice_id: "3RbK5MAeB6NkutT3d6qF", model: "eleven_multilingual_v2" };
 
             // Collect overlays that need voiceover (DB voiceover_enabled flag OR JSON items with voiceover_enabled)
             const voiceoverOverlays = textOverlays.filter((o: any) => o.voiceover_enabled === true);
