@@ -175,15 +175,35 @@ async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: 
     headers: { Accept: "application/json", "X-Subscription-Token": key },
   });
   if (!resp.ok) {
-    console.error(`Brave image search failed: ${resp.status}`);
-    await resp.text(); // consume body
+    const body = await resp.text();
+    console.error(`Brave image search failed: ${resp.status} — ${body.substring(0, 300)}`);
     return [];
   }
   const data = await resp.json();
-  return (data.results || []).map((r: any) => ({
-    url: r.properties?.url || r.url || "",
+  console.log(`Brave image search: ${data.results?.length || 0} results for "${query.substring(0, 60)}"`);
+  const mapped = (data.results || []).map((r: any) => ({
+    url: r.properties?.url || r.thumbnail?.src || r.url || "",
     title: r.title || "",
   })).filter((r: any) => r.url && r.url.startsWith("http"));
+  return mapped;
+}
+
+// Fallback: Brave Web Search returns pages with thumbnail images
+async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ url: string; title: string }>> {
+  const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!key) return [];
+  const params = new URLSearchParams({ q: query, count: String(count) });
+  const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+    headers: { Accept: "application/json", "X-Subscription-Token": key },
+  });
+  if (!resp.ok) { await resp.text(); return []; }
+  const data = await resp.json();
+  const images: Array<{ url: string; title: string }> = [];
+  for (const r of data.web?.results || []) {
+    if (r.thumbnail?.src) images.push({ url: r.thumbnail.src, title: r.title || "" });
+  }
+  console.log(`Brave web search: ${images.length} thumbnail images for "${query.substring(0, 60)}"`);
+  return images;
 }
 
 async function validateImageUrl(url: string): Promise<boolean> {
@@ -288,8 +308,51 @@ async function stage4(sb: SB, runId: string, story: any) {
     }
   }
 
-  // ── Step 2: Fallback — generate photorealistic image with Gemini ──
-  await log(sb, runId, "info", "No relevant image found via Brave Search. Generating photorealistic fallback with Gemini.");
+  // ── Step 2: Fallback — Brave Web Search (larger index, thumbnail images) ──
+  await log(sb, runId, "info", "No image results from Brave Image Search. Trying Brave Web Search thumbnails...");
+  for (let qi = 0; qi < queries.length; qi++) {
+    const query = queries[qi];
+    const webResults = await braveWebSearchImages(query, 8);
+    if (webResults.length === 0) continue;
+    await log(sb, runId, "debug", `Web search query ${qi + 1}: ${webResults.length} thumbnails`);
+
+    for (const candidate of webResults) {
+      const valid = await validateImageUrl(candidate.url);
+      if (!valid) continue;
+
+      const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
+      if (!relevant) continue;
+
+      await log(sb, runId, "info", `Relevant web thumbnail found: ${candidate.url.substring(0, 120)}`);
+      try {
+        const imgResp = await fetch(candidate.url);
+        if (imgResp.ok) {
+          const bytes = new Uint8Array(await imgResp.arrayBuffer());
+          const path = `story-runs/${runId}/real_image.png`;
+          const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
+            image_type: "search_result",
+            image_description: candidate.title || `Image for "${story.title}"`,
+            characters_visible: [],
+            original_url: candidate.url,
+            source: "brave_web_search",
+            query_used: query,
+          });
+          return {
+            primary_url: signedUrl,
+            image_type: "search_result",
+            image_description: candidate.title || `Image for "${story.title}"`,
+            characters_visible: [],
+            storage_path: path,
+          };
+        }
+      } catch (e) {
+        await log(sb, runId, "warn", `Failed to download web image: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // ── Step 3: Fallback — generate photorealistic image with Gemini ──
+  await log(sb, runId, "info", "No relevant image found via any search. Generating photorealistic fallback with Gemini.");
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
   const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
   const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style.`;
