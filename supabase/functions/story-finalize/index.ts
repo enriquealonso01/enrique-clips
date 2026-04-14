@@ -541,6 +541,7 @@ Deno.serve(async (req) => {
         } else {
           finalVideoBytes = storyBytes;
         }
+      }
     } else {
       await log("info", "No end card — using captioned video as final");
       // Re-read captioned video from storage
