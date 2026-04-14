@@ -401,6 +401,7 @@ Deno.serve(async (req) => {
     // STAGE 15-17: End Card
     // ══════════════════════════════════════════════════════
 
+    if (await checkCancelled()) return json({ status: "cancelled" });
     await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
     await log("info", "Stage 15-17: Building 5-second grayscale end card");
 
