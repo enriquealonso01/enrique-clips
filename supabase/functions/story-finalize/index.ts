@@ -17,6 +17,7 @@ Deno.serve(async (req) => {
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
+  const SUBMAGIC_API_KEY = Deno.env.get("SUBMAGIC_API_KEY");
 
   let runId: string;
   try { const body = await req.json(); runId = body.run_id; } catch { return json({ error: "run_id required" }, 400); }
@@ -118,29 +119,30 @@ Deno.serve(async (req) => {
     }
 
     // Build FFmpeg command for story portion
+    // Rendi requires input keys to start with "in_" and be referenced as {{in_*}}
     const inputFiles: Record<string, string> = {};
     const inputArgs: string[] = [];
 
-    // Add clip inputs
+    // Add clip inputs: in_clip0, in_clip1, ...
     for (let i = 0; i < clipUrls.length; i++) {
-      inputFiles[`clip_${i}`] = clipUrls[i];
-      inputArgs.push(`-i clip_${i}`);
+      inputFiles[`in_clip${i}`] = clipUrls[i];
+      inputArgs.push(`-i {{in_clip${i}}}`);
     }
 
     // Add narration input
     let narrationIdx = -1;
     if (narrationUrl) {
       narrationIdx = clipUrls.length;
-      inputFiles[`narration`] = narrationUrl;
-      inputArgs.push(`-i narration`);
+      inputFiles[`in_narration`] = narrationUrl;
+      inputArgs.push(`-i {{in_narration}}`);
     }
 
     // Add background music input
     let bgmIdx = -1;
     if (bgMusicUrl) {
       bgmIdx = narrationIdx >= 0 ? narrationIdx + 1 : clipUrls.length;
-      inputFiles[`bgm`] = bgMusicUrl;
-      inputArgs.push(`-i bgm`);
+      inputFiles[`in_bgm`] = bgMusicUrl;
+      inputArgs.push(`-i {{in_bgm}}`);
     }
 
     // Build filter_complex with dissolves between clips
@@ -166,7 +168,6 @@ Deno.serve(async (req) => {
     const bgmGain = audioMix.background_music_gain_db ?? -22;
 
     if (narrationIdx >= 0 && bgmIdx >= 0) {
-      // Mix narration + BGM
       audioFilter = `;[${bgmIdx}:a]volume=${bgmGain}dB[bgm_low];[${narrationIdx}:a][bgm_low]amix=inputs=2:duration=first:dropout_transition=2[aout]`;
     } else if (narrationIdx >= 0) {
       audioFilter = `;[${narrationIdx}:a]acopy[aout]`;
@@ -175,7 +176,7 @@ Deno.serve(async (req) => {
     }
 
     const fullFilter = filterParts.join(";") + audioFilter;
-    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest -movflags +faststart out_1`;
+    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest -movflags +faststart {{out_1}}`;
 
     await log("info", `Rendi story FFmpeg: ${storyCmd.substring(0, 500)}...`);
 
@@ -236,13 +237,143 @@ Deno.serve(async (req) => {
     await updateRun({ progress_pct: 80 });
 
     // ══════════════════════════════════════════════════════
-    // STAGE 14: Subtitles (placeholder - using captioned story as-is for now)
+    // STAGE 14: Subtitles via Submagic API
     // ══════════════════════════════════════════════════════
 
     await updateRun({ current_stage: "subtitles_processing", progress_pct: 82 });
-    await log("info", "Stage 14: Subtitles — using story video as captioned video (Submagic integration pending)");
-    // TODO: Integrate Submagic API when available
-    const captionedPath = storyPath; // Use story video directly for now
+
+    let captionedPath = storyPath; // fallback: use uncaptioned video
+
+    if (SUBMAGIC_API_KEY) {
+      await log("info", "Stage 14: Adding subtitles via Submagic API");
+
+      try {
+        // Get a public signed URL for the story video (Submagic needs a public URL)
+        const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
+        const videoUrl = storySignedUrl?.signedUrl;
+
+        if (!videoUrl) throw new Error("Could not get signed URL for story video");
+
+        // Step 1: Create project in Submagic
+        const createResp = await fetch("https://api.submagic.co/v1/projects", {
+          method: "POST",
+          headers: {
+            "x-api-key": SUBMAGIC_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: (meta.story?.title || "Story Video").substring(0, 100),
+            language: "en",
+            videoUrl: videoUrl,
+            hideCaptions: false,
+          }),
+        });
+
+        if (!createResp.ok) {
+          const errText = await createResp.text();
+          throw new Error(`Submagic create project failed: ${createResp.status} ${errText.substring(0, 200)}`);
+        }
+
+        const subProject = await createResp.json();
+        const subProjectId = subProject.id;
+        await log("info", `Submagic project created: ${subProjectId}`);
+
+        // Step 2: Poll for transcription completion
+        let transcribed = false;
+        for (let poll = 0; poll < 60; poll++) {
+          await sleep(5000);
+          const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
+            headers: { "x-api-key": SUBMAGIC_API_KEY },
+          });
+          if (!getResp.ok) continue;
+          const proj = await getResp.json();
+
+          if (proj.status === "completed" || proj.transcriptionStatus === "COMPLETED") {
+            transcribed = true;
+            await log("info", "Submagic transcription completed");
+            break;
+          }
+          if (proj.status === "failed") {
+            throw new Error(`Submagic transcription failed: ${proj.failedReason || "unknown"}`);
+          }
+          if (poll % 6 === 0) {
+            await log("debug", `Submagic status: ${proj.status} / transcription: ${proj.transcriptionStatus}`);
+          }
+        }
+
+        if (!transcribed) throw new Error("Submagic transcription timed out after 5 minutes");
+
+        // Step 3: Export project (render captioned video)
+        const exportResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}/export`, {
+          method: "POST",
+          headers: {
+            "x-api-key": SUBMAGIC_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            width: 1080,
+            height: 1920,
+            fps: 30,
+          }),
+        });
+
+        if (!exportResp.ok) {
+          const errText = await exportResp.text();
+          throw new Error(`Submagic export failed: ${exportResp.status} ${errText.substring(0, 200)}`);
+        }
+
+        await log("info", "Submagic export triggered, polling for completion...");
+
+        // Step 4: Poll for export completion
+        let captionedVideoUrl: string | null = null;
+        for (let poll = 0; poll < 120; poll++) {
+          await sleep(5000);
+          const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
+            headers: { "x-api-key": SUBMAGIC_API_KEY },
+          });
+          if (!getResp.ok) continue;
+          const proj = await getResp.json();
+
+          if (proj.status === "completed" && proj.downloadUrl) {
+            captionedVideoUrl = proj.downloadUrl;
+            await log("info", `Submagic captioned video ready: ${captionedVideoUrl.substring(0, 80)}...`);
+            break;
+          }
+          if (proj.status === "failed") {
+            throw new Error(`Submagic export failed: ${proj.failedReason || "unknown"}`);
+          }
+          if (poll % 12 === 0) {
+            await log("debug", `Submagic export status: ${proj.status}`);
+          }
+        }
+
+        if (!captionedVideoUrl) throw new Error("Submagic export timed out after 10 minutes");
+
+        // Step 5: Download captioned video and store
+        const captDl = await fetch(captionedVideoUrl);
+        if (!captDl.ok) throw new Error(`Failed to download captioned video: ${captDl.status}`);
+        const captBytes = new Uint8Array(await captDl.arrayBuffer());
+        captionedPath = `story-runs/${runId}/captioned_story_video.mp4`;
+        await sb.storage.from("project-assets").upload(captionedPath, captBytes, { contentType: "video/mp4", upsert: true });
+
+        // Store as asset
+        const { data: captSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 60 * 60 * 24 * 7);
+        await sb.from("story_assets").insert({
+          run_id: runId,
+          type: "captioned_story_video",
+          supabase_path: captionedPath,
+          signed_url_last: captSignedUrl?.signedUrl || null,
+          metadata: { submagic_project_id: subProjectId, size_bytes: captBytes.length },
+        });
+
+        await log("info", `Captioned video stored: ${(captBytes.length / 1024 / 1024).toFixed(1)}MB`);
+      } catch (subErr) {
+        await log("warn", `Submagic subtitles failed: ${(subErr as Error).message}. Continuing without subtitles.`);
+        captionedPath = storyPath; // fallback
+      }
+    } else {
+      await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured)");
+    }
 
     // ══════════════════════════════════════════════════════
     // STAGE 15-17: End Card
@@ -255,22 +386,23 @@ Deno.serve(async (req) => {
 
     if (realImageUrl) {
       // Build end card with Rendi: grayscale real image, slow zoom, 5 seconds
-      const endCardInputs: Record<string, string> = { real_img: realImageUrl };
+      // Rendi requires input keys starting with "in_"
+      const endCardInputs: Record<string, string> = { in_real_img: realImageUrl };
       let endCardAudioInput = "";
       let endCardAudioFilter = "";
       let endCardAudioMap = "";
 
       // Ending audio selection
       if (endingAudioUrl) {
-        endCardInputs["end_audio"] = endingAudioUrl;
-        endCardAudioInput = " -i end_audio";
+        endCardInputs["in_end_audio"] = endingAudioUrl;
+        endCardAudioInput = " -i {{in_end_audio}}";
         const fadeIn = endingConfig.fade_in_ms ?? 250;
         const fadeOut = endingConfig.fade_out_ms ?? 400;
         endCardAudioFilter = `;[1:a]atrim=0:5,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${5 - fadeOut / 1000}:d=${fadeOut / 1000}[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else if (bgMusicUrl) {
-        endCardInputs["end_audio"] = bgMusicUrl;
-        endCardAudioInput = " -i end_audio";
+        endCardInputs["in_end_audio"] = bgMusicUrl;
+        endCardAudioInput = " -i {{in_end_audio}}";
         endCardAudioFilter = `;[1:a]atrim=0:5,afade=t=in:st=0:d=0.3,afade=t=out:st=4.6:d=0.4[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else {
@@ -279,7 +411,7 @@ Deno.serve(async (req) => {
       }
 
       // FFmpeg: loop image for 5s, grayscale, slow zoom
-      const endCardCmd = `-loop 1 -i real_img${endCardAudioInput} -filter_complex "[0:v]scale=1080:1920,format=gray,zoompan=z='min(zoom+0.001\\,1.05)':d=150:s=1080x1920:fps=30[vend]${endCardAudioFilter}" -map "[vend]"${endCardAudioMap} -c:v libx264 -preset fast -crf 23 -c:a aac -t 5 -movflags +faststart out_1`;
+      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput} -filter_complex "[0:v]scale=1080:1920,format=gray,zoompan=z='min(zoom+0.001\\,1.05)':d=150:s=1080x1920:fps=30[vend]${endCardAudioFilter}" -map "[vend]"${endCardAudioMap} -c:v libx264 -preset fast -crf 23 -c:a aac -t 5 -movflags +faststart {{out_1}}`;
 
       const endResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
@@ -324,19 +456,20 @@ Deno.serve(async (req) => {
     let finalVideoBytes: Uint8Array;
 
     if (endCardUrl) {
-      await log("info", "Stage 18: Concatenating story video + end card");
+      await log("info", "Stage 18: Concatenating captioned story video + end card");
 
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      const concatCmd = `-i story_vid -i end_card -filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset fast -crf 23 -c:a aac -movflags +faststart out_1`;
+      // Rendi requires input keys starting with "in_"
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset fast -crf 23 -c:a aac -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-KEY": RENDI_API_KEY },
         body: JSON.stringify({
           ffmpeg_command: concatCmd,
-          input_files: { story_vid: captUrl?.signedUrl || "", end_card: endCardUrl },
+          input_files: { in_story: captUrl?.signedUrl || "", in_endcard: endCardUrl },
           output_files: { out_1: "final_video.mp4" },
           max_command_run_seconds: 60,
           vcpu_count: 8,
@@ -366,16 +499,25 @@ Deno.serve(async (req) => {
           const dl = await fetch(finalUrl);
           finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
         } else {
-          await log("warn", "Final concat timed out — using story video without end card");
-          finalVideoBytes = storyBytes;
+          await log("warn", "Final concat timed out — using captioned video without end card");
+          const fallbackDl = await fetch(storyVideoUrl!);
+          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
         }
       } else {
-        await log("warn", "Final concat submit failed — using story video");
-        finalVideoBytes = storyBytes;
+        await log("warn", "Final concat submit failed — using captioned video");
+        const fallbackDl = await fetch(storyVideoUrl!);
+        finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
       }
     } else {
-      await log("info", "No end card — using story video as final");
-      finalVideoBytes = storyBytes;
+      await log("info", "No end card — using captioned video as final");
+      // Re-read captioned video from storage
+      const { data: captSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+      if (captSignedUrl?.signedUrl) {
+        const dl = await fetch(captSignedUrl.signedUrl);
+        finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
+      } else {
+        finalVideoBytes = storyBytes;
+      }
     }
 
     // Upload final video
@@ -389,7 +531,7 @@ Deno.serve(async (req) => {
       type: "final_video",
       supabase_path: finalPath,
       signed_url_last: finalSignedUrl?.signedUrl || null,
-      metadata: { size_bytes: finalVideoBytes.length, has_end_card: !!endCardUrl },
+      metadata: { size_bytes: finalVideoBytes.length, has_end_card: !!endCardUrl, has_subtitles: captionedPath !== storyPath },
     });
 
     await log("info", `Final video stored: ${(finalVideoBytes.length / 1024 / 1024).toFixed(1)}MB`);
@@ -401,10 +543,6 @@ Deno.serve(async (req) => {
     await updateRun({ status: "ready_to_publish", current_stage: "ready_to_publish", progress_pct: 94 });
     await log("info", "Stage 19: Publishing through existing pipeline");
 
-    // Check if project has UploadPost configured
-    // For now, mark as published — full publishing integration reuses existing uploadpost-webhook
-    // This can be expanded to call the same publishing logic
-
     await updateRun({
       status: "published",
       current_stage: "published",
@@ -414,6 +552,7 @@ Deno.serve(async (req) => {
         ...meta,
         final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl },
         has_end_card: !!endCardUrl,
+        has_subtitles: captionedPath !== storyPath,
         completed_at: new Date().toISOString(),
       },
     });
