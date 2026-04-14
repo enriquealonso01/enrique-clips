@@ -37,6 +37,15 @@ Deno.serve(async (req) => {
     await updateRun({ status: "failed", error_message: message, finished_at: new Date().toISOString() });
   }
 
+  async function checkCancelled(): Promise<boolean> {
+    const { data } = await sb.from("story_runs").select("status").eq("id", runId).single();
+    if (data && ["cancelled", "failed"].includes(data.status)) {
+      await log("info", `Finalize aborted: run is ${data.status}`);
+      return true;
+    }
+    return false;
+  }
+
   try {
     // Check cancellation before starting
     const { data: statusCheck } = await sb.from("story_runs").select("status").eq("id", runId).single();
