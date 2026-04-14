@@ -1,60 +1,57 @@
 
 
-# Replace Image Search with Brave Search API + AI Validation
+# Fix Three Story Pipeline Reliability Issues
 
-## Summary
+## 1. Vidu Poller Self-Re-Invocation
 
-Replace the current Firecrawl + LLM image discovery in Stage 4 with Brave Search Image API. Try up to 3 different query variations, validate each candidate image against the story using a cheap GPT model, and fall back to Gemini AI generation if nothing matches.
+**Problem**: `story-poll-vidu` polls once and exits. If clips aren't done, nothing re-triggers it.
 
-## New Flow
+**Fix**: After the `if (!allDone)` check, before returning, self-invoke with a 15-second delay. Use `setTimeout` + `fetch` to re-call itself with the same `run_id`.
 
 ```text
-Stage 4: Finding real image
-  ├─ Step 1: Brave Image Search (up to 3 query attempts)
-  │    Query 1: "{story.title} photo"
-  │    Query 2: "{characters} {location} {event keywords}"
-  │    Query 3: "{story.hook} real photo"
-  │    For each query → get top 5 results → validate URLs → AI relevance check
-  ├─ Step 2: AI Relevance Check (gpt-5-nano / TEXT_CHEAP)
-  │    Send candidate image + story summary to cheap model
-  │    Ask: "Does this image match this story?" → yes/no + confidence
-  │    Accept if match, otherwise try next candidate/query
-  └─ Fallback: Generate photorealistic image with Gemini (existing logic)
+if (!allDone) {
+  // update progress...
+  // Fire-and-forget: re-invoke self after 15s delay
+  setTimeout(() => fetch(selfUrl, { ... }), 15_000);
+  return json({ status: "polling", ... });
+}
 ```
 
-## Technical Changes
+**File**: `supabase/functions/story-poll-vidu/index.ts`
 
-### 1. Add `BRAVE_SEARCH_API_KEY` secret
-- Use the `add_secret` tool to request the Brave Search API key from the user
-- Brave Image Search endpoint: `https://api.search.brave.com/res/v1/images/search`
-- Auth header: `X-Subscription-Token: <key>`
+---
 
-### 2. Rewrite `stage4()` in `supabase/functions/story-pipeline/index.ts`
+## 2. Add Stage 5 Resume Handler
 
-**Remove**: All Firecrawl scraping logic (Steps 1, 2, 2b) and the LLM URL-guessing fallback (Step 3).
+**Problem**: The resume logic handles `stage6`, `stage7`, `stage9`, `stage10_continue` — but not `stage5`. When `shouldChain()` triggers after stage 4 (line 819), the self-chain sends `resume_stage: "stage5"` which falls through to re-running the full pipeline from stage 1.
 
-**Add**:
-- `braveImageSearch(query: string, count: number)` helper — calls `GET https://api.search.brave.com/res/v1/images/search?q=...&count=...` with the API key
-- 3 query variations built from story data (title, characters, hook, locations)
-- For each query, iterate through results, validate image URL via HEAD request
-- For each valid image, call `callText()` with `MODELS.TEXT_CHEAP` (gemini-2.5-flash) passing the image URL and story summary, asking if the image is relevant
-- If the AI says yes → download, store, return
-- If all 3 queries exhausted → fall back to existing Gemini generation (keep current Step 4 logic)
+**Fix**: Add a `if (resumeStage === "stage5")` block in the resume section (before line 789). It reads `meta.story` and `meta.real_image` from persisted metadata, calls `stage5()`, stores memory, updates metadata with `...meta` merge, then continues to stage 6+ or chains.
 
-### 3. AI Relevance Validation Prompt
+**File**: `supabase/functions/story-pipeline/index.ts` (~30 lines added around line 770)
 
-Use `MODELS.TEXT_CHEAP` (gemini-2.5-flash) with a simple prompt:
-```
-You are an image-story relevance judge. Given a story and an image URL, 
-determine if the image is relevant to the story.
-Reply with JSON: {"relevant": true/false, "reason": "brief explanation"}
-```
+---
 
-Pass the image URL as a vision/image content block so the model actually sees the image, not just the URL.
+## 3. Metadata Merge Instead of Overwrite
 
-### 4. Deploy
-- Deploy the updated `story-pipeline` edge function
+**Problem**: Lines 810, 817, 843, 852, 864, 873, 884 all rebuild `generated_metadata` manually as a new object literal. If a chain interrupt loses a field that was added by a previous stage but not included in the literal, it's gone.
 
-## Files Modified
-- `supabase/functions/story-pipeline/index.ts` — rewrite stage4() (~170 lines replaced)
+**Fix**: Every `updateRun` call that sets `generated_metadata` should first read the current `meta` from DB (or use the already-fetched `meta` variable) and spread it:
+- In the **main pipeline flow** (lines 810–884), change each `generated_metadata: { story, real_image, ... }` to `generated_metadata: { ...meta, story, real_image, ... }` where `meta` is re-fetched or accumulated.
+- Simplest approach: maintain a running `meta` object that accumulates, and always spread it. Replace the explicit object literals with `{ ...meta, <new fields> }`.
+
+Affected lines in `supabase/functions/story-pipeline/index.ts`:
+- Line 810: `{ story, target_duration }` → `{ ...meta, story, target_duration: context.targetDuration }`
+- Line 817: `{ story, real_image, target_duration }` → `{ ...meta, story, real_image: realImage, target_duration: context.targetDuration }`
+- Line 843: full rebuild → `{ ...meta, story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration }`
+- Line 852, 864, 873, 884: same pattern — spread `meta` first, then overlay new fields
+
+After each `updateRun`, re-read meta: `Object.assign(meta, { <new fields> })` to keep the running state consistent.
+
+---
+
+## Deployment
+
+Deploy both updated edge functions:
+- `story-pipeline`
+- `story-poll-vidu`
 
