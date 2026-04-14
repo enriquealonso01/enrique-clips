@@ -164,6 +164,7 @@ export default function StoryRunMonitor() {
 
   const isActive = run && !["failed", "cancelled", "published", "paused"].includes(run.status);
   const isPaused = run?.status === "paused";
+  const isWaitingForOffPeak = isPaused && (run?.generated_metadata as any)?.waiting_for === "vidu_off_peak";
 
   const updateStatus = async (status: string) => {
     if (!runId) return;
@@ -277,6 +278,12 @@ export default function StoryRunMonitor() {
               <CardHeader><CardTitle className="text-base">Pipeline Stages</CardTitle></CardHeader>
               <CardContent>
                 <StoryRunStages currentStage={run.current_stage} status={run.status} />
+                {isWaitingForOffPeak && (
+                  <div className="mt-3 flex items-center gap-2 p-3 rounded-md bg-muted text-muted-foreground text-sm">
+                    <span className="animate-pulse">⏳</span>
+                    <span>Waiting for off-peak Vidu clips (up to 48h). The pipeline will auto-resume when all clips are ready.</span>
+                  </div>
+                )}
                 {run.error_message && (
                   <div className="mt-3 p-3 rounded-md bg-destructive/10 text-destructive text-sm">{run.error_message}</div>
                 )}

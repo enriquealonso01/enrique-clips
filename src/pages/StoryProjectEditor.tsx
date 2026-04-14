@@ -203,6 +203,24 @@ export default function StoryProjectEditor() {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle>Video Generation</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label>Vidu Off-Peak Mode</Label>
+              <p className="text-xs text-muted-foreground">
+                Submit clips at half price ($0.04/s vs $0.08/s). Clips may take up to 48h to complete. The pipeline will auto-resume when ready.
+              </p>
+            </div>
+            <Switch
+              checked={configJson?.vidu_off_peak ?? false}
+              onCheckedChange={(v) => setConfigJson({ ...configJson, vidu_off_peak: v })}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle>Publish Platforms</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           {["tiktok", "youtube", "facebook", "instagram"].map((p) => (

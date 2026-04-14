@@ -18,7 +18,31 @@ Deno.serve(async (req) => {
   if (!VIDU_API_KEY) return json({ error: "VIDU_API_KEY not configured" }, 500);
 
   let runId: string | null = null;
-  try { const body = await req.json(); runId = body.run_id; } catch {}
+  let sweeperMode = false;
+  try { const body = await req.json(); runId = body.run_id; sweeperMode = !!body.sweeper; } catch {}
+
+  // Sweeper mode: find all paused story runs waiting for vidu off-peak
+  if (!runId && sweeperMode) {
+    const { data: pausedRuns } = await sb.from("story_runs")
+      .select("id, generated_metadata")
+      .eq("status", "paused");
+    const offPeakRunIds = (pausedRuns || [])
+      .filter(r => (r.generated_metadata as any)?.waiting_for === "vidu_off_peak")
+      .map(r => r.id);
+    if (offPeakRunIds.length === 0) return json({ status: "no_off_peak_runs" });
+    await log("info", `Sweeper found ${offPeakRunIds.length} off-peak story runs to poll`);
+    // Poll each one by self-invoking
+    const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-poll-vidu`;
+    for (const rid of offPeakRunIds) {
+      fetch(fnUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: rid }),
+      }).catch(e => console.error("Sweeper dispatch error:", e));
+    }
+    return json({ status: "sweeper_dispatched", count: offPeakRunIds.length });
+  }
+
   if (!runId) return json({ error: "run_id required" }, 400);
 
   async function log(level: string, message: string, data?: unknown) {
@@ -30,6 +54,7 @@ Deno.serve(async (req) => {
     const { data: run } = await sb.from("story_runs").select("*").eq("id", runId).single();
     if (!run) return json({ error: "Run not found" });
     if (["cancelled", "failed", "published"].includes(run.status)) return json({ status: "not_active" });
+    const isOffPeak = run.status === "paused" && (run.generated_metadata as any)?.waiting_for === "vidu_off_peak";
 
     // Find pending story video assets
     const { data: clipAssets } = await sb.from("story_assets")
@@ -96,6 +121,11 @@ Deno.serve(async (req) => {
     await sb.from("story_runs").update({ progress_pct: Math.min(progress, 70) }).eq("id", runId);
 
     if (!allDone) {
+      if (isOffPeak) {
+        // Off-peak: don't self-chain, wait for sweeper to poll again
+        await log("debug", `Off-peak: ${completedCount}/${total} done. Waiting for sweeper.`);
+        return json({ status: "off_peak_polling", completed: completedCount, total });
+      }
       // Self-re-invoke after 15s delay so polling continues automatically
       const selfUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-poll-vidu`;
       setTimeout(() => {
@@ -112,8 +142,10 @@ Deno.serve(async (req) => {
     }
 
     // All clips done — advance to finalization
-    await log("info", "All Vidu clips complete. Invoking story-finalize.");
+    await log("info", `All Vidu clips complete${isOffPeak ? " (off-peak)" : ""}. Invoking story-finalize.`);
+    // Resume from paused if off-peak
     await sb.from("story_runs").update({
+      status: "scenes_generating" as any,
       current_stage: "video_stitching",
       progress_pct: 72,
     }).eq("id", runId);
