@@ -6,9 +6,9 @@ import { StoryStatusBadge } from "@/components/story/StoryStatusBadge";
 import { StoryRunStages } from "@/components/story/StoryRunStages";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Pause, Square, Play } from "lucide-react";
+import { ArrowLeft, Pause, Square, Play, Volume2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 
 export default function StoryRunMonitor() {
@@ -68,6 +68,24 @@ export default function StoryRunMonitor() {
   }, [runId, refetch]);
 
   const [acting, setActing] = useState(false);
+  const [playingAssetId, setPlayingAssetId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const playAudio = async (assetPath: string, assetId: string) => {
+    if (playingAssetId === assetId) {
+      audioRef.current?.pause();
+      setPlayingAssetId(null);
+      return;
+    }
+    if (audioRef.current) audioRef.current.pause();
+    const { data } = await supabase.storage.from("story-assets").createSignedUrl(assetPath, 300);
+    if (!data?.signedUrl) { toast.error("Could not get audio URL"); return; }
+    const audio = new Audio(data.signedUrl);
+    audio.onended = () => setPlayingAssetId(null);
+    audio.play();
+    audioRef.current = audio;
+    setPlayingAssetId(assetId);
+  };
 
   const isActive = run && !["failed", "cancelled", "published", "paused"].includes(run.status);
   const isPaused = run?.status === "paused";
@@ -172,14 +190,28 @@ export default function StoryRunMonitor() {
           <CardHeader><CardTitle>Assets</CardTitle></CardHeader>
           <CardContent>
             <div className="grid gap-2 grid-cols-2 sm:grid-cols-3">
-              {assets.map((a) => (
-                <div key={a.id} className="border rounded-md p-2 text-xs">
-                  <span className="font-medium capitalize">{a.type.replace(/_/g, " ")}</span>
-                  {a.signed_url_last && a.type.includes("image") && (
-                    <img src={a.signed_url_last} alt={a.type} className="mt-1 rounded max-h-24 object-cover" />
-                  )}
-                </div>
-              ))}
+              {assets.map((a) => {
+                const isAudio = ["narration_audio", "background_music", "ending_audio", "ending_audio_trimmed"].includes(a.type);
+                return (
+                  <div key={a.id} className="border rounded-md p-2 text-xs">
+                    <span className="font-medium capitalize">{a.type.replace(/_/g, " ")}</span>
+                    {a.signed_url_last && a.type.includes("image") && (
+                      <img src={a.signed_url_last} alt={a.type} className="mt-1 rounded max-h-24 object-cover" />
+                    )}
+                    {isAudio && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 h-7 w-full text-xs"
+                        onClick={() => playAudio(a.supabase_path, a.id)}
+                      >
+                        {playingAssetId === a.id ? <Pause className="h-3 w-3 mr-1" /> : <Volume2 className="h-3 w-3 mr-1" />}
+                        {playingAssetId === a.id ? "Stop" : "Play"}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
