@@ -96,6 +96,18 @@ Deno.serve(async (req) => {
     await sb.from("story_runs").update({ progress_pct: Math.min(progress, 70) }).eq("id", runId);
 
     if (!allDone) {
+      // Self-re-invoke after 15s delay so polling continues automatically
+      const selfUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-poll-vidu`;
+      setTimeout(() => {
+        fetch(selfUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ run_id: runId }),
+        }).catch(e => console.error("Self-chain poll error:", e));
+      }, 15_000);
       return json({ status: "polling", completed: completedCount, total });
     }
 
