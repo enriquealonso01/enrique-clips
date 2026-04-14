@@ -115,8 +115,11 @@ async function getProjectConfig(sb: SB, runId: string): Promise<any> {
 }
 
 // Helper: handle post-stage11 (off-peak pause or poll)
-async function postStage11(sb: SB, runId: string, tasks: any[], meta: any, offPeak: boolean) {
+async function postStage11(sb: SB, runId: string, tasks: any[], offPeak: boolean) {
   if (offPeak && tasks.length > 0) {
+    // Read current metadata once
+    const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+    const meta = (cur?.generated_metadata as any) || {};
     await log(sb, runId, "info", `All ${tasks.length} Vidu off-peak clips submitted. Pausing run for background polling.`);
     await updateRun(sb, runId, {
       status: "paused" as any,
