@@ -861,6 +861,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  PIPELINE_START = Date.now(); // Reset per-request to avoid stale warm-start values
   try {
     const body = await req.json();
     const runId = body.run_id;
