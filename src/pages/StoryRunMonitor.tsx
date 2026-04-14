@@ -164,6 +164,7 @@ export default function StoryRunMonitor() {
 
   const isActive = run && !["failed", "cancelled", "published", "paused"].includes(run.status);
   const isPaused = run?.status === "paused";
+  const isWaitingForOffPeak = isPaused && (run?.generated_metadata as any)?.waiting_for === "vidu_off_peak";
 
   const updateStatus = async (status: string) => {
     if (!runId) return;
