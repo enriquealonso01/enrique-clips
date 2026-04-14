@@ -164,200 +164,132 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 }
 
 // ══════════════════════════════════════════════════════════
-// STAGE 4: Real Image Retrieval (with Gemini fallback)
+// STAGE 4: Real Image Retrieval — Brave Search + AI Validation
 // ══════════════════════════════════════════════════════════
+
+async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: string; title: string }>> {
+  const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!key) return [];
+  const params = new URLSearchParams({ q: query, count: String(count), safesearch: "moderate" });
+  const resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
+    headers: { Accept: "application/json", "X-Subscription-Token": key },
+  });
+  if (!resp.ok) {
+    console.error(`Brave image search failed: ${resp.status}`);
+    await resp.text(); // consume body
+    return [];
+  }
+  const data = await resp.json();
+  return (data.results || []).map((r: any) => ({
+    url: r.properties?.url || r.url || "",
+    title: r.title || "",
+  })).filter((r: any) => r.url && r.url.startsWith("http"));
+}
+
+async function validateImageUrl(url: string): Promise<boolean> {
+  try {
+    const resp = await fetch(url, { method: "HEAD", redirect: "follow" });
+    const ct = resp.headers.get("content-type") || "";
+    return resp.ok && ct.startsWith("image");
+  } catch { return false; }
+}
+
+async function aiRelevanceCheck(sb: SB, runId: string, imageUrl: string, story: any): Promise<boolean> {
+  try {
+    const resp = await callText({
+      messages: [
+        {
+          role: "system",
+          content: `You are an image-story relevance judge. You will see an image and a story summary. Determine if the image is relevant to the story — it should depict the people, event, or setting described. Reply with ONLY JSON: {"relevant": true or false, "reason": "brief explanation"}`
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Story: "${story.title}"\nSummary: ${story.summary}\nCharacters: ${(story.characters || []).map((c: any) => c.name).join(", ")}` },
+            { type: "image_url", image_url: { url: imageUrl } },
+          ] as any,
+        },
+      ],
+      model: MODELS.TEXT_CHEAP,
+      endpoint: "story_image_relevance",
+    });
+    const text = typeof resp === "string" ? resp : resp?.text || JSON.stringify(resp);
+    const jsonMatch = text.match(/\{[\s\S]*?"relevant"[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      await log(sb, runId, "debug", `AI relevance check: relevant=${parsed.relevant}, reason=${parsed.reason}`);
+      return !!parsed.relevant;
+    }
+    return false;
+  } catch (e) {
+    await log(sb, runId, "warn", `AI relevance check error: ${(e as Error).message}`);
+    return false;
+  }
+}
 
 async function stage4(sb: SB, runId: string, story: any) {
   await updateRun(sb, runId, { current_stage: "real_image", progress_pct: 18 });
-  await log(sb, runId, "info", "Stage 4: Finding real image");
+  await log(sb, runId, "info", "Stage 4: Finding real image via Brave Search");
 
-  // ── Step 1: Firecrawl — scrape the source article for og:image / lead image ──
-  let firecrawlImageUrl: string | null = null;
-  if (story.source_url) {
-    try {
-      const fcKey = Deno.env.get("FIRECRAWL_API_KEY");
-      if (fcKey) {
-        await log(sb, runId, "info", `Scraping source article for images: ${story.source_url}`);
-        const fcResp = await fetch("https://api.firecrawl.dev/v1/scrape", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${fcKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: story.source_url,
-            formats: ["markdown", "links"],
-            onlyMainContent: false,
-          }),
-        });
-        if (fcResp.ok) {
-          const fcData = await fcResp.json();
-          const metadata = fcData?.data?.metadata || fcData?.metadata || {};
-          // Try og:image first, then twitter:image, then any image in metadata
-          const ogImage = metadata.ogImage || metadata["og:image"] || metadata.twitterImage || metadata["twitter:image"] || null;
-          if (ogImage && typeof ogImage === "string" && (ogImage.startsWith("http://") || ogImage.startsWith("https://"))) {
-            // Validate it's actually an image
-            try {
-              const check = await fetch(ogImage, { method: "HEAD", redirect: "follow" });
-              const ct = check.headers.get("content-type") || "";
-              if (check.ok && ct.startsWith("image")) {
-                firecrawlImageUrl = ogImage;
-                await log(sb, runId, "info", `Found og:image via Firecrawl: ${ogImage.substring(0, 100)}`);
-              }
-            } catch { /* skip invalid */ }
-          }
+  // Build 3 query variations
+  const charNames = (story.characters || []).map((c: any) => c.name).join(" ");
+  const locationNames = (story.locations || []).map((l: any) => l.name).join(" ");
+  const queries = [
+    `${story.title} photo`,
+    `${charNames} ${locationNames}`.trim() || `${story.title} real`,
+    `${story.hook || story.title} real photo`,
+  ];
 
-          // If no og:image, try to find first content image from markdown
-          if (!firecrawlImageUrl) {
-            const md = fcData?.data?.markdown || fcData?.markdown || "";
-            const imgMatch = md.match(/!\[.*?\]\((https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|webp)[^\s)]*)\)/i);
-            if (imgMatch?.[1]) {
-              try {
-                const check = await fetch(imgMatch[1], { method: "HEAD", redirect: "follow" });
-                const ct = check.headers.get("content-type") || "";
-                if (check.ok && ct.startsWith("image")) {
-                  firecrawlImageUrl = imgMatch[1];
-                  await log(sb, runId, "info", `Found content image via Firecrawl: ${imgMatch[1].substring(0, 100)}`);
-                }
-              } catch { /* skip */ }
-            }
-          }
-        } else {
-          await log(sb, runId, "warn", `Firecrawl scrape failed: ${fcResp.status}`);
-        }
-      }
-    } catch (e) {
-      await log(sb, runId, "warn", `Firecrawl error: ${(e as Error).message}`);
-    }
-  }
-
-  // ── Step 2: If Firecrawl found a valid image, download & store it ──
-  if (firecrawlImageUrl) {
-    try {
-      const imgResp = await fetch(firecrawlImageUrl);
-      if (imgResp.ok) {
-        const bytes = new Uint8Array(await imgResp.arrayBuffer());
-        const path = `story-runs/${runId}/real_image.png`;
-        const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
-          image_type: "article_image",
-          image_description: `Lead image from source article`,
-          characters_visible: [],
-          original_url: firecrawlImageUrl,
-          source: "firecrawl",
-        });
-        return { primary_url: signedUrl, image_type: "article_image", image_description: "Lead image from source article", characters_visible: [], storage_path: path };
-      }
-    } catch (e) {
-      await log(sb, runId, "warn", `Failed to download Firecrawl image: ${(e as Error).message}`);
-    }
-  }
-
-  // ── Step 2b: Firecrawl web search — search for a real photo of the story ──
-  if (!firecrawlImageUrl) {
-    try {
-      const fcKey = Deno.env.get("FIRECRAWL_API_KEY");
-      if (fcKey) {
-        const searchQuery = `${story.title} photo`;
-        await log(sb, runId, "info", `Firecrawl search for image: "${searchQuery}"`);
-        const searchResp = await fetch("https://api.firecrawl.dev/v1/search", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${fcKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ query: searchQuery, limit: 5 }),
-        });
-        if (searchResp.ok) {
-          const searchData = await searchResp.json();
-          const results = searchData?.data || [];
-          for (const r of results) {
-            const md = r?.metadata || {};
-            const candidate = md.ogImage || md["og:image"] || md.twitterImage || md["twitter:image"] || null;
-            if (candidate && typeof candidate === "string" && candidate.startsWith("http")) {
-              try {
-                const check = await fetch(candidate, { method: "HEAD", redirect: "follow" });
-                const ct = check.headers.get("content-type") || "";
-                if (check.ok && ct.startsWith("image")) {
-                  firecrawlImageUrl = candidate;
-                  await log(sb, runId, "info", `Found image via Firecrawl search: ${candidate.substring(0, 100)}`);
-                  break;
-                }
-              } catch { /* skip */ }
-            }
-          }
-        } else {
-          await log(sb, runId, "warn", `Firecrawl search failed: ${searchResp.status}`);
-        }
-      }
-    } catch (e) {
-      await log(sb, runId, "warn", `Firecrawl search error: ${(e as Error).message}`);
+  // ── Step 1: Brave Image Search with AI validation ──
+  for (let qi = 0; qi < queries.length; qi++) {
+    const query = queries[qi];
+    await log(sb, runId, "info", `Brave search query ${qi + 1}/3: "${query}"`);
+    const results = await braveImageSearch(query, 5);
+    if (results.length === 0) {
+      await log(sb, runId, "debug", `No Brave results for query ${qi + 1}`);
+      continue;
     }
 
-    // If search found an image, download & store it
-    if (firecrawlImageUrl) {
+    for (const candidate of results) {
+      // Validate URL resolves to an image
+      const valid = await validateImageUrl(candidate.url);
+      if (!valid) continue;
+
+      // AI relevance check
+      const relevant = await aiRelevanceCheck(sb, runId, candidate.url, story);
+      if (!relevant) continue;
+
+      // Found a relevant image — download and store
+      await log(sb, runId, "info", `Relevant image found: ${candidate.url.substring(0, 120)}`);
       try {
-        const imgResp = await fetch(firecrawlImageUrl);
+        const imgResp = await fetch(candidate.url);
         if (imgResp.ok) {
           const bytes = new Uint8Array(await imgResp.arrayBuffer());
           const path = `story-runs/${runId}/real_image.png`;
           const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
-            image_type: "article_image",
-            image_description: "Image found via web search",
+            image_type: "search_result",
+            image_description: candidate.title || `Image for "${story.title}"`,
             characters_visible: [],
-            original_url: firecrawlImageUrl,
-            source: "firecrawl_search",
+            original_url: candidate.url,
+            source: "brave_search",
+            query_used: query,
           });
-          return { primary_url: signedUrl, image_type: "article_image", image_description: "Image found via web search", characters_visible: [], storage_path: path };
+          return {
+            primary_url: signedUrl,
+            image_type: "search_result",
+            image_description: candidate.title || `Image for "${story.title}"`,
+            characters_visible: [],
+            storage_path: path,
+          };
         }
       } catch (e) {
-        await log(sb, runId, "warn", `Failed to download search image: ${(e as Error).message}`);
+        await log(sb, runId, "warn", `Failed to download image: ${(e as Error).message}`);
       }
     }
   }
 
-  // ── Step 3: LLM fallback — ask OpenAI for a real image URL ──
-  await log(sb, runId, "info", "No article image found via scraping. Trying LLM image research...");
-  const result = await callStructured({
-    messages: [
-      {
-        role: "system",
-        content: "You are a meticulous image researcher for real-world wholesome stories. Return the best REAL, PUBLICLY ACCESSIBLE DIRECT image URL for the story.\n\nSearch priority:\n1) Wikimedia Commons / Wikipedia\n2) official organization or newsroom pages\n3) reputable news coverage\n\nRules:\n- Return ONLY direct image URLs that resolve as image/*, ideally ending in .jpg, .jpeg, .png, or .webp.\n- Prefer documentary/news photos over illustrations, logos, icons, screenshots, or watermarked stock images.\n- Do NOT return webpage URLs, gallery pages, guessed CDN paths, or URLs you are not confident exist.\n- If no high-confidence direct image is available, set primary_url to null.\nReturn ONLY JSON."
-      },
-      {
-        role: "user",
-        content: `Story title: "${story.title}"\nHook: ${story.hook || ""}\nSummary: ${story.summary}\nSource: ${story.source_url || "None"}\nCharacters: ${JSON.stringify(story.characters || [])}\nGroups: ${JSON.stringify(story.groups || [])}\nLocations: ${JSON.stringify(story.locations || [])}\nImage guidance: ${story.image_search_guidance || "Find the most relevant real image"}\n\nReturn: {"primary_url":"URL or null","fallback_url":"URL or null","image_type":"person|group|place|contextual","image_description":"short factual description","characters_visible":["names"]}`
-      },
-    ],
-    model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_real_image",
-  });
-
-  let validUrl: string | null = null;
-  for (const candidate of [result.primary_url, result.fallback_url]) {
-    if (!candidate || candidate === "null") continue;
-    try {
-      const check = await fetch(candidate, { method: "HEAD", redirect: "follow" });
-      const ct = check.headers.get("content-type") || "";
-      if (check.ok && ct.startsWith("image")) { validUrl = candidate; break; }
-    } catch { /* skip */ }
-  }
-
-  if (validUrl) {
-    await log(sb, runId, "info", `Real image found via LLM: ${validUrl.substring(0, 100)}`);
-    try {
-      const imgResp = await fetch(validUrl);
-      if (imgResp.ok) {
-        const bytes = new Uint8Array(await imgResp.arrayBuffer());
-        const path = `story-runs/${runId}/real_image.png`;
-        const signedUrl = await uploadAndStoreAsset(sb, runId, path, bytes, "real_image", {
-          image_type: result.image_type || "contextual",
-          image_description: result.image_description || "",
-          characters_visible: result.characters_visible || [],
-          original_url: validUrl,
-          source: "llm_research",
-        });
-        return { ...result, primary_url: signedUrl, storage_path: path };
-      }
-    } catch (e) {
-      await log(sb, runId, "warn", `Failed to download LLM image: ${(e as Error).message}`);
-    }
-  }
-
-  // ── Step 4: Final fallback — generate photorealistic image with Gemini ──
-  await log(sb, runId, "info", "No valid real image found. Generating photorealistic fallback with Gemini.");
+  // ── Step 2: Fallback — generate photorealistic image with Gemini ──
+  await log(sb, runId, "info", "No relevant image found via Brave Search. Generating photorealistic fallback with Gemini.");
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || ""}`).join(", ");
   const locations = (story.locations || []).map((l: any) => `${l.name}: ${l.description || ""}`).join(", ");
   const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style.`;
@@ -380,8 +312,8 @@ async function stage4(sb: SB, runId: string, story: any) {
     primary_url: signedUrl,
     fallback_url: signedUrl,
     image_type: "generated_photorealistic",
-    image_description: result.image_description || `Photorealistic image for "${story.title}"`,
-    characters_visible: result.characters_visible || [],
+    image_description: `Photorealistic image for "${story.title}"`,
+    characters_visible: [],
     storage_path: path,
   };
 }
