@@ -29,6 +29,18 @@ async function failRun(sb: SB, runId: string, message: string) {
   await updateRun(sb, runId, { status: "failed", error_message: message, finished_at: new Date().toISOString() });
 }
 
+class CancelledError extends Error {
+  constructor() { super("Run cancelled by user"); this.name = "CancelledError"; }
+}
+
+async function checkCancelled(sb: SB, runId: string) {
+  const { data } = await sb.from("story_runs").select("status").eq("id", runId).single();
+  if (data && ["cancelled", "failed"].includes(data.status)) {
+    await log(sb, runId, "info", `Pipeline aborted: status is ${data.status}`);
+    throw new CancelledError();
+  }
+}
+
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 const PIPELINE_START = Date.now();
