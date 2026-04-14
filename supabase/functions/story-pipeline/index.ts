@@ -968,13 +968,16 @@ serve(async (req) => {
     }
     if (!story) { await failRun(sb, runId, "No valid story found after 3 attempts"); return new Response(JSON.stringify({ error: "No story" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
+    await checkCancelled(sb, runId);
     await updateRun(sb, runId, { status: "story_selected", current_stage: "story_selected", progress_pct: 14, generated_metadata: { ...meta, story, target_duration: context.targetDuration } });
 
     // Stage 4: Real image
     let realImage: any = null;
     try { realImage = await stage4(sb, runId, story); } catch (err) {
+      if ((err as any)?.name === "CancelledError") throw err;
       await log(sb, runId, "warn", `Real image failed: ${(err as Error).message}`);
     }
+    await checkCancelled(sb, runId);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, target_duration: context.targetDuration }, progress_pct: 20 });
 
     if (shouldChain()) {
@@ -987,7 +990,7 @@ serve(async (req) => {
     try {
       castResult = await stage5(sb, runId, story, realImage);
     } catch (err) {
-      // If it's a retryable image error, re-chain instead of failing
+      if ((err as any)?.name === "CancelledError") throw err;
       if ((err as any)?.name === "Image503RetryableError") {
         await log(sb, runId, "warn", `Cast image timed out, re-chaining to retry...`);
         await selfChain(runId, "stage5");
@@ -1001,6 +1004,7 @@ serve(async (req) => {
     const fp = (story.summary || "").substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
     await sb.from("story_memory").insert({ project_id: context.projectId, run_id: runId, story_title: story.title, story_fingerprint: fp, source_url: story.source_url || null });
 
+    await checkCancelled(sb, runId);
     await updateRun(sb, runId, { status: "cast_generated", current_stage: "cast_generated", progress_pct: 25, generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration } });
 
     if (shouldChain()) {
@@ -1009,6 +1013,7 @@ serve(async (req) => {
     }
 
     // Stage 6: Narration script
+    await checkCancelled(sb, runId);
     const script = await stage6(sb, runId, story, context.targetDuration);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, target_duration: context.targetDuration } });
 
@@ -1018,10 +1023,12 @@ serve(async (req) => {
     }
 
     // Stage 7: Narrator MP3
+    await checkCancelled(sb, runId);
     const narration = await stage7(sb, runId, script);
 
     // Stage 8: Beat timing
     const timedBeats = await stage8(sb, runId, script, narration.alignment);
+    await checkCancelled(sb, runId);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats } });
 
     if (shouldChain()) {
@@ -1030,10 +1037,12 @@ serve(async (req) => {
     }
 
     // Stage 9: Scene prompts
+    await checkCancelled(sb, runId);
     const scenes = await stage9(sb, runId, story, timedBeats);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes } });
 
     // Stage 10: Scene images
+    await checkCancelled(sb, runId);
     const imgResult = await stage10(sb, runId, scenes, castResult.path);
     if (imgResult.partial) {
       await selfChain(runId, "stage10_continue");
@@ -1041,6 +1050,7 @@ serve(async (req) => {
     }
 
     // Stage 11: Animate clips
+    await checkCancelled(sb, runId);
     const tasks = await stage11(sb, runId, scenes);
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
 
@@ -1049,6 +1059,9 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({ success: true, stage: "scenes_generating", story_title: story.title }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
+    if ((err as any)?.name === "CancelledError") {
+      return new Response(JSON.stringify({ status: "cancelled" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
     console.error("Story pipeline error:", err);
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
