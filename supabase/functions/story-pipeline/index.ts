@@ -754,7 +754,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 // STAGE 11: Animate Scene Clips (Vidu Q3 Turbo)
 // ══════════════════════════════════════════════════════════
 
-async function stage11(sb: SB, runId: string, scenes: any[]) {
+async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
   await updateRun(sb, runId, { status: "scenes_generating", current_stage: "scenes_generating", progress_pct: 62 });
   await log(sb, runId, "info", `Stage 11: Submitting ${scenes.length} scene clips to Vidu Q3 Turbo`);
 
@@ -797,6 +797,7 @@ async function stage11(sb: SB, runId: string, scenes: any[]) {
           duration: Math.min(requestDuration, 16),
           audio: false,
           resolution: "720p",
+          ...(offPeak ? { off_peak: true } : {}),
         }),
       });
 
