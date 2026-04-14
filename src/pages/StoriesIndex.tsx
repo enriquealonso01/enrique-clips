@@ -42,7 +42,9 @@ export default function StoriesIndex() {
 
   const createProject = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.from("story_projects").insert({}).select().single();
+      const { data, error } = await supabase.from("story_projects").insert({
+        emoji_path: "defaults/emoji-heart-bandage.png",
+      }).select().single();
       if (error) throw error;
       return data;
     },
