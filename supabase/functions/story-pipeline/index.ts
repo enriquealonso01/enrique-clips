@@ -170,7 +170,7 @@ async function stage3(sb: SB, runId: string, story: any, fingerprints: string[],
 async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: string; title: string }>> {
   const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
   if (!key) return [];
-  const params = new URLSearchParams({ q: query, count: String(count), safesearch: "moderate" });
+  const params = new URLSearchParams({ q: query, count: String(count), safesearch: "off" });
   const resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
     headers: { Accept: "application/json", "X-Subscription-Token": key },
   });
