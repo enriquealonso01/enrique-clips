@@ -43,7 +43,7 @@ async function checkCancelled(sb: SB, runId: string) {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-const PIPELINE_START = Date.now();
+let PIPELINE_START = Date.now();
 const GUARD_MS = 80_000; // self-chain before 150s timeout
 
 function shouldChain(): boolean {
@@ -80,8 +80,12 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
     if (!resp.ok) return undefined;
     const buffer = await resp.arrayBuffer();
     const bytes = new Uint8Array(buffer);
+    // Use chunk-based encoding to avoid stack overflow on large images
+    const CHUNK = 32768;
     let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+    }
     const b64 = btoa(binary);
     const mime = resp.headers.get("content-type") || "image/jpeg";
     return `data:${mime};base64,${b64}`;
@@ -111,8 +115,11 @@ async function getProjectConfig(sb: SB, runId: string): Promise<any> {
 }
 
 // Helper: handle post-stage11 (off-peak pause or poll)
-async function postStage11(sb: SB, runId: string, tasks: any[], meta: any, offPeak: boolean) {
+async function postStage11(sb: SB, runId: string, tasks: any[], offPeak: boolean) {
   if (offPeak && tasks.length > 0) {
+    // Read current metadata once
+    const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+    const meta = (cur?.generated_metadata as any) || {};
     await log(sb, runId, "info", `All ${tasks.length} Vidu off-peak clips submitted. Pausing run for background polling.`);
     await updateRun(sb, runId, {
       status: "paused" as any,
@@ -792,22 +799,49 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
 
   if (!sceneAssets?.length) throw new Error("No scene images found");
 
+  // Check for already-submitted clips (idempotency on re-chain)
+  const { data: existingClips } = await sb.from("story_assets")
+    .select("scene_index, metadata").eq("run_id", runId).eq("type", "scene_video_raw");
+  const submittedIndices = new Set(
+    (existingClips || [])
+      .filter(c => {
+        const m = c.metadata as any;
+        return m?.vidu_task_id && m.status !== "failed";
+      })
+      .map(c => c.scene_index)
+  );
+
   const tasks: { sceneIndex: number; taskId: string; targetDuration: number }[] = [];
 
+  // Include already-submitted tasks in the return value so metadata stays accurate
+  for (const existing of (existingClips || [])) {
+    const m = existing.metadata as any;
+    if (m?.vidu_task_id && m.status !== "failed" && existing.scene_index != null) {
+      tasks.push({ sceneIndex: existing.scene_index, taskId: m.vidu_task_id, targetDuration: m.target_duration || 4 });
+    }
+  }
+
   for (let i = 0; i < sceneAssets.length; i++) {
+    // Skip already-submitted scenes
+    if (submittedIndices.has(i)) {
+      await log(sb, runId, "debug", `Scene ${i} already submitted, skipping`);
+      continue;
+    }
+
+    // Check cancellation during long submission loops
+    await checkCancelled(sb, runId);
+
     const asset = sceneAssets[i];
     const scene = scenes[i] || {};
     const targetDuration = scene.target_duration || 4;
-    const requestDuration = Math.ceil(targetDuration); // Round up per Rule 3
+    const requestDuration = Math.ceil(targetDuration);
 
-    // Get public URL for the scene image
     const { data: signedData } = await sb.storage.from("project-assets")
       .createSignedUrl(asset.supabase_path, 3600);
     const imageUrl = signedData?.signedUrl;
     if (!imageUrl) { await log(sb, runId, "warn", `No URL for scene image ${i}`); continue; }
 
     try {
-      // Submit to Vidu Q3 Turbo
       const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
         method: "POST",
         headers: {
@@ -835,7 +869,6 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
       const taskId = viduData.task_id || viduData.id;
       tasks.push({ sceneIndex: i, taskId, targetDuration });
 
-      // Store clip asset placeholder with vidu task info
       await sb.from("story_assets").insert({
         run_id: runId,
         type: "scene_video_raw",
@@ -850,7 +883,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     }
   }
 
-  await log(sb, runId, "info", `All ${tasks.length} Vidu tasks submitted. Invoking poller.`);
+  await log(sb, runId, "info", `All ${tasks.length} Vidu tasks tracked. Invoking poller.`);
   return tasks;
 }
 
@@ -861,6 +894,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  PIPELINE_START = Date.now(); // Reset per-request to avoid stale warm-start values
   try {
     const body = await req.json();
     const runId = body.run_id;
@@ -892,7 +926,7 @@ serve(async (req) => {
       const _offPeak = !!_projCfg?.vidu_off_peak;
       const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, vidu_tasks: tasks } });
-      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
+      await postStage11(sb, runId, tasks, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -924,7 +958,7 @@ serve(async (req) => {
       const _offPeak = !!_projCfg?.vidu_off_peak;
       const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
-      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
+      await postStage11(sb, runId, tasks, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -977,7 +1011,7 @@ serve(async (req) => {
       const _offPeak = !!_projCfg?.vidu_off_peak;
       const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
-      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
+      await postStage11(sb, runId, tasks, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -1007,7 +1041,7 @@ serve(async (req) => {
       const _offPeak = !!_projCfg?.vidu_off_peak;
       const tasks = await stage11(sb, runId, scenes, _offPeak);
       await updateRun(sb, runId, { generated_metadata: { ...meta, scenes, vidu_tasks: tasks } });
-      await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
+      await postStage11(sb, runId, tasks, _offPeak);
       return new Response(JSON.stringify({ status: "scenes_generating" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -1121,7 +1155,7 @@ serve(async (req) => {
     await updateRun(sb, runId, { generated_metadata: { ...meta, story, real_image: realImage, cast_image: castResult, script, narration: { path: narration.path }, timed_beats: timedBeats, scenes, vidu_tasks: tasks } });
 
     // Hand off to poller
-    await postStage11(sb, runId, tasks, (await sb.from("story_runs").select("generated_metadata").eq("id", runId).single()).data?.generated_metadata as any || {}, _offPeak);
+    await postStage11(sb, runId, tasks, _offPeak);
 
     return new Response(JSON.stringify({ success: true, stage: "scenes_generating", story_title: story.title }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {

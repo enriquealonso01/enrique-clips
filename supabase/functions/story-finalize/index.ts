@@ -54,6 +54,14 @@ Deno.serve(async (req) => {
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
 
+    // ── Check for already-completed finalization (idempotency) ──
+    const { data: existingFinal } = await sb.from("story_assets")
+      .select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
+    if (existingFinal && existingFinal.length > 0) {
+      await log("info", "Final video already exists — skipping duplicate finalization");
+      return json({ status: "already_finalized", run_id: runId });
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
@@ -150,12 +158,16 @@ Deno.serve(async (req) => {
     const dissolveDuration = 0.3;
     let filterParts: string[] = [];
     let lastLabel = "[0:v]";
+    let cumulativeOffset = 0;
 
     // Simple concat with xfade dissolves
     for (let i = 1; i < clipUrls.length; i++) {
       const outLabel = i < clipUrls.length - 1 ? `[v${i}]` : "[vout]";
-      const offset = Math.max(0, (timedBeats[i - 1]?.end_time || i * 4) - dissolveDuration);
-      filterParts.push(`${lastLabel}[${i}:v]xfade=transition=fade:duration=${dissolveDuration}:offset=${offset.toFixed(2)}${outLabel}`);
+      // Calculate offset from cumulative clip durations, not just beat end times
+      const clipDuration = timedBeats[i - 1]?.duration || 4;
+      cumulativeOffset += clipDuration - dissolveDuration;
+      const safeOffset = Math.max(0.1, cumulativeOffset);
+      filterParts.push(`${lastLabel}[${i}:v]xfade=transition=fade:duration=${dissolveDuration}:offset=${safeOffset.toFixed(2)}${outLabel}`);
       lastLabel = outLabel;
     }
 
