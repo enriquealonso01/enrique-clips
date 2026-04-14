@@ -437,7 +437,7 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
   await log(sb, runId, "info", "Stage 5: Generating cast/reference image");
 
   const chars = (story.characters || []).map((c: any) => `${c.name} (${c.role}): ${c.appearance_notes || "estimate"}`).join("\n");
-  const prompt = `Create a character lineup/reference sheet for a short video. All characters side by side, full body, labeled with names. Vertical 9:16 format, clean illustration.\n\nStory: "${story.title}"\n${story.summary}\n\nCharacters:\n${chars || "Create generic representatives"}\n\nReal image description: ${realImage?.image_description || "N/A"}`;
+  const prompt = `Create a character lineup/reference sheet in MODERN 2D CARTOON ILLUSTRATION STYLE for a short animated story video. Clean outlines, soft shading, vibrant colors, Pixar-meets-editorial-illustration aesthetic. All characters side by side, full body, labeled with names. Vertical 9:16 format.\n\nArt style: simplified proportions (slightly large heads, expressive eyes), consistent clothing colors, warm palette, NOT photorealistic, NOT anime.\n\nStory: "${story.title}"\n${story.summary}\n\nCharacters:\n${chars || "Create generic representatives"}\n\nDesign each character with distinctive, memorable features (unique hair color/style, outfit color, accessories) so they remain recognizable across all scenes.`;
 
   const refData = realImage?.primary_url ? await fetchImageAsBase64(realImage.primary_url) : undefined;
 
