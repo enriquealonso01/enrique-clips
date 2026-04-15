@@ -6,6 +6,11 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
+const DEFAULT_STORY_FPS = 24;
+const DEFAULT_STORY_AUDIO_RATE = 48000;
+const DEFAULT_END_CARD_DURATION_SEC = 5;
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
@@ -405,6 +410,7 @@ Deno.serve(async (req) => {
     await log("info", "Stage 15-17: Building 5-second grayscale end card");
 
     let endCardUrl: string | null = null;
+    let endCardUsedEmoji = false;
 
     if (realImageUrl) {
       // Build end card with Rendi: grayscale real image, slow zoom, emoji overlay, 5 seconds
@@ -414,16 +420,22 @@ Deno.serve(async (req) => {
       let endCardAudioMap = "";
       let emojiInput = "";
       let emojiOverlayFilter = "";
+      const endCardDurationSec = endingConfig.target_duration_sec ?? DEFAULT_END_CARD_DURATION_SEC;
+      const endCardFrameCount = Math.max(1, Math.round(endCardDurationSec * DEFAULT_STORY_FPS));
 
       // Emoji overlay
       let emojiUrl: string | null = null;
-      if (project?.emoji_path) {
-        const { data: eUrl } = await sb.storage.from("project-assets").createSignedUrl(project.emoji_path, 3600);
+      const emojiPath = project?.emoji_path || DEFAULT_STORY_EMOJI_PATH;
+      if (!project?.emoji_path) {
+        await log("info", `No project emoji configured; falling back to ${DEFAULT_STORY_EMOJI_PATH}`);
+      }
+      if (emojiPath) {
+        const { data: eUrl } = await sb.storage.from("project-assets").createSignedUrl(emojiPath, 3600);
         emojiUrl = eUrl?.signedUrl || null;
       }
       if (emojiUrl) {
         endCardInputs["in_emoji"] = emojiUrl;
-        // emoji is input index 1 when no audio, or 2 when audio present
+        endCardUsedEmoji = true;
       }
 
       // Ending audio selection
@@ -433,16 +445,16 @@ Deno.serve(async (req) => {
         const fadeIn = endingConfig.fade_in_ms ?? 250;
         const fadeOut = endingConfig.fade_out_ms ?? 400;
         const audioIdx = 1;
-        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:5,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${5 - fadeOut / 1000}:d=${fadeOut / 1000}[aend]`;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${Math.max(0, endCardDurationSec - fadeOut / 1000)}:d=${fadeOut / 1000}[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else if (bgMusicUrl) {
         endCardInputs["in_end_audio"] = bgMusicUrl;
         endCardAudioInput = " -i {{in_end_audio}}";
         const audioIdx = 1;
-        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:5,afade=t=in:st=0:d=0.3,afade=t=out:st=4.6:d=0.4[aend]`;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,afade=t=in:st=0:d=0.3,afade=t=out:st=${Math.max(0, endCardDurationSec - 0.4)}:d=0.4[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else {
-        endCardAudioFilter = `;anullsrc=r=44100:cl=stereo:d=5[aend]`;
+        endCardAudioFilter = `;anullsrc=r=${DEFAULT_STORY_AUDIO_RATE}:cl=stereo:d=${endCardDurationSec}[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       }
 
@@ -450,14 +462,13 @@ Deno.serve(async (req) => {
       if (emojiUrl) {
         const emojiIdx = endCardAudioInput ? 2 : 1;
         emojiInput = " -i {{in_emoji}}";
-        // Scale emoji to ~200px, center it, overlay on top of grayscale+zoom video
-        emojiOverlayFilter = `;[vend][${emojiIdx}:v]overlay=(W-w)/2:(H-h)/2:enable='between(t\\,0\\,5)'[vfinal]`;
+        emojiOverlayFilter = `;[${emojiIdx}:v]scale=220:-1[emoji];[vend][emoji]overlay=(W-w)/2:(H-h)/2:enable='between(t\\,0\\,${endCardDurationSec})'[vfinal]`;
       }
 
       const vOutLabel = emojiUrl ? "vfinal" : "vend";
 
       // FFmpeg: loop image for 5s, grayscale, slow zoom, optional emoji overlay
-      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput}${emojiInput} -filter_complex "[0:v]scale=1080:1920,format=gray,zoompan=z='min(zoom+0.001\\,1.05)':d=150:s=1080x1920:fps=30[vend]${emojiOverlayFilter}${endCardAudioFilter}" -map "[${vOutLabel}]"${endCardAudioMap} -c:v libx264 -preset fast -crf 23 -c:a aac -t 5 -movflags +faststart {{out_1}}`;
+      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput}${emojiInput} -filter_complex "[0:v]scale=1080:1920,format=gray,setsar=1,zoompan=z='min(zoom+0.001\\,1.05)':d=${endCardFrameCount}:s=1080x1920:fps=${DEFAULT_STORY_FPS}[vend]${emojiOverlayFilter}${endCardAudioFilter}" -map "[${vOutLabel}]"${endCardAudioMap} -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${endCardDurationSec} -movflags +faststart {{out_1}}`;
 
       await log("info", `End card FFmpeg: ${endCardCmd.substring(0, 400)}...`);
 
@@ -482,7 +493,7 @@ Deno.serve(async (req) => {
           const pd = await p.json();
           if (pd.status === "SUCCESS") {
             endCardUrl = pd.output_files?.out_1?.storage_url;
-            await log("info", "End card rendered with emoji overlay");
+            await log("info", endCardUsedEmoji ? "End card rendered with emoji overlay" : "End card rendered successfully");
             break;
           }
           if (pd.status === "FAILED" || pd.status === "ERROR") {
@@ -503,6 +514,7 @@ Deno.serve(async (req) => {
     await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
 
     let finalVideoBytes: Uint8Array;
+    let finalIncludesEndCard = false;
 
     if (endCardUrl) {
       await log("info", "Stage 18: Concatenating captioned story video + end card");
@@ -510,8 +522,8 @@ Deno.serve(async (req) => {
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      // Re-encode both inputs to ensure matching codecs/sample rates before concat
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1[v0];[0:a]aresample=44100[a0];[1:v]scale=1080:1920,setsar=1[v1];[1:a]aresample=44100[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart {{out_1}}`;
+      // Only normalize the 5s end card to the story video's dimensions to keep concat under account runtime limits.
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]format=yuv420p,setsar=1[vstoryref];[1:v][vstoryref]scale2ref=w=main_w:h=main_h[vendscaled][vstory];[vendscaled]format=yuv420p,setsar=1[vend];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[aend];[vstory][0:a][vend][aend]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
@@ -547,6 +559,7 @@ Deno.serve(async (req) => {
         if (finalUrl) {
           const dl = await fetch(finalUrl);
           finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
+          finalIncludesEndCard = true;
         } else {
           await log("warn", "Final concat timed out — using captioned video without end card");
           const { data: fallbackUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
@@ -610,7 +623,7 @@ Deno.serve(async (req) => {
       generated_metadata: {
         ...meta,
         final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl },
-        has_end_card: !!endCardUrl,
+        has_end_card: finalIncludesEndCard,
         has_subtitles: captionedPath !== storyPath,
         completed_at: new Date().toISOString(),
       },
