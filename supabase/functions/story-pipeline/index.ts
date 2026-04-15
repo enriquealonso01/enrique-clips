@@ -562,7 +562,7 @@ async function stage7(sb: SB, runId: string, script: any) {
           similarity_boost: 0.7,
           style: 0.4,
           use_speaker_boost: true,
-          speed: 0.9,
+          speed: 1.05,
         },
       }),
     }

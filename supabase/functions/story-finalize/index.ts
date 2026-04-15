@@ -445,13 +445,13 @@ Deno.serve(async (req) => {
         const fadeIn = endingConfig.fade_in_ms ?? 250;
         const fadeOut = endingConfig.fade_out_ms ?? 400;
         const audioIdx = 1;
-        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${Math.max(0, endCardDurationSec - fadeOut / 1000)}:d=${fadeOut / 1000}[aend]`;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,volume=0.5,afade=t=in:st=0:d=${fadeIn / 1000},afade=t=out:st=${Math.max(0, endCardDurationSec - fadeOut / 1000)}:d=${fadeOut / 1000}[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else if (bgMusicUrl) {
         endCardInputs["in_end_audio"] = bgMusicUrl;
         endCardAudioInput = " -i {{in_end_audio}}";
         const audioIdx = 1;
-        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,afade=t=in:st=0:d=0.3,afade=t=out:st=${Math.max(0, endCardDurationSec - 0.4)}:d=0.4[aend]`;
+        endCardAudioFilter = `;[${audioIdx}:a]atrim=0:${endCardDurationSec},asetpts=N/SR/TB,aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo,volume=0.5,afade=t=in:st=0:d=0.3,afade=t=out:st=${Math.max(0, endCardDurationSec - 0.4)}:d=0.4[aend]`;
         endCardAudioMap = ` -map "[aend]"`;
       } else {
         endCardAudioFilter = `;anullsrc=r=${DEFAULT_STORY_AUDIO_RATE}:cl=stereo:d=${endCardDurationSec}[aend]`;
@@ -462,7 +462,7 @@ Deno.serve(async (req) => {
       if (emojiUrl) {
         const emojiIdx = endCardAudioInput ? 2 : 1;
         emojiInput = " -i {{in_emoji}}";
-        emojiOverlayFilter = `;[${emojiIdx}:v]scale=220:-1[emoji];[vend][emoji]overlay=(W-w)/2:(H-h)/2:enable='between(t\\,0\\,${endCardDurationSec})'[vfinal]`;
+        emojiOverlayFilter = `;[${emojiIdx}:v]scale=220:-1,rotate=-15*PI/180:fillcolor=none:ow=rotw(-15*PI/180):oh=roth(-15*PI/180)[emoji];[vend][emoji]overlay=(W-w)/2:(H-h)/2:enable='between(t\\,0\\,${endCardDurationSec})'[vfinal]`;
       }
 
       const vOutLabel = emojiUrl ? "vfinal" : "vend";
