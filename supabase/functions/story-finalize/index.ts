@@ -522,8 +522,9 @@ Deno.serve(async (req) => {
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      // Only normalize the 5s end card to the story video's dimensions to keep concat under account runtime limits.
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]format=yuv420p,setsar=1[vstoryref];[1:v][vstoryref]scale2ref=w=main_w:h=main_h[vendscaled][vstory];[vendscaled]format=yuv420p,setsar=1[vend];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[aend];[vstory][0:a][vend][aend]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
+      // Re-encode both inputs to matching specs. Use ultrafast to stay within Rendi's 60s account limit.
+      // Both are scaled to 1080x1920 and normalized to the same audio sample rate.
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
