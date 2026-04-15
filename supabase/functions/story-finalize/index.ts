@@ -468,7 +468,8 @@ Deno.serve(async (req) => {
       const vOutLabel = emojiUrl ? "vfinal" : "vend";
 
       // FFmpeg: loop image for 5s, grayscale, slow zoom, optional emoji overlay
-      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput}${emojiInput} -filter_complex "[0:v]scale=1080:1920,format=gray,setsar=1,zoompan=z='min(zoom+0.001\\,1.05)':d=${endCardFrameCount}:s=1080x1920:fps=${DEFAULT_STORY_FPS}[vend]${emojiOverlayFilter}${endCardAudioFilter}" -map "[${vOutLabel}]"${endCardAudioMap} -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${endCardDurationSec} -movflags +faststart {{out_1}}`;
+      // Use scale+pad to fit image into 9:16 without cropping — remaining space is black
+      const endCardCmd = `-loop 1 -i {{in_real_img}}${endCardAudioInput}${emojiInput} -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,format=gray,setsar=1,zoompan=z='min(zoom+0.001\\,1.05)':d=${endCardFrameCount}:s=1080x1920:fps=${DEFAULT_STORY_FPS}[vend]${emojiOverlayFilter}${endCardAudioFilter}" -map "[${vOutLabel}]"${endCardAudioMap} -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${endCardDurationSec} -movflags +faststart {{out_1}}`;
 
       await log("info", `End card FFmpeg: ${endCardCmd.substring(0, 400)}...`);
 
