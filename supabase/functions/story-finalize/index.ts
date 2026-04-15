@@ -523,9 +523,15 @@ Deno.serve(async (req) => {
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      // Re-encode both inputs to matching specs. Use ultrafast to stay within Rendi's 60s account limit.
+      // Re-encode both inputs to matching specs. Use xfade dissolve for smooth transition.
+      // Use ultrafast to stay within Rendi's 60s account limit.
       // Both are scaled to 1080x1920 and normalized to the same audio sample rate.
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
+      // xfade offset = story duration - dissolve duration (we probe via ffprobe-like approach;
+      // since we can't probe, we use the sum of beat durations as estimate)
+      const totalStoryDuration = (meta.timed_beats || []).reduce((sum: number, b: any) => sum + (b.duration || 4), 0);
+      const dissolveSec = 0.5;
+      const xfadeOffset = Math.max(0.5, totalStoryDuration - dissolveSec);
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)}[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
