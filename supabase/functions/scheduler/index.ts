@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
         .from("runs")
         .select("id")
         .eq("project_id", project.id)
-        .in("status", ["queued", "running", "paused"])
+        .in("status", ["queued", "running"])
         .limit(1);
 
       if (activeRuns && activeRuns.length > 0) {
