@@ -541,60 +541,230 @@ Return JSON:
 // STAGE 7: Generate Narrator MP3 (ElevenLabs)
 // ══════════════════════════════════════════════════════════
 
-async function stage7(sb: SB, runId: string, script: any) {
-  await updateRun(sb, runId, { status: "narration_generated", current_stage: "narration_generated", progress_pct: 34 });
-  await log(sb, runId, "info", "Stage 7: Generating narrator MP3 with ElevenLabs");
+const ELEVENLABS_VOICE_ID = "3RbK5MAeB6NkutT3d6qF";
+const ELEVENLABS_VOICE_SETTINGS = {
+  stability: 0.55,
+  similarity_boost: 0.7,
+  style: 0.4,
+  use_speaker_boost: true,
+  speed: 1.05,
+};
 
+// Split a script into sentence-like segments. Handles common abbreviations.
+function splitIntoSegments(text: string): string[] {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return [];
+  // Protect common abbreviations
+  const protectedText = cleaned
+    .replace(/\b(Mr|Mrs|Ms|Dr|Sr|Jr|St|Mt|Prof|Sgt|Capt|Lt|Gen|Rev|Hon|vs|etc|i\.e|e\.g)\./g, "$1<DOT>");
+  const parts = protectedText.split(/(?<=[.!?])\s+(?=[A-Z"'(])/);
+  const segments = parts
+    .map(s => s.replace(/<DOT>/g, ".").trim())
+    .filter(s => s.length > 0);
+  // Merge tiny fragments (<8 chars) into the previous segment so we don't pay for sub-word calls
+  const merged: string[] = [];
+  for (const s of segments) {
+    if (merged.length > 0 && s.length < 8) {
+      merged[merged.length - 1] += " " + s;
+    } else {
+      merged.push(s);
+    }
+  }
+  return merged;
+}
+
+async function callElevenLabsWithTimestamps(text: string, prev?: string, next?: string): Promise<{ audioBytes: Uint8Array; alignment: any }> {
   const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY not configured");
 
-  // Use a warm, storytelling voice
-  const voiceId = "3RbK5MAeB6NkutT3d6qF";
-  const fullText = script.full_script;
+  const body: any = {
+    text,
+    model_id: "eleven_multilingual_v2",
+    voice_settings: ELEVENLABS_VOICE_SETTINGS,
+  };
+  if (prev) body.previous_text = prev;
+  if (next) body.next_text = next;
 
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps?output_format=mp3_44100_128`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/with-timestamps?output_format=mp3_44100_128`,
     {
       method: "POST",
-      headers: {
-        "xi-api-key": ELEVENLABS_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: fullText,
-        model_id: "eleven_multilingual_v2",
-        voice_settings: {
-          stability: 0.55,
-          similarity_boost: 0.7,
-          style: 0.4,
-          use_speaker_boost: true,
-          speed: 1.05,
-        },
-      }),
+      headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     }
   );
-
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`ElevenLabs TTS failed (${response.status}): ${errText.substring(0, 300)}`);
   }
-
   const result = await response.json();
-  const audioBase64 = result.audio_base64;
-  const alignment = result.alignment; // { characters, character_start_times_seconds, character_end_times_seconds }
+  if (!result.audio_base64) throw new Error("No audio_base64 in ElevenLabs response");
+  const audioBytes = Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0));
+  return { audioBytes, alignment: result.alignment };
+}
 
-  if (!audioBase64) throw new Error("No audio_base64 in ElevenLabs response");
+// Concatenate per-segment alignments into one global alignment, shifted by cumulative offsets.
+// gapSeconds is the silent gap inserted between segments by the FFmpeg concat.
+function mergeAlignments(perSegment: { alignment: any; duration: number }[], gapSeconds: number) {
+  const characters: string[] = [];
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let offset = 0;
+  for (let i = 0; i < perSegment.length; i++) {
+    const seg = perSegment[i];
+    const a = seg.alignment;
+    if (a?.characters && a?.character_start_times_seconds && a?.character_end_times_seconds) {
+      for (let j = 0; j < a.characters.length; j++) {
+        characters.push(a.characters[j]);
+        starts.push(a.character_start_times_seconds[j] + offset);
+        ends.push(a.character_end_times_seconds[j] + offset);
+      }
+    }
+    // Insert a space char to represent the inter-segment gap (so beat-text matching still works)
+    if (i < perSegment.length - 1) {
+      characters.push(" ");
+      starts.push(offset + seg.duration);
+      ends.push(offset + seg.duration + gapSeconds);
+    }
+    offset += seg.duration + (i < perSegment.length - 1 ? gapSeconds : 0);
+  }
+  return { characters, character_start_times_seconds: starts, character_end_times_seconds: ends };
+}
 
-  // Decode and upload
-  const audioBytes = Uint8Array.from(atob(audioBase64), c => c.charCodeAt(0));
+async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number): Promise<{ path: string; signedUrl: string | undefined; alignment: any }> {
+  const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
+  if (!RENDI_API_KEY) throw new Error("RENDI_API_KEY not configured (required for segmented narration stitching)");
+
+  const fullText: string = script.full_script;
+  const segments = splitIntoSegments(fullText);
+  await log(sb, runId, "info", `Segmented narration: ${segments.length} segments from ${fullText.length} chars`);
+
+  if (segments.length < 2) {
+    await log(sb, runId, "info", "Only one segment — falling back to single-call narration");
+    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText);
+    const path = `story-runs/${runId}/narration.mp3`;
+    const url = await uploadAndStoreAsset(sb, runId, path, audioBytes, "narration_audio", {
+      duration_estimate: alignment?.character_end_times_seconds?.slice(-1)?.[0] || null,
+      character_count: fullText.length,
+      segmented: false,
+    });
+    return { path, signedUrl: url, alignment };
+  }
+
+  // Generate each segment with ElevenLabs request stitching context (sequential to keep ordering safe)
+  const perSegment: { audioBytes: Uint8Array; alignment: any; duration: number; uploadPath: string }[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const prev = i > 0 ? segments[i - 1] : undefined;
+    const next = i < segments.length - 1 ? segments[i + 1] : undefined;
+    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(segments[i], prev, next);
+    const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
+    const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
+    const { error: upErr } = await sb.storage.from("project-assets").upload(uploadPath, audioBytes, {
+      contentType: "audio/mpeg",
+      upsert: true,
+    });
+    if (upErr) throw new Error(`Failed to upload narration segment ${i}: ${upErr.message}`);
+    perSegment.push({ audioBytes, alignment, duration, uploadPath });
+    await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB`);
+  }
+
+  // Build signed URLs for each segment for Rendi
+  const segUrls: string[] = [];
+  for (const seg of perSegment) {
+    const { data } = await sb.storage.from("project-assets").createSignedUrl(seg.uploadPath, 60 * 60);
+    if (!data?.signedUrl) throw new Error(`Failed to sign URL for ${seg.uploadPath}`);
+    segUrls.push(data.signedUrl);
+  }
+
+  // Build Rendi FFmpeg command: concat with adelay between each segment (controlled gap)
+  const gapSeconds = Math.max(0, gapMs / 1000);
+  const inputFiles: Record<string, string> = {};
+  const outputFiles: Record<string, string> = { out_narration: "narration_stitched.mp3" };
+  segUrls.forEach((url, i) => { inputFiles[`in_seg${i}`] = url; });
+
+  // Build filter graph: pad each non-last segment with a silent tail of gapSeconds, then concat all
+  let filter = "";
+  const labels: string[] = [];
+  segUrls.forEach((_, i) => {
+    if (i < segUrls.length - 1 && gapSeconds > 0) {
+      filter += `[${i}:a]apad=pad_dur=${gapSeconds.toFixed(3)}[a${i}];`;
+      labels.push(`[a${i}]`);
+    } else {
+      labels.push(`[${i}:a]`);
+    }
+  });
+  filter += `${labels.join("")}concat=n=${segUrls.length}:v=0:a=1[outa]`;
+
+  const inputArgs = segUrls.map((_, i) => `-i {{in_seg${i}}}`).join(" ");
+  const ffmpegCmd = `${inputArgs} -filter_complex "${filter}" -map "[outa]" -c:a libmp3lame -b:a 128k -ar 44100 {{out_narration}}`;
+
+  await log(sb, runId, "info", `Stitching ${segUrls.length} segments via Rendi (gap=${gapMs}ms)`);
+  const rendiResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-KEY": RENDI_API_KEY },
+    body: JSON.stringify({ ffmpeg_command: ffmpegCmd, input_files: inputFiles, output_files: outputFiles, max_command_run_seconds: 300 }),
+  });
+  if (!rendiResp.ok) throw new Error(`Rendi stitch submit failed: ${await rendiResp.text()}`);
+  const { command_id } = await rendiResp.json();
+
+  // Poll
+  let stitchedUrl: string | null = null;
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const p = await fetch(`https://api.rendi.dev/v1/commands/${command_id}`, { headers: { "X-API-KEY": RENDI_API_KEY } });
+    const pj = await p.json();
+    if (pj.status === "SUCCESS") { stitchedUrl = pj.output_files?.out_narration?.storage_url; break; }
+    if (pj.status === "FAILED") throw new Error(`Rendi stitch failed: ${pj.error_message || JSON.stringify(pj).substring(0, 300)}`);
+  }
+  if (!stitchedUrl) throw new Error("Rendi stitch timed out after 180s");
+
+  // Download stitched MP3
+  const stitchedResp = await fetch(stitchedUrl);
+  if (!stitchedResp.ok) throw new Error(`Failed to download stitched MP3: ${stitchedResp.status}`);
+  const stitchedBytes = new Uint8Array(await stitchedResp.arrayBuffer());
+
+  // Build merged alignment so stage 8 can derive beat timings from text matching
+  const alignment = mergeAlignments(perSegment, gapSeconds);
+  const totalDuration = alignment.character_end_times_seconds.slice(-1)[0] || 0;
+
+  const path = `story-runs/${runId}/narration.mp3`;
+  const url = await uploadAndStoreAsset(sb, runId, path, stitchedBytes, "narration_audio", {
+    duration_estimate: totalDuration,
+    character_count: fullText.length,
+    segmented: true,
+    segment_count: segments.length,
+    gap_ms: gapMs,
+  });
+
+  await log(sb, runId, "info", `Segmented narration stitched: ${segments.length} segments → ${(stitchedBytes.length / 1024).toFixed(0)}KB, ${totalDuration.toFixed(2)}s`);
+  return { path, signedUrl: url, alignment };
+}
+
+async function stage7(sb: SB, runId: string, script: any) {
+  await updateRun(sb, runId, { status: "narration_generated", current_stage: "narration_generated", progress_pct: 34 });
+
+  const projCfg = await getProjectConfig(sb, runId);
+  const narrationCfg = projCfg?.narration || {};
+  const segmentedEnabled = !!narrationCfg.segmented_enabled;
+  const gapMs = typeof narrationCfg.segment_gap_ms === "number" ? narrationCfg.segment_gap_ms : 80;
+
+  await log(sb, runId, "info", `Stage 7: Generating narrator MP3 (mode=${segmentedEnabled ? `segmented gap=${gapMs}ms` : "single-call"})`);
+
+  if (segmentedEnabled) {
+    return await stage7Segmented(sb, runId, script, gapMs);
+  }
+
+  const fullText = script.full_script;
+  const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText);
   const path = `story-runs/${runId}/narration.mp3`;
   const url = await uploadAndStoreAsset(sb, runId, path, audioBytes, "narration_audio", {
     duration_estimate: alignment?.character_end_times_seconds?.slice(-1)?.[0] || null,
     character_count: fullText.length,
+    segmented: false,
   });
 
   await log(sb, runId, "info", `Narration MP3 generated: ${(audioBytes.length / 1024).toFixed(0)}KB`);
-  return { path, signedUrl: url, alignment, audioBase64 };
+  return { path, signedUrl: url, alignment };
 }
 
 // ══════════════════════════════════════════════════════════
