@@ -36,13 +36,8 @@ export function ScheduleManager({ projectId, timezone, storyProject = false }: S
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
     queryFn: async () => {
-      let query = supabase.from("schedules").select("*").order("time_utc", { ascending: true });
-      if (storyProject) {
-        query = query.eq("story_project_id" as any, projectId);
-      } else {
-        query = query.eq("project_id", projectId);
-      }
-      const { data, error } = await query;
+      const filterCol = storyProject ? "story_project_id" : "project_id";
+      const { data, error } = await (supabase.from("schedules").select("*").order("time_utc", { ascending: true }) as any).eq(filterCol, projectId);
       if (error) throw error;
       return data;
     },
