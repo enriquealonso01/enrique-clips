@@ -23,9 +23,10 @@ const WEEKDAYS = [
 interface ScheduleManagerProps {
   projectId: string;
   timezone: string;
+  storyProject?: boolean;
 }
 
-export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
+export function ScheduleManager({ projectId, timezone, storyProject = false }: ScheduleManagerProps) {
   const queryClient = useQueryClient();
   const [newTime, setNewTime] = useState("09:00");
   const [newDays, setNewDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6]);
@@ -35,11 +36,8 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
   const { data: schedules, isLoading } = useQuery({
     queryKey: ["schedules", projectId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("schedules")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("time_utc", { ascending: true });
+      const filterCol = storyProject ? "story_project_id" : "project_id";
+      const { data, error } = await (supabase.from("schedules").select("*").order("time_utc", { ascending: true }) as any).eq(filterCol, projectId);
       if (error) throw error;
       return data;
     },
@@ -47,7 +45,12 @@ export function ScheduleManager({ projectId, timezone }: ScheduleManagerProps) {
 
   const addSchedule = useMutation({
     mutationFn: async (time: string) => {
-      const insertData: any = { project_id: projectId, time_utc: time + ":00", days_of_week: newDays };
+      const insertData: any = { time_utc: time + ":00", days_of_week: newDays };
+      if (storyProject) {
+        insertData.story_project_id = projectId;
+      } else {
+        insertData.project_id = projectId;
+      }
       if (newPostTime) insertData.scheduled_post_time = newPostTime + ":00";
       if (newPostTimeEnd) insertData.scheduled_post_time_end = newPostTimeEnd + ":00";
       const { error } = await supabase

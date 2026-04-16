@@ -617,14 +617,80 @@ Deno.serve(async (req) => {
     await log("info", `Final video stored: ${(finalVideoBytes.length / 1024 / 1024).toFixed(1)}MB`);
 
     // ══════════════════════════════════════════════════════
-    // STAGE 19: Publish (through existing pipeline)
+    // STAGE 19: Publish via Upload-Post (if configured)
     // ══════════════════════════════════════════════════════
 
-    await updateRun({ status: "ready_to_publish", current_stage: "ready_to_publish", progress_pct: 94 });
-    await log("info", "Stage 19: Publishing through existing pipeline");
+    await updateRun({ status: "publishing" as any, current_stage: "publishing", progress_pct: 94 });
+    await log("info", "Stage 19: Publishing via Upload-Post");
+
+    let publishStatus = "published";
+
+    const uploadpostApiKey = (project as any).uploadpost_api_key_encrypted;
+    const uploadpostConfigured = (project as any).uploadpost_api_key_configured;
+    const uploadpostUsername = (project as any).uploadpost_profile_username;
+    const platforms = (project?.publish_platforms as Record<string, boolean>) || {};
+    const projPublishDefaults = ((project as any).publish_defaults as Record<string, any>) || {};
+    const enabledPlatforms = Object.entries(platforms).filter(([_, v]) => v).map(([k]) => k);
+
+    if (!uploadpostConfigured || !uploadpostApiKey) {
+      await log("info", "Upload-Post not configured — skipping publish.");
+    } else if (enabledPlatforms.length === 0) {
+      await log("info", "No platforms enabled — skipping publish.");
+    } else {
+      try {
+        const { data: urlData } = sb.storage.from("project-assets").getPublicUrl(finalPath);
+        const videoUrl = urlData.publicUrl;
+
+        // Generate metadata for the story
+        const storyTitle = meta.story?.title || "Story Video";
+        const storySummary = meta.story?.hook || meta.story?.summary || "";
+
+        const formData = new FormData();
+        formData.append("video", videoUrl);
+        formData.append("title", storyTitle);
+        formData.append("description", storySummary);
+        formData.append("async_upload", "true");
+
+        if (uploadpostUsername) formData.append("user", uploadpostUsername);
+
+        // Add scheduled_date if set in run metadata
+        if (meta.publish_scheduled_date) {
+          formData.append("scheduled_date", meta.publish_scheduled_date);
+          if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
+          await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
+        }
+
+        for (const platform of enabledPlatforms) {
+          formData.append("platform[]", platform);
+          const defaults = projPublishDefaults[platform] || {};
+          for (const [key, value] of Object.entries(defaults)) {
+            if (value !== undefined && value !== null && value !== "") {
+              formData.append(key, String(value));
+            }
+          }
+        }
+
+        const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
+          method: "POST",
+          headers: { Authorization: `Apikey ${uploadpostApiKey}` },
+          body: formData,
+        });
+
+        const uploadResult = await uploadResp.json();
+        await log("info", `Upload-Post response`, uploadResult);
+
+        if (uploadResp.ok && uploadResult.request_id) {
+          await log("info", `Upload-Post submitted: ${uploadResult.request_id}`);
+        } else {
+          await log("error", `Upload-Post failed: ${JSON.stringify(uploadResult).substring(0, 300)}`);
+        }
+      } catch (pubErr) {
+        await log("error", `Publishing failed: ${(pubErr as Error).message}`);
+      }
+    }
 
     await updateRun({
-      status: "published",
+      status: publishStatus as any,
       current_stage: "published",
       progress_pct: 100,
       finished_at: new Date().toISOString(),

@@ -531,9 +531,10 @@ export type Database = {
           id: string
           is_enabled: boolean
           last_triggered_at: string | null
-          project_id: string
+          project_id: string | null
           scheduled_post_time: string | null
           scheduled_post_time_end: string | null
+          story_project_id: string | null
           time_utc: string
         }
         Insert: {
@@ -542,9 +543,10 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_triggered_at?: string | null
-          project_id: string
+          project_id?: string | null
           scheduled_post_time?: string | null
           scheduled_post_time_end?: string | null
+          story_project_id?: string | null
           time_utc: string
         }
         Update: {
@@ -553,9 +555,10 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_triggered_at?: string | null
-          project_id?: string
+          project_id?: string | null
           scheduled_post_time?: string | null
           scheduled_post_time_end?: string | null
+          story_project_id?: string | null
           time_utc?: string
         }
         Relationships: [
@@ -665,10 +668,14 @@ export type Database = {
           is_enabled: boolean
           publish_defaults: Json
           publish_platforms: Json
+          story_search_prompt: string | null
           target_duration_sec: number
           timezone: string
           title: string
           updated_at: string
+          uploadpost_api_key_configured: boolean
+          uploadpost_api_key_encrypted: string | null
+          uploadpost_profile_username: string | null
         }
         Insert: {
           background_music_path?: string | null
@@ -680,10 +687,14 @@ export type Database = {
           is_enabled?: boolean
           publish_defaults?: Json
           publish_platforms?: Json
+          story_search_prompt?: string | null
           target_duration_sec?: number
           timezone?: string
           title?: string
           updated_at?: string
+          uploadpost_api_key_configured?: boolean
+          uploadpost_api_key_encrypted?: string | null
+          uploadpost_profile_username?: string | null
         }
         Update: {
           background_music_path?: string | null
@@ -695,10 +706,14 @@ export type Database = {
           is_enabled?: boolean
           publish_defaults?: Json
           publish_platforms?: Json
+          story_search_prompt?: string | null
           target_duration_sec?: number
           timezone?: string
           title?: string
           updated_at?: string
+          uploadpost_api_key_configured?: boolean
+          uploadpost_api_key_encrypted?: string | null
+          uploadpost_profile_username?: string | null
         }
         Relationships: []
       }
