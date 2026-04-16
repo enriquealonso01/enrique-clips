@@ -1062,7 +1062,7 @@ serve(async (req) => {
     let story: any = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        story = await stage2(sb, runId, context.lastTitles, context.targetDuration);
+        story = await stage2(sb, runId, context.lastTitles, context.targetDuration, context.storySearchPrompt);
         if (await stage3(sb, runId, story, context.fingerprints, context.lastTitles)) break;
         story = null;
       } catch (err) {
