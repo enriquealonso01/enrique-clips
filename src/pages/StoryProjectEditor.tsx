@@ -274,6 +274,37 @@ export default function StoryProjectEditor() {
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Narration Pacing</CardTitle></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label>Segmented narration (tighter pacing)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Generates each sentence separately and stitches them together with a small gap. Removes long internal pauses while keeping voice consistency via ElevenLabs request stitching. Costs slightly more per run.
+                  </p>
+                </div>
+                <Switch
+                  checked={configJson?.narration?.segmented_enabled ?? false}
+                  onCheckedChange={(v) =>
+                    setConfigJson({ ...configJson, narration: { ...(configJson?.narration || {}), segmented_enabled: v } })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Inter-segment gap (ms)</Label>
+                <Input
+                  type="number" min={0} max={500}
+                  value={configJson?.narration?.segment_gap_ms ?? 80}
+                  onChange={(e) =>
+                    setConfigJson({ ...configJson, narration: { ...(configJson?.narration || {}), segment_gap_ms: Number(e.target.value) } })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">Silence inserted between sentences. 80ms feels natural; 30ms is very punchy.</p>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Publish Tab */}
