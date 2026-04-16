@@ -156,16 +156,18 @@ async function stage1(sb: SB, runId: string) {
   const fingerprints = (memory || []).map((m: any) => m.story_fingerprint).filter(Boolean);
   await log(sb, runId, "info", `Loaded ${lastTitles.length} previous story titles. Target duration: ${targetDuration}s`);
 
-  return { run, project, lastTitles, fingerprints, projectId: run.project_id, targetDuration };
+  const storySearchPrompt = project?.story_search_prompt || "";
+
+  return { run, project, lastTitles, fingerprints, projectId: run.project_id, targetDuration, storySearchPrompt };
 }
 
 // ══════════════════════════════════════════════════════════
 // STAGE 2: Story Discovery
 // ══════════════════════════════════════════════════════════
 
-async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = 60) {
+async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = 60, storySearchPrompt: string = "") {
   await updateRun(sb, runId, { status: "researching_story", current_stage: "researching_story", progress_pct: 8 });
-  await log(sb, runId, "info", "Stage 2: Discovering wholesome story via AI");
+  await log(sb, runId, "info", `Stage 2: Discovering story via AI${storySearchPrompt ? ` (category: ${storySearchPrompt})` : ""}`);
 
   const titlesBlock = lastTitles.length > 0
     ? `\n\nPREVIOUSLY USED TITLES (DO NOT reuse):\n${lastTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}` : "";
@@ -174,6 +176,10 @@ async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuratio
   const minBeats = Math.max(4, Math.round(targetDuration / 12));
   const maxBeats = Math.max(6, Math.round(targetDuration / 5));
 
+  const categoryInstruction = storySearchPrompt
+    ? `\n- CATEGORY REQUIREMENT: The story MUST match this category/topic: "${storySearchPrompt}". Only pick stories that fit this requirement.`
+    : "";
+
   return await callStructured({
     messages: [
       { role: "system", content: "You are a viral short-form video researcher. Find real, wholesome, feel-good stories with strong hooks and emotional payoffs. Return ONLY valid JSON." },
@@ -181,7 +187,7 @@ async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuratio
 - Strong hook in first sentence
 - Emotional reward/payoff moment
 - Real characters, real events
-- Visual potential
+- Visual potential${categoryInstruction}
 - Story depth should match a ${targetDuration}s video (${targetDuration <= 60 ? "concise and punchy" : targetDuration <= 120 ? "moderate depth with good pacing" : "deeper narrative with multiple beats"})${titlesBlock}
 
 Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
