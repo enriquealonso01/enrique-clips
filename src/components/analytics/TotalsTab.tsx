@@ -116,22 +116,29 @@ export function TotalsTab({ profiles, period: _period }: Props) {
       return row;
     });
 
-    perProfile.sort((a, b) => b.views - a.views);
+    const platformRank: Record<string, number> = { youtube: 0, facebook: 1, instagram: 2, tiktok: 3 };
+    perProfile.sort((a, b) => {
+      const ta = profileTotals[a.username]?.views ?? 0;
+      const tb = profileTotals[b.username]?.views ?? 0;
+      if (tb !== ta) return tb - ta;
+      if (a.username !== b.username) return a.username.localeCompare(b.username);
+      return (platformRank[a.platform] ?? 99) - (platformRank[b.platform] ?? 99);
+    });
 
-    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile };
+    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile, profileTotals };
   }, [profileQueries, profiles]);
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
-    const header = ["Profile", "Views", "Followers", "Likes", "Comments"];
-    const totalRow = ["TOTAL", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments"];
+    const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
