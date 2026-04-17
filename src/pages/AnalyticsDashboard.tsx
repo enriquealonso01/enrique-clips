@@ -12,7 +12,7 @@ import { Trash2, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 
-const ALL_PLATFORMS = ["instagram", "tiktok", "youtube", "facebook", "linkedin", "x", "threads", "pinterest", "reddit", "bluesky"];
+const ALL_PLATFORMS = ["youtube", "facebook", "instagram", "tiktok"];
 
 export default function AnalyticsDashboard() {
   const qc = useQueryClient();
