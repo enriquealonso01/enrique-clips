@@ -5,7 +5,10 @@ import { KpiCard } from "./KpiCard";
 import { ChartTooltip } from "./ChartTooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BarChart3, Users, Eye, MessageCircle, Heart } from "lucide-react";
+import { BarChart3, Users, Eye, MessageCircle, Heart, Copy } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { toast } from "sonner";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area,
 } from "recharts";
