@@ -271,6 +271,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                     <TableHead className="text-right">Followers</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
                     <TableHead className="text-right">Comments</TableHead>
+                    <TableHead className="text-right">First Data</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
