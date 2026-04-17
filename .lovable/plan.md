@@ -1,57 +1,70 @@
 
 
-# Fix Three Story Pipeline Reliability Issues
+## Plan: Analytics Dashboard for Upload-Post Profiles
 
-## 1. Vidu Poller Self-Re-Invocation
+A new top-level page that aggregates Upload-Post analytics across multiple profiles, with a "Totals" overview tab plus a tab per profile.
 
-**Problem**: `story-poll-vidu` polls once and exits. If clips aren't done, nothing re-triggers it.
-
-**Fix**: After the `if (!allDone)` check, before returning, self-invoke with a 15-second delay. Use `setTimeout` + `fetch` to re-call itself with the same `run_id`.
+### Architecture
 
 ```text
-if (!allDone) {
-  // update progress...
-  // Fire-and-forget: re-invoke self after 15s delay
-  setTimeout(() => fetch(selfUrl, { ... }), 15_000);
-  return json({ status: "polling", ... });
-}
+Sidebar → "Analytics" route (/analytics)
+  ├── Tab: Totals (aggregate all profiles)
+  ├── Tab: <profile_username_1>
+  ├── Tab: <profile_username_2>
+  └── [+ Add Profile] button → prompts for profile_username
 ```
 
-**File**: `supabase/functions/story-poll-vidu/index.ts`
+### Backend
 
----
+**1. New table `analytics_profiles`** — stores which profile usernames the user has added to track.
+- Columns: `id`, `profile_username` (unique), `display_name`, `created_at`
+- RLS: authenticated full access (matches existing pattern)
 
-## 2. Add Stage 5 Resume Handler
+**2. New edge function `upload-post-analytics`** — proxies Upload-Post API calls so the JWT (`UPLOADPOST_API_KEY` secret — already used elsewhere) stays server-side.
+- `GET ?action=profile&username=X&platforms=...` → calls `/api/analytics/{username}`
+- `GET ?action=totals&username=X&period=...&breakdown=true` → calls `/api/uploadposts/total-impressions/{username}`
+- `GET ?action=metrics-config` → calls `/api/uploadposts/platform-metrics` (cached)
+- Will reuse the existing Upload-Post auth header pattern from current integration.
 
-**Problem**: The resume logic handles `stage6`, `stage7`, `stage9`, `stage10_continue` — but not `stage5`. When `shouldChain()` triggers after stage 4 (line 819), the self-chain sends `resume_stage: "stage5"` which falls through to re-running the full pipeline from stage 1.
+### Frontend
 
-**Fix**: Add a `if (resumeStage === "stage5")` block in the resume section (before line 789). It reads `meta.story` and `meta.real_image` from persisted metadata, calls `stage5()`, stores memory, updates metadata with `...meta` merge, then continues to stage 6+ or chains.
+**3. New page `src/pages/AnalyticsDashboard.tsx`**
+- Shadcn `Tabs` with dynamic tabs from `analytics_profiles` + a static "Totals" tab + "Add Profile" button (Dialog with single input).
+- Date range selector (last_day / last_week / last_month / last_3months / last_year) using shadcn buttons or Select.
+- Platform multi-select filter (chips).
 
-**File**: `supabase/functions/story-pipeline/index.ts` (~30 lines added around line 770)
+**4. Per-profile tab content** — professional grade, includes:
+- **KPI cards row**: Total Impressions, Followers, Likes, Comments, Shares, Saves, Profile Views (computed across selected platforms, deduplicated using `metric_type` to avoid double-counting).
+- **Reach/Views over time** — Recharts line chart from `reach_timeseries` per platform (overlaid lines, one per platform, color-coded).
+- **Per-platform breakdown** — Recharts bar chart comparing impressions/followers/engagement across platforms.
+- **Engagement composition** — stacked bar (likes/comments/shares/saves) per platform.
+- **Platform detail cards** — one card per platform showing all `available_metrics` with `metric_labels` from the API.
 
----
+**5. Totals tab** — aggregates across all added profiles:
+- Combined KPI cards (sum across profiles using `total-impressions` endpoint per profile, then summed).
+- "Impressions by profile" bar chart.
+- "Impressions by platform" pie/bar chart (summed across profiles).
+- Time-series line chart (one line per profile).
 
-## 3. Metadata Merge Instead of Overwrite
+**6. Sidebar update** — add "Analytics" entry with `BarChart3` icon between Stories and Settings.
 
-**Problem**: Lines 810, 817, 843, 852, 864, 873, 884 all rebuild `generated_metadata` manually as a new object literal. If a chain interrupt loses a field that was added by a previous stage but not included in the literal, it's gone.
+### Technical Notes
 
-**Fix**: Every `updateRun` call that sets `generated_metadata` should first read the current `meta` from DB (or use the already-fetched `meta` variable) and spread it:
-- In the **main pipeline flow** (lines 810–884), change each `generated_metadata: { story, real_image, ... }` to `generated_metadata: { ...meta, story, real_image, ... }` where `meta` is re-fetched or accumulated.
-- Simplest approach: maintain a running `meta` object that accumulates, and always spread it. Replace the explicit object literals with `{ ...meta, <new fields> }`.
+- Use `@tanstack/react-query` (already in stack) for fetching with 5-min stale time and per-tab caching.
+- All API calls go through the new edge function — never expose the Upload-Post JWT to the browser.
+- Date filtering on `reach_timeseries` is done client-side per the Upload-Post docs.
+- When aggregating across platforms, group by `metric_type` to avoid mixing reach + views + impressions into one number (show separate "Unique Reach" and "Views" totals when both exist, or use the `/total-impressions` endpoint which already deduplicates).
+- Loading states with `Skeleton`, error states with `Alert`, empty state for "no profiles added yet" on first visit.
 
-Affected lines in `supabase/functions/story-pipeline/index.ts`:
-- Line 810: `{ story, target_duration }` → `{ ...meta, story, target_duration: context.targetDuration }`
-- Line 817: `{ story, real_image, target_duration }` → `{ ...meta, story, real_image: realImage, target_duration: context.targetDuration }`
-- Line 843: full rebuild → `{ ...meta, story, real_image: realImage, cast_image: castResult, target_duration: context.targetDuration }`
-- Line 852, 864, 873, 884: same pattern — spread `meta` first, then overlay new fields
+### Files to Create / Modify
 
-After each `updateRun`, re-read meta: `Object.assign(meta, { <new fields> })` to keep the running state consistent.
-
----
-
-## Deployment
-
-Deploy both updated edge functions:
-- `story-pipeline`
-- `story-poll-vidu`
+- **Create** `supabase/functions/upload-post-analytics/index.ts`
+- **Create** `src/pages/AnalyticsDashboard.tsx`
+- **Create** `src/components/analytics/ProfileTab.tsx`
+- **Create** `src/components/analytics/TotalsTab.tsx`
+- **Create** `src/components/analytics/AddProfileDialog.tsx`
+- **Create** `src/components/analytics/KpiCard.tsx`
+- **Modify** `src/components/AppSidebar.tsx` (add Analytics nav item)
+- **Modify** `src/App.tsx` (add `/analytics` route)
+- **Migration**: create `analytics_profiles` table with RLS
 
