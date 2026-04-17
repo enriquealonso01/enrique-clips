@@ -66,7 +66,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null; firstDataDate: string | null }> = [];
     const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
