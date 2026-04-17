@@ -66,7 +66,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null; firstDataDate: string | null }> = [];
     const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
@@ -96,14 +96,17 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         if (l !== null) perPlatform[platform].likes += l;
         if (c !== null) perPlatform[platform].comments += c;
 
+        const tsPoints = getViewsTimeseries(platform, p);
+        const firstNonZero = tsPoints.find((pt) => pt.value > 0);
         perProfile.push({
           username: profileMeta.profile_username,
           display,
           platform,
           views: v, followers: f, likes: l, comments: c,
+          firstDataDate: firstNonZero ? firstNonZero.date : null,
         });
 
-        for (const point of getViewsTimeseries(platform, p)) {
+        for (const point of tsPoints) {
           if (!perDayByPlatform[point.date]) perDayByPlatform[point.date] = {};
           perDayByPlatform[point.date][platform] = (perDayByPlatform[point.date][platform] || 0) + point.value;
         }
@@ -136,16 +139,17 @@ export function TotalsTab({ profiles, period: _period }: Props) {
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
-    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments"];
-    const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments", "First Data"];
+    const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments, ""];
     const fmt = (n: number | null) => n === null ? "N/A" : String(n);
+    const fmtDate = (d: string | null) => d ?? "—";
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDate(r.firstDataDate)].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDate(r.firstDataDate)])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
@@ -267,6 +271,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                     <TableHead className="text-right">Followers</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
                     <TableHead className="text-right">Comments</TableHead>
+                    <TableHead className="text-right">First Data</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -290,6 +295,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.likes === null ? <span className="text-muted-foreground">N/A</span> : r.likes.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.comments === null ? <span className="text-muted-foreground">N/A</span> : r.comments.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono text-xs">{r.firstDataDate ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         </TableRow>
                         {isLastOfProfile && totals && (
                           <TableRow className="bg-muted/20 text-xs">
@@ -299,6 +305,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                             <TableCell className="text-right font-mono">{totals.followers.toLocaleString()}</TableCell>
                             <TableCell className="text-right font-mono">{totals.likes.toLocaleString()}</TableCell>
                             <TableCell className="text-right font-mono">{totals.comments.toLocaleString()}</TableCell>
+                            <TableCell />
                           </TableRow>
                         )}
                       </Fragment>
@@ -311,6 +318,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                     <TableCell className="text-right font-mono">{aggregates.totalFollowers.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalLikes.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalComments.toLocaleString()}</TableCell>
+                    <TableCell />
                   </TableRow>
                 </TableBody>
               </Table>
