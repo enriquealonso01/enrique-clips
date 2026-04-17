@@ -138,13 +138,14 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     const rows = aggregates.perProfile;
     const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments"];
     const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    const fmt = (n: number | null) => n === null ? "N/A" : String(n);
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
