@@ -609,8 +609,10 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         aspectRatio: sizeToAspectRatio(opts.size),
         imageSize: qualityToResolution(opts.quality),
       },
+      // Flex tier = 50% cheaper for image output ($0.067 vs $0.134 per 1K/2K image).
+      // Trade-off: higher latency / lower priority. Field name is camelCase per Gemini REST spec.
+      serviceTier: "SERVICE_TIER_FLEX",
     },
-    service_tier: "flex",
   };
 
   const attemptStart = Date.now();
