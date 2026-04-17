@@ -80,77 +80,98 @@ export default function AnalyticsDashboard() {
     setSelectedPlatforms((prev) => prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]);
   }
 
+  const PLATFORM_STYLES: Record<string, string> = {
+    youtube: "data-[active=true]:bg-rose-500/15 data-[active=true]:text-rose-600 data-[active=true]:border-rose-500/40",
+    facebook: "data-[active=true]:bg-blue-500/15 data-[active=true]:text-blue-600 data-[active=true]:border-blue-500/40",
+    instagram: "data-[active=true]:bg-pink-500/15 data-[active=true]:text-pink-600 data-[active=true]:border-pink-500/40",
+    tiktok: "data-[active=true]:bg-foreground/10 data-[active=true]:text-foreground data-[active=true]:border-foreground/30",
+  };
+
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 max-w-7xl">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <BarChart3 className="h-6 w-6 text-primary" /> Analytics
-          </h1>
-          <p className="text-sm text-muted-foreground">Cross-platform performance for your tracked profiles.</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select value={period} onValueChange={setPeriod}>
-            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="last_day">Last day</SelectItem>
-              <SelectItem value="last_week">Last week</SelectItem>
-              <SelectItem value="last_month">Last 30 days</SelectItem>
-              <SelectItem value="last_3months">Last 3 months</SelectItem>
-              <SelectItem value="last_year">Last year</SelectItem>
-            </SelectContent>
-          </Select>
-          <AddProfileDialog />
-        </div>
-      </div>
-
-      {/* Platform filter chips (only used by per-profile view) */}
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-xs text-muted-foreground mr-1">Platforms:</span>
-        {ALL_PLATFORMS.map((p) => (
-          <Badge
-            key={p}
-            variant={selectedPlatforms.includes(p) ? "default" : "outline"}
-            className="cursor-pointer capitalize"
-            onClick={() => togglePlatform(p)}
-          >
-            {p}
-          </Badge>
-        ))}
-      </div>
-
-      {isLoading ? (
-        <Skeleton className="h-96" />
-      ) : (
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="flex flex-wrap h-auto">
-            <TabsTrigger value="totals">Totals</TabsTrigger>
-            {profiles.map((p) => (
-              <TabsTrigger key={p.id} value={p.id}>
-                {p.display_name || p.profile_username}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          <TabsContent value="totals" className="mt-4">
-            <TotalsTab profiles={profiles} period={period} />
-          </TabsContent>
-
-          {profiles.map((p) => (
-            <TabsContent key={p.id} value={p.id} className="mt-4">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm text-muted-foreground">
-                  Username: <code className="text-foreground font-mono">{p.profile_username}</code>
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
+      <div className="container mx-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl animate-fade-in">
+        {/* Hero header */}
+        <div className="relative overflow-hidden rounded-2xl border bg-card p-5 sm:p-6 shadow-sm">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-violet-500/5 pointer-events-none" />
+          <div className="relative flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-9 w-9 rounded-xl bg-primary/10 ring-1 ring-primary/20 flex items-center justify-center">
+                  <BarChart3 className="h-4.5 w-4.5 text-primary" />
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => removeProfile(p.id, p.profile_username)}>
-                  <Trash2 className="h-4 w-4 mr-1" /> Remove
-                </Button>
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Analytics</h1>
               </div>
-              <ProfileTab username={p.profile_username} period={period} selectedPlatforms={selectedPlatforms} />
+              <p className="text-sm text-muted-foreground">Cross-platform performance for your tracked profiles.</p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Select value={period} onValueChange={setPeriod}>
+                <SelectTrigger className="w-[170px] bg-background/80 backdrop-blur"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="last_day">Last day</SelectItem>
+                  <SelectItem value="last_week">Last week</SelectItem>
+                  <SelectItem value="last_month">Last 30 days</SelectItem>
+                  <SelectItem value="last_3months">Last 3 months</SelectItem>
+                  <SelectItem value="last_year">Last year</SelectItem>
+                </SelectContent>
+              </Select>
+              <AddProfileDialog />
+            </div>
+          </div>
+        </div>
+
+        {/* Platform filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] uppercase font-semibold tracking-wider text-muted-foreground mr-1">Platforms</span>
+          {ALL_PLATFORMS.map((p) => {
+            const active = selectedPlatforms.includes(p);
+            return (
+              <button
+                key={p}
+                data-active={active}
+                onClick={() => togglePlatform(p)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-all capitalize ${
+                  active ? "shadow-sm" : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
+                } ${PLATFORM_STYLES[p] || ""}`}
+              >
+                {p}
+              </button>
+            );
+          })}
+        </div>
+
+        {isLoading ? (
+          <Skeleton className="h-96 rounded-2xl" />
+        ) : (
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="flex flex-wrap h-auto bg-muted/60 p-1 rounded-xl">
+              <TabsTrigger value="totals" className="rounded-lg data-[state=active]:shadow-sm">📊 Totals</TabsTrigger>
+              {profiles.map((p) => (
+                <TabsTrigger key={p.id} value={p.id} className="rounded-lg data-[state=active]:shadow-sm">
+                  {p.display_name || p.profile_username}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            <TabsContent value="totals" className="mt-5 animate-fade-in">
+              <TotalsTab profiles={profiles} period={period} />
             </TabsContent>
-          ))}
-        </Tabs>
-      )}
+
+            {profiles.map((p) => (
+              <TabsContent key={p.id} value={p.id} className="mt-5 animate-fade-in">
+                <div className="flex items-center justify-between mb-4 px-1">
+                  <div className="text-sm text-muted-foreground">
+                    Profile <code className="text-foreground font-mono bg-muted px-1.5 py-0.5 rounded text-xs">{p.profile_username}</code>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => removeProfile(p.id, p.profile_username)} className="text-muted-foreground hover:text-destructive">
+                    <Trash2 className="h-4 w-4 mr-1" /> Remove
+                  </Button>
+                </div>
+                <ProfileTab username={p.profile_username} period={period} selectedPlatforms={selectedPlatforms} />
+              </TabsContent>
+            ))}
+          </Tabs>
+        )}
+      </div>
     </div>
   );
 }
