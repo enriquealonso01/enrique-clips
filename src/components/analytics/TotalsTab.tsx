@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area,
 } from "recharts";
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 
 interface ProfileRow { id: string; profile_username: string; display_name: string | null; }
 interface Props { profiles: ProfileRow[]; period: string; }
@@ -66,12 +66,14 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; views: number; followers: number; likes: number; comments: number }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number; comments: number }> = [];
+    const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
       const profileMeta = profiles[idx];
       if (!q.data) return;
       const d: any = q.data.data;
+      const display = profileMeta.display_name || profileMeta.profile_username;
       let pv = 0, pf = 0, pl = 0, pc = 0;
       for (const platform of Object.keys(d || {})) {
         const p = d[platform];
@@ -88,16 +90,19 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         perPlatform[platform].likes += l;
         perPlatform[platform].comments += c;
 
+        perProfile.push({
+          username: profileMeta.profile_username,
+          display,
+          platform,
+          views: v, followers: f, likes: l, comments: c,
+        });
+
         for (const point of getViewsTimeseries(platform, p)) {
           if (!perDayByPlatform[point.date]) perDayByPlatform[point.date] = {};
           perDayByPlatform[point.date][platform] = (perDayByPlatform[point.date][platform] || 0) + point.value;
         }
       }
-      perProfile.push({
-        username: profileMeta.profile_username,
-        display: profileMeta.display_name || profileMeta.profile_username,
-        views: pv, followers: pf, likes: pl, comments: pc,
-      });
+      profileTotals[profileMeta.profile_username] = { views: pv, followers: pf, likes: pl, comments: pc };
     });
 
     const platformOrder = ["youtube", "facebook", "instagram", "tiktok"];
@@ -111,22 +116,29 @@ export function TotalsTab({ profiles, period: _period }: Props) {
       return row;
     });
 
-    perProfile.sort((a, b) => b.views - a.views);
+    const platformRank: Record<string, number> = { youtube: 0, facebook: 1, instagram: 2, tiktok: 3 };
+    perProfile.sort((a, b) => {
+      const ta = profileTotals[a.username]?.views ?? 0;
+      const tb = profileTotals[b.username]?.views ?? 0;
+      if (tb !== ta) return tb - ta;
+      if (a.username !== b.username) return a.username.localeCompare(b.username);
+      return (platformRank[a.platform] ?? 99) - (platformRank[b.platform] ?? 99);
+    });
 
-    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile };
+    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile, profileTotals };
   }, [profileQueries, profiles]);
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
-    const header = ["Profile", "Views", "Followers", "Likes", "Comments"];
-    const totalRow = ["TOTAL", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments"];
+    const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
@@ -243,6 +255,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Profile</TableHead>
+                    <TableHead>Platform</TableHead>
                     <TableHead className="text-right">Views</TableHead>
                     <TableHead className="text-right">Followers</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
@@ -250,17 +263,43 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {aggregates.perProfile.map((r) => (
-                    <TableRow key={r.username}>
-                      <TableCell className="font-medium">{r.display}</TableCell>
-                      <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-muted/40 font-semibold">
+                  {aggregates.perProfile.map((r, i) => {
+                    const prev = aggregates.perProfile[i - 1];
+                    const isFirstOfProfile = !prev || prev.username !== r.username;
+                    const next = aggregates.perProfile[i + 1];
+                    const isLastOfProfile = !next || next.username !== r.username;
+                    const totals = aggregates.profileTotals[r.username];
+                    return (
+                      <Fragment key={`${r.username}-${r.platform}`}>
+                        <TableRow className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
+                          <TableCell className="font-medium">{isFirstOfProfile ? r.display : ""}</TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center gap-2 capitalize text-xs">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                              {r.platform}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
+                        </TableRow>
+                        {isLastOfProfile && totals && (
+                          <TableRow className="bg-muted/20 text-xs">
+                            <TableCell className="font-medium text-muted-foreground">Subtotal</TableCell>
+                            <TableCell />
+                            <TableCell className="text-right font-mono">{totals.views.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.followers.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.likes.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.comments.toLocaleString()}</TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                  <TableRow className="bg-muted/50 font-semibold border-t-2 border-border">
                     <TableCell>TOTAL</TableCell>
+                    <TableCell />
                     <TableCell className="text-right font-mono">{aggregates.totalViews.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalFollowers.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalLikes.toLocaleString()}</TableCell>
