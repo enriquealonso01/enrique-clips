@@ -61,6 +61,27 @@ export type Database = {
           },
         ]
       }
+      analytics_profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          profile_username: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          profile_username: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          profile_username?: string
+        }
+        Relationships: []
+      }
       assets: {
         Row: {
           created_at: string
