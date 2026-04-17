@@ -255,6 +255,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Profile</TableHead>
+                    <TableHead>Platform</TableHead>
                     <TableHead className="text-right">Views</TableHead>
                     <TableHead className="text-right">Followers</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
@@ -262,17 +263,43 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {aggregates.perProfile.map((r) => (
-                    <TableRow key={r.username}>
-                      <TableCell className="font-medium">{r.display}</TableCell>
-                      <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="bg-muted/40 font-semibold">
+                  {aggregates.perProfile.map((r, i) => {
+                    const prev = aggregates.perProfile[i - 1];
+                    const isFirstOfProfile = !prev || prev.username !== r.username;
+                    const next = aggregates.perProfile[i + 1];
+                    const isLastOfProfile = !next || next.username !== r.username;
+                    const totals = aggregates.profileTotals[r.username];
+                    return (
+                      <>
+                        <TableRow key={`${r.username}-${r.platform}`} className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
+                          <TableCell className="font-medium">{isFirstOfProfile ? r.display : ""}</TableCell>
+                          <TableCell>
+                            <span className="inline-flex items-center gap-2 capitalize text-xs">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                              {r.platform}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
+                        </TableRow>
+                        {isLastOfProfile && totals && (
+                          <TableRow key={`${r.username}-subtotal`} className="bg-muted/20 text-xs">
+                            <TableCell className="font-medium text-muted-foreground">Subtotal</TableCell>
+                            <TableCell />
+                            <TableCell className="text-right font-mono">{totals.views.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.followers.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.likes.toLocaleString()}</TableCell>
+                            <TableCell className="text-right font-mono">{totals.comments.toLocaleString()}</TableCell>
+                          </TableRow>
+                        )}
+                      </>
+                    );
+                  })}
+                  <TableRow className="bg-muted/50 font-semibold border-t-2 border-border">
                     <TableCell>TOTAL</TableCell>
+                    <TableCell />
                     <TableCell className="text-right font-mono">{aggregates.totalViews.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalFollowers.toLocaleString()}</TableCell>
                     <TableCell className="text-right font-mono">{aggregates.totalLikes.toLocaleString()}</TableCell>
