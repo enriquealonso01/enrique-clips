@@ -134,6 +134,18 @@ export function TotalsTab({ profiles, period: _period }: Props) {
       return (platformRank[a.platform] ?? 99) - (platformRank[b.platform] ?? 99);
     });
 
+    // TikTok's API returns zeros for older days even when posts existed earlier.
+    // Use Instagram's first-data date for the same profile as a proxy.
+    const igFirstByUser: Record<string, string | null> = {};
+    for (const r of perProfile) {
+      if (r.platform === "instagram") igFirstByUser[r.username] = r.firstDataDate;
+    }
+    for (const r of perProfile) {
+      if (r.platform === "tiktok" && igFirstByUser[r.username]) {
+        r.firstDataDate = igFirstByUser[r.username];
+      }
+    }
+
     return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile, profileTotals };
   }, [profileQueries, profiles]);
 
