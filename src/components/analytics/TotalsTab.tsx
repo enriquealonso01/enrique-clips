@@ -66,7 +66,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number; comments: number }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null }> = [];
     const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
@@ -80,15 +80,21 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         if (!p || typeof p !== "object" || p.error) continue;
         const v = getViews(platform, p);
         const f = Number(p.followers) || 0;
-        const l = Number(p.likes) || 0;
-        const c = Number(p.comments) || 0;
-        pv += v; pf += f; pl += l; pc += c;
-        totalViews += v; totalFollowers += f; totalLikes += l; totalComments += c;
+        // Facebook profile-summary endpoint does not expose likes/comments — mark as N/A
+        const fbNoEngagement = platform === "facebook";
+        const l = fbNoEngagement ? null : (Number(p.likes) || 0);
+        const c = fbNoEngagement ? null : (Number(p.comments) || 0);
+        pv += v; pf += f;
+        if (l !== null) pl += l;
+        if (c !== null) pc += c;
+        totalViews += v; totalFollowers += f;
+        if (l !== null) totalLikes += l;
+        if (c !== null) totalComments += c;
         if (!perPlatform[platform]) perPlatform[platform] = { views: 0, followers: 0, likes: 0, comments: 0 };
         perPlatform[platform].views += v;
         perPlatform[platform].followers += f;
-        perPlatform[platform].likes += l;
-        perPlatform[platform].comments += c;
+        if (l !== null) perPlatform[platform].likes += l;
+        if (c !== null) perPlatform[platform].comments += c;
 
         perProfile.push({
           username: profileMeta.profile_username,
@@ -132,13 +138,14 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     const rows = aggregates.perProfile;
     const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments"];
     const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    const fmt = (n: number | null) => n === null ? "N/A" : String(n);
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments)])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
@@ -281,8 +288,8 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                           </TableCell>
                           <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
-                          <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
-                          <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.likes === null ? <span className="text-muted-foreground">N/A</span> : r.likes.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono">{r.comments === null ? <span className="text-muted-foreground">N/A</span> : r.comments.toLocaleString()}</TableCell>
                         </TableRow>
                         {isLastOfProfile && totals && (
                           <TableRow className="bg-muted/20 text-xs">
