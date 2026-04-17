@@ -223,6 +223,55 @@ export function TotalsTab({ profiles, period: _period }: Props) {
           )}
         </CardContent>
       </Card>
+
+      <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+        <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Per-Profile Breakdown</CardTitle>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => copyTable("tsv")} className="h-8">
+              <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy (TSV)
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => copyTable("md")} className="h-8">
+              <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy (Markdown)
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? <Skeleton className="h-48" /> : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Profile</TableHead>
+                    <TableHead className="text-right">Views</TableHead>
+                    <TableHead className="text-right">Followers</TableHead>
+                    <TableHead className="text-right">Likes</TableHead>
+                    <TableHead className="text-right">Comments</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {aggregates.perProfile.map((r) => (
+                    <TableRow key={r.username}>
+                      <TableCell className="font-medium">{r.display}</TableCell>
+                      <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-mono">{r.likes.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="bg-muted/40 font-semibold">
+                    <TableCell>TOTAL</TableCell>
+                    <TableCell className="text-right font-mono">{aggregates.totalViews.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono">{aggregates.totalFollowers.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono">{aggregates.totalLikes.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono">{aggregates.totalComments.toLocaleString()}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
