@@ -15,6 +15,7 @@ import NotFound from "./pages/NotFound";
 import StoriesIndex from "./pages/StoriesIndex";
 import StoryProjectEditor from "./pages/StoryProjectEditor";
 import StoryRunMonitor from "./pages/StoryRunMonitor";
+import AnalyticsDashboard from "./pages/AnalyticsDashboard";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +40,7 @@ function ProtectedRoutes() {
         <Route path="/stories" element={<StoriesIndex />} />
         <Route path="/stories/:projectId" element={<StoryProjectEditor />} />
         <Route path="/story-runs/:runId" element={<StoryRunMonitor />} />
+        <Route path="/analytics" element={<AnalyticsDashboard />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<NotFound />} />
