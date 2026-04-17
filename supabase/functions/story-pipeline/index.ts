@@ -702,7 +702,7 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   const rendiResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-KEY": RENDI_API_KEY },
-    body: JSON.stringify({ ffmpeg_command: ffmpegCmd, input_files: inputFiles, output_files: outputFiles, max_command_run_seconds: 300 }),
+    body: JSON.stringify({ ffmpeg_command: ffmpegCmd, input_files: inputFiles, output_files: outputFiles, max_command_run_seconds: 60, vcpu_count: 4 }),
   });
   if (!rendiResp.ok) throw new Error(`Rendi stitch submit failed: ${await rendiResp.text()}`);
   const { command_id } = await rendiResp.json();
