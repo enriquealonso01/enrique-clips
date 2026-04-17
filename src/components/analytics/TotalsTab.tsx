@@ -99,17 +99,22 @@ export function TotalsTab({ profiles, period }: Props) {
   }, [queries, profileQueries]);
 
   if (profiles.length === 0) {
-    return <Alert><AlertDescription>Add a profile using the "Add Profile" button to see aggregated analytics.</AlertDescription></Alert>;
+    return (
+      <div className="rounded-2xl border-2 border-dashed border-border p-12 text-center bg-card/50">
+        <BarChart3 className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+        <p className="text-sm text-muted-foreground">Add a profile to see aggregated analytics across YouTube, Facebook, Instagram, and TikTok.</p>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-        <KpiCard label="Total Impressions" value={aggregates.totalImpressions} icon={BarChart3} loading={isLoading} hint={`Across ${profiles.length} profiles`} />
-        <KpiCard label="Total Followers" value={aggregates.totalFollowers} icon={Users} loading={isLoading} />
-        <KpiCard label="Total Likes" value={aggregates.totalLikes} icon={TrendingUp} loading={isLoading} />
-        <KpiCard label="Total Comments" value={aggregates.totalComments} icon={Eye} loading={isLoading} />
-        <KpiCard label="Total Shares" value={aggregates.totalShares} icon={Eye} loading={isLoading} />
+        <KpiCard label="Total Impressions" value={aggregates.totalImpressions} icon={BarChart3} loading={isLoading} hint={`Across ${profiles.length} profile${profiles.length > 1 ? "s" : ""}`} accent="primary" />
+        <KpiCard label="Followers" value={aggregates.totalFollowers} icon={Users} loading={isLoading} accent="sky" />
+        <KpiCard label="Likes" value={aggregates.totalLikes} icon={TrendingUp} loading={isLoading} accent="rose" />
+        <KpiCard label="Comments" value={aggregates.totalComments} icon={Eye} loading={isLoading} accent="violet" />
+        <KpiCard label="Shares" value={aggregates.totalShares} icon={Eye} loading={isLoading} accent="emerald" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
