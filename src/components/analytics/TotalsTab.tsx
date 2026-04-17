@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area,
 } from "recharts";
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 
 interface ProfileRow { id: string; profile_username: string; display_name: string | null; }
 interface Props { profiles: ProfileRow[]; period: string; }
