@@ -652,11 +652,16 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   }
 
   // Generate each segment with ElevenLabs request stitching context (sequential to keep ordering safe)
+  // LAYER B: Strip trailing sentence punctuation (.!?) from non-final segments so ElevenLabs doesn't
+  // generate a long end-of-sentence pause. Context (previous_text/next_text) keeps prosody seamless.
+  const stripTrailingPunct = (s: string) => s.replace(/[.!?]+\s*$/u, "").trim();
   const perSegment: { audioBytes: Uint8Array; alignment: any; duration: number; uploadPath: string }[] = [];
   for (let i = 0; i < segments.length; i++) {
+    const isLast = i === segments.length - 1;
+    const ttsText = isLast ? segments[i] : stripTrailingPunct(segments[i]);
     const prev = i > 0 ? segments[i - 1] : undefined;
     const next = i < segments.length - 1 ? segments[i + 1] : undefined;
-    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(segments[i], prev, next);
+    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, prev, next);
     const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
     const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
     const { error: upErr } = await sb.storage.from("project-assets").upload(uploadPath, audioBytes, {
@@ -665,7 +670,7 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
     });
     if (upErr) throw new Error(`Failed to upload narration segment ${i}: ${upErr.message}`);
     perSegment.push({ audioBytes, alignment, duration, uploadPath });
-    await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB`);
+    await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB${isLast ? "" : " (period stripped)"}`);
   }
 
   // Build signed URLs for each segment for Rendi
@@ -676,22 +681,28 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
     segUrls.push(data.signedUrl);
   }
 
-  // Build Rendi FFmpeg command: concat with adelay between each segment (controlled gap)
+  // Build Rendi FFmpeg command:
+  // LAYER A: silenceremove on each segment to strip leading + trailing silence below -40dB.
+  //   start_periods=1 → strip leading silence completely
+  //   stop_periods=-1 stop_duration=0.05 → strip every trailing silence chunk ≥50ms (recursive at end)
+  // Then optionally pad each non-last segment with the configured inter-segment gap.
   const gapSeconds = Math.max(0, gapMs / 1000);
   const inputFiles: Record<string, string> = {};
   const outputFiles: Record<string, string> = { out_narration: "narration_stitched.mp3" };
   segUrls.forEach((url, i) => { inputFiles[`in_seg${i}`] = url; });
 
-  // Build filter graph: pad each non-last segment with a silent tail of gapSeconds, then concat all
+  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0:start_threshold=-40dB:stop_periods=-1:stop_duration=0.05:stop_threshold=-40dB";
+
   let filter = "";
   const labels: string[] = [];
   segUrls.forEach((_, i) => {
-    if (i < segUrls.length - 1 && gapSeconds > 0) {
-      filter += `[${i}:a]apad=pad_dur=${gapSeconds.toFixed(3)}[a${i}];`;
-      labels.push(`[a${i}]`);
+    const isLast = i === segUrls.length - 1;
+    if (!isLast && gapSeconds > 0) {
+      filter += `[${i}:a]${SILENCE_TRIM},apad=pad_dur=${gapSeconds.toFixed(3)}[a${i}];`;
     } else {
-      labels.push(`[${i}:a]`);
+      filter += `[${i}:a]${SILENCE_TRIM}[a${i}];`;
     }
+    labels.push(`[a${i}]`);
   });
   filter += `${labels.join("")}concat=n=${segUrls.length}:v=0:a=1[outa]`;
 
