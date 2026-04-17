@@ -96,14 +96,17 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         if (l !== null) perPlatform[platform].likes += l;
         if (c !== null) perPlatform[platform].comments += c;
 
+        const tsPoints = getViewsTimeseries(platform, p);
+        const firstNonZero = tsPoints.find((pt) => pt.value > 0);
         perProfile.push({
           username: profileMeta.profile_username,
           display,
           platform,
           views: v, followers: f, likes: l, comments: c,
+          firstDataDate: firstNonZero ? firstNonZero.date : null,
         });
 
-        for (const point of getViewsTimeseries(platform, p)) {
+        for (const point of tsPoints) {
           if (!perDayByPlatform[point.date]) perDayByPlatform[point.date] = {};
           perDayByPlatform[point.date][platform] = (perDayByPlatform[point.date][platform] || 0) + point.value;
         }
