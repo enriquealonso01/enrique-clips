@@ -246,7 +246,6 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                       key={plat}
                       type="monotone"
                       dataKey={plat}
-                      stackId="1"
                       stroke={PLATFORM_COLORS[plat]}
                       strokeWidth={2}
                       fill={`url(#area-${plat})`}
