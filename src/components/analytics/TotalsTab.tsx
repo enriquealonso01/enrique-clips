@@ -2,12 +2,12 @@ import { useQueries } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getFacebookPageIdForUsername } from "@/lib/facebookPageId";
 import { KpiCard } from "./KpiCard";
+import { ChartTooltip } from "./ChartTooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { BarChart3, Users, Eye, TrendingUp } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, LineChart, Line, PieChart, Pie, Cell,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area, PieChart, Pie, Cell,
 } from "recharts";
 import { useMemo } from "react";
 
@@ -122,18 +122,26 @@ export function TotalsTab({ profiles, period }: Props) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Impressions by Profile</CardTitle></CardHeader>
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Impressions by Profile</CardTitle>
+          </CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-64" /> : (
               <div className="h-64">
                 <ResponsiveContainer>
-                  <BarChart data={aggregates.perProfile}>
-                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                    <XAxis dataKey="profile" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                    <Bar dataKey="impressions" fill="hsl(var(--primary))" />
+                  <BarChart data={aggregates.perProfile} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="barProfileGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.45} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="profile" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                    <Tooltip cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} content={<ChartTooltip />} />
+                    <Bar dataKey="impressions" fill="url(#barProfileGrad)" radius={[8, 8, 0, 0]} maxBarSize={56} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -141,17 +149,29 @@ export function TotalsTab({ profiles, period }: Props) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Impressions by Platform</CardTitle></CardHeader>
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Impressions by Platform</CardTitle>
+          </CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-64" /> : (
               <div className="h-64">
                 <ResponsiveContainer>
                   <PieChart>
-                    <Pie data={aggregates.platformChart} dataKey="value" nameKey="platform" outerRadius={90} label={(e: any) => e.platform}>
+                    <Pie
+                      data={aggregates.platformChart}
+                      dataKey="value"
+                      nameKey="platform"
+                      innerRadius={50}
+                      outerRadius={90}
+                      paddingAngle={3}
+                      stroke="hsl(var(--background))"
+                      strokeWidth={3}
+                      label={(e: any) => e.platform}
+                    >
                       {aggregates.platformChart.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
+                    <Tooltip content={<ChartTooltip />} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -160,24 +180,42 @@ export function TotalsTab({ profiles, period }: Props) {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Daily Impressions per Profile</CardTitle></CardHeader>
+      <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Daily Impressions per Profile</CardTitle>
+        </CardHeader>
         <CardContent>
           {isLoading ? <Skeleton className="h-72" /> : aggregates.dayChart.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No daily breakdown available.</div>
+            <div className="text-sm text-muted-foreground py-12 text-center">No daily breakdown available.</div>
           ) : (
             <div className="h-72">
               <ResponsiveContainer>
-                <LineChart data={aggregates.dayChart}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Legend />
+                <AreaChart data={aggregates.dayChart} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <defs>
+                    {profiles.map((p, i) => (
+                      <linearGradient key={p.profile_username} id={`area-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0.35} />
+                        <stop offset="100%" stopColor={COLORS[i % COLORS.length]} stopOpacity={0.02} />
+                      </linearGradient>
+                    ))}
+                  </defs>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
                   {profiles.map((p, i) => (
-                    <Line key={p.profile_username} type="monotone" dataKey={p.profile_username} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
+                    <Area
+                      key={p.profile_username}
+                      type="monotone"
+                      dataKey={p.profile_username}
+                      stroke={COLORS[i % COLORS.length]}
+                      strokeWidth={2.5}
+                      fill={`url(#area-${i})`}
+                      activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
+                    />
                   ))}
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
