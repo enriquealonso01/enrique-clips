@@ -170,6 +170,10 @@ export function ProfileTab({ username, period, selectedPlatforms }: Props) {
     return <Alert variant="destructive"><AlertDescription>Failed to load analytics: {String((q.error as Error).message)}</AlertDescription></Alert>;
   }
 
+  if (q.data && (q.data as any)._error) {
+    return <Alert variant="destructive"><AlertDescription>Upload-Post: {String((q.data as any)._error)} (username <code>{username}</code>)</AlertDescription></Alert>;
+  }
+
   if (!q.data || Object.keys(q.data).length === 0) {
     return <Alert><AlertDescription>No analytics data returned for <code>{username}</code>.</AlertDescription></Alert>;
   }
