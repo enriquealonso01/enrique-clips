@@ -38,7 +38,7 @@ export function TotalsTab({ profiles, period }: Props) {
     queries: profiles.map((p) => ({
       queryKey: ["profile-summary", p.profile_username],
       queryFn: async () => {
-        const platforms = "instagram,tiktok,youtube,facebook,linkedin,x,threads,pinterest,reddit,bluesky";
+        const platforms = "youtube,facebook,instagram,tiktok";
         const { data, error } = await supabase.functions.invoke(
           `upload-post-analytics?action=profile&username=${encodeURIComponent(p.profile_username)}&platforms=${encodeURIComponent(platforms)}`,
           { method: "GET" }
