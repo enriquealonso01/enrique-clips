@@ -66,12 +66,14 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; views: number; followers: number; likes: number; comments: number }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number; comments: number }> = [];
+    const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
       const profileMeta = profiles[idx];
       if (!q.data) return;
       const d: any = q.data.data;
+      const display = profileMeta.display_name || profileMeta.profile_username;
       let pv = 0, pf = 0, pl = 0, pc = 0;
       for (const platform of Object.keys(d || {})) {
         const p = d[platform];
@@ -88,16 +90,19 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         perPlatform[platform].likes += l;
         perPlatform[platform].comments += c;
 
+        perProfile.push({
+          username: profileMeta.profile_username,
+          display,
+          platform,
+          views: v, followers: f, likes: l, comments: c,
+        });
+
         for (const point of getViewsTimeseries(platform, p)) {
           if (!perDayByPlatform[point.date]) perDayByPlatform[point.date] = {};
           perDayByPlatform[point.date][platform] = (perDayByPlatform[point.date][platform] || 0) + point.value;
         }
       }
-      perProfile.push({
-        username: profileMeta.profile_username,
-        display: profileMeta.display_name || profileMeta.profile_username,
-        views: pv, followers: pf, likes: pl, comments: pc,
-      });
+      profileTotals[profileMeta.profile_username] = { views: pv, followers: pf, likes: pl, comments: pc };
     });
 
     const platformOrder = ["youtube", "facebook", "instagram", "tiktok"];
