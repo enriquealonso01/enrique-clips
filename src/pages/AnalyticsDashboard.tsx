@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -31,6 +31,41 @@ export default function AnalyticsDashboard() {
       return data || [];
     },
   });
+
+  // Auto-seed profiles from existing Projects + Story Projects that have an uploadpost username configured.
+  // Respects user deletions: only auto-adds usernames that don't already exist in analytics_profiles.
+  useEffect(() => {
+    if (isLoading) return;
+    let cancelled = false;
+    (async () => {
+      const [projRes, storyRes] = await Promise.all([
+        supabase.from("projects").select("uploadpost_profile_username, title").not("uploadpost_profile_username", "is", null),
+        supabase.from("story_projects").select("uploadpost_profile_username, title").not("uploadpost_profile_username", "is", null),
+      ]);
+      const collected = new Map<string, string>();
+      for (const r of (projRes.data || [])) {
+        const u = (r as any).uploadpost_profile_username?.trim();
+        if (u && !collected.has(u)) collected.set(u, (r as any).title || u);
+      }
+      for (const r of (storyRes.data || [])) {
+        const u = (r as any).uploadpost_profile_username?.trim();
+        if (u && !collected.has(u)) collected.set(u, (r as any).title || u);
+      }
+      const existing = new Set(profiles.map((p: any) => p.profile_username));
+      const toInsert = Array.from(collected.entries())
+        .filter(([u]) => !existing.has(u))
+        .map(([profile_username, display_name]) => ({ profile_username, display_name }));
+      if (toInsert.length === 0 || cancelled) return;
+      const { error } = await supabase.from("analytics_profiles").insert(toInsert);
+      if (!error) {
+        toast.success(`Auto-added ${toInsert.length} profile${toInsert.length > 1 ? "s" : ""} from your projects`);
+        qc.invalidateQueries({ queryKey: ["analytics-profiles"] });
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
+
 
   async function removeProfile(id: string, username: string) {
     if (!confirm(`Remove "${username}" from analytics tracking?`)) return;
