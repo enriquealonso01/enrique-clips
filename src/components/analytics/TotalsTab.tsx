@@ -270,8 +270,8 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                     const isLastOfProfile = !next || next.username !== r.username;
                     const totals = aggregates.profileTotals[r.username];
                     return (
-                      <>
-                        <TableRow key={`${r.username}-${r.platform}`} className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
+                      <Fragment key={`${r.username}-${r.platform}`}>
+                        <TableRow className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
                           <TableCell className="font-medium">{isFirstOfProfile ? r.display : ""}</TableCell>
                           <TableCell>
                             <span className="inline-flex items-center gap-2 capitalize text-xs">
@@ -285,7 +285,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                           <TableCell className="text-right font-mono">{r.comments.toLocaleString()}</TableCell>
                         </TableRow>
                         {isLastOfProfile && totals && (
-                          <TableRow key={`${r.username}-subtotal`} className="bg-muted/20 text-xs">
+                          <TableRow className="bg-muted/20 text-xs">
                             <TableCell className="font-medium text-muted-foreground">Subtotal</TableCell>
                             <TableCell />
                             <TableCell className="text-right font-mono">{totals.views.toLocaleString()}</TableCell>
@@ -294,7 +294,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                             <TableCell className="text-right font-mono">{totals.comments.toLocaleString()}</TableCell>
                           </TableRow>
                         )}
-                      </>
+                      </Fragment>
                     );
                   })}
                   <TableRow className="bg-muted/50 font-semibold border-t-2 border-border">
