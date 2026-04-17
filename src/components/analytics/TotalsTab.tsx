@@ -80,15 +80,21 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         if (!p || typeof p !== "object" || p.error) continue;
         const v = getViews(platform, p);
         const f = Number(p.followers) || 0;
-        const l = Number(p.likes) || 0;
-        const c = Number(p.comments) || 0;
-        pv += v; pf += f; pl += l; pc += c;
-        totalViews += v; totalFollowers += f; totalLikes += l; totalComments += c;
+        // Facebook profile-summary endpoint does not expose likes/comments — mark as N/A
+        const fbNoEngagement = platform === "facebook";
+        const l = fbNoEngagement ? null : (Number(p.likes) || 0);
+        const c = fbNoEngagement ? null : (Number(p.comments) || 0);
+        pv += v; pf += f;
+        if (l !== null) pl += l;
+        if (c !== null) pc += c;
+        totalViews += v; totalFollowers += f;
+        if (l !== null) totalLikes += l;
+        if (c !== null) totalComments += c;
         if (!perPlatform[platform]) perPlatform[platform] = { views: 0, followers: 0, likes: 0, comments: 0 };
         perPlatform[platform].views += v;
         perPlatform[platform].followers += f;
-        perPlatform[platform].likes += l;
-        perPlatform[platform].comments += c;
+        if (l !== null) perPlatform[platform].likes += l;
+        if (c !== null) perPlatform[platform].comments += c;
 
         perProfile.push({
           username: profileMeta.profile_username,
