@@ -170,13 +170,13 @@ export function ProfileTab({ username, period, selectedPlatforms }: Props) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        <KpiCard label="Total Impressions" value={kpis?.totalImpressions} icon={BarChart3} />
-        <KpiCard label="Followers" value={kpis?.followers} icon={Users} />
-        <KpiCard label="Profile Views" value={kpis?.profileViews} icon={UserCheck} />
-        <KpiCard label="Likes" value={kpis?.likes} icon={Heart} />
-        <KpiCard label="Comments" value={kpis?.comments} icon={MessageCircle} />
-        <KpiCard label="Shares" value={kpis?.shares} icon={Share2} />
-        <KpiCard label="Saves" value={kpis?.saves} icon={Bookmark} />
+        <KpiCard label="Total Impressions" value={kpis?.totalImpressions} icon={BarChart3} accent="primary" />
+        <KpiCard label="Followers" value={kpis?.followers} icon={Users} accent="sky" />
+        <KpiCard label="Profile Views" value={kpis?.profileViews} icon={UserCheck} accent="violet" />
+        <KpiCard label="Likes" value={kpis?.likes} icon={Heart} accent="rose" />
+        <KpiCard label="Comments" value={kpis?.comments} icon={MessageCircle} accent="sky" />
+        <KpiCard label="Shares" value={kpis?.shares} icon={Share2} accent="emerald" />
+        <KpiCard label="Saves" value={kpis?.saves} icon={Bookmark} accent="amber" />
       </div>
 
       <Card>
