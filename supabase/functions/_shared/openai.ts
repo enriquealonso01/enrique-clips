@@ -76,6 +76,17 @@ function getGeminiApiKey(): string {
   return key;
 }
 
+/**
+ * Returns the dedicated image-generation Gemini API key if configured,
+ * otherwise falls back to the shared GOOGLE_AI_API_KEY. This lets us
+ * track image-generation spend on a separate Google AI billing account.
+ */
+function getGeminiImageApiKey(): string {
+  const imageKey = Deno.env.get("GOOGLE_AI_IMAGE_API_KEY");
+  if (imageKey) return imageKey;
+  return getGeminiApiKey();
+}
+
 function getOpenAIApiKey(): string {
   const key = Deno.env.get("OPENAI_API_KEY");
   if (!key) throw new Error("OPENAI_API_KEY is not configured");
@@ -265,8 +276,8 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>): Promise<any> {
-  const apiKey = getGeminiApiKey();
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>, useImageKey = false): Promise<any> {
+  const apiKey = useImageKey ? getGeminiImageApiKey() : getGeminiApiKey();
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
   const controller = new AbortController();
@@ -606,7 +617,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   try {
     const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
       "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
-    });
+    }, true);
     const latency = Date.now() - start;
 
     const candidate = result.candidates?.[0];
