@@ -65,11 +65,14 @@ export function TotalsTab({ profiles, period: _period }: Props) {
   const aggregates = useMemo(() => {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
-    const perDayByPlatform: Record<string, Record<string, number>> = {}; // date -> platform -> views
+    const perDayByPlatform: Record<string, Record<string, number>> = {};
+    const perProfile: Array<{ username: string; display: string; views: number; followers: number; likes: number; comments: number }> = [];
 
-    profileQueries.forEach((q) => {
+    profileQueries.forEach((q, idx) => {
+      const profileMeta = profiles[idx];
       if (!q.data) return;
       const d: any = q.data.data;
+      let pv = 0, pf = 0, pl = 0, pc = 0;
       for (const platform of Object.keys(d || {})) {
         const p = d[platform];
         if (!p || typeof p !== "object" || p.error) continue;
@@ -77,6 +80,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
         const f = Number(p.followers) || 0;
         const l = Number(p.likes) || 0;
         const c = Number(p.comments) || 0;
+        pv += v; pf += f; pl += l; pc += c;
         totalViews += v; totalFollowers += f; totalLikes += l; totalComments += c;
         if (!perPlatform[platform]) perPlatform[platform] = { views: 0, followers: 0, likes: 0, comments: 0 };
         perPlatform[platform].views += v;
@@ -89,6 +93,11 @@ export function TotalsTab({ profiles, period: _period }: Props) {
           perDayByPlatform[point.date][platform] = (perDayByPlatform[point.date][platform] || 0) + point.value;
         }
       }
+      perProfile.push({
+        username: profileMeta.profile_username,
+        display: profileMeta.display_name || profileMeta.profile_username,
+        views: pv, followers: pf, likes: pl, comments: pc,
+      });
     });
 
     const platformOrder = ["youtube", "facebook", "instagram", "tiktok"];
@@ -102,8 +111,31 @@ export function TotalsTab({ profiles, period: _period }: Props) {
       return row;
     });
 
-    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart };
-  }, [profileQueries]);
+    perProfile.sort((a, b) => b.views - a.views);
+
+    return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile };
+  }, [profileQueries, profiles]);
+
+  async function copyTable(format: "tsv" | "md") {
+    const rows = aggregates.perProfile;
+    const header = ["Profile", "Views", "Followers", "Likes", "Comments"];
+    const totalRow = ["TOTAL", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments];
+    let text = "";
+    if (format === "tsv") {
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.views, r.followers, r.likes, r.comments].join("\t")), totalRow.join("\t")].join("\n");
+    } else {
+      const sep = "| " + header.map(() => "---").join(" | ") + " |";
+      const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.views, r.followers, r.likes, r.comments])), line(totalRow)].join("\n");
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Copied as ${format.toUpperCase()}`);
+    } catch {
+      toast.error("Copy failed");
+    }
+  }
+
 
   if (profiles.length === 0) {
     return (
