@@ -305,6 +305,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                             <TableCell className="text-right font-mono">{totals.followers.toLocaleString()}</TableCell>
                             <TableCell className="text-right font-mono">{totals.likes.toLocaleString()}</TableCell>
                             <TableCell className="text-right font-mono">{totals.comments.toLocaleString()}</TableCell>
+                            <TableCell />
                           </TableRow>
                         )}
                       </Fragment>
