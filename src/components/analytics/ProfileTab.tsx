@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getFacebookPageIdForUsername } from "@/lib/facebookPageId";
 import { KpiCard } from "./KpiCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -63,14 +64,19 @@ export function ProfileTab({ username, period, selectedPlatforms }: Props) {
   const q = useQuery({
     queryKey: ["upload-post-profile", username, platformsQuery],
     queryFn: async () => {
+      const pageId = platformsQuery.includes("facebook")
+        ? await getFacebookPageIdForUsername(username)
+        : null;
+      const pageQs = pageId ? `&page_id=${encodeURIComponent(pageId)}` : "";
       const { data, error } = await supabase.functions.invoke(
-        `upload-post-analytics?action=profile&username=${encodeURIComponent(username)}&platforms=${encodeURIComponent(platformsQuery)}`,
+        `upload-post-analytics?action=profile&username=${encodeURIComponent(username)}&platforms=${encodeURIComponent(platformsQuery)}${pageQs}`,
         { method: "GET" }
       );
       if (error) throw error;
       return data as Record<string, any>;
     },
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 
   const days = periodToDays(period);

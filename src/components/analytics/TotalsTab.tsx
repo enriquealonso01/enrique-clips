@@ -1,5 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getFacebookPageIdForUsername } from "@/lib/facebookPageId";
 import { KpiCard } from "./KpiCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,14 +40,17 @@ export function TotalsTab({ profiles, period }: Props) {
       queryKey: ["profile-summary", p.profile_username],
       queryFn: async () => {
         const platforms = "youtube,facebook,instagram,tiktok";
+        const pageId = await getFacebookPageIdForUsername(p.profile_username);
+        const pageQs = pageId ? `&page_id=${encodeURIComponent(pageId)}` : "";
         const { data, error } = await supabase.functions.invoke(
-          `upload-post-analytics?action=profile&username=${encodeURIComponent(p.profile_username)}&platforms=${encodeURIComponent(platforms)}`,
+          `upload-post-analytics?action=profile&username=${encodeURIComponent(p.profile_username)}&platforms=${encodeURIComponent(platforms)}${pageQs}`,
           { method: "GET" }
         );
         if (error) throw error;
         return { username: p.profile_username, data };
       },
       staleTime: 5 * 60 * 1000,
+      retry: false,
     })),
   });
 
