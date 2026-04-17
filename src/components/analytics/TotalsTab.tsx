@@ -295,6 +295,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.likes === null ? <span className="text-muted-foreground">N/A</span> : r.likes.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.comments === null ? <span className="text-muted-foreground">N/A</span> : r.comments.toLocaleString()}</TableCell>
+                          <TableCell className="text-right font-mono text-xs">{r.firstDataDate ?? <span className="text-muted-foreground">—</span>}</TableCell>
                         </TableRow>
                         {isLastOfProfile && totals && (
                           <TableRow className="bg-muted/20 text-xs">
