@@ -9,9 +9,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Eye, Users, Heart, MessageCircle, Share2, Bookmark, UserCheck, BarChart3 } from "lucide-react";
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
   BarChart, Bar,
 } from "recharts";
+import { ChartTooltip } from "./ChartTooltip";
 
 interface Props {
   username: string;
