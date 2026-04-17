@@ -50,6 +50,11 @@ Deno.serve(async (req) => {
       if (pageId) extra.push(`page_id=${encodeURIComponent(pageId)}`);
       const qs = `platforms=${encodeURIComponent(platforms)}${extra.length ? "&" + extra.join("&") : ""}`;
       const r = await callUploadPost(`/api/analytics/${encodeURIComponent(username)}?${qs}`);
+      // If upstream returns an error, wrap it as a 200 with an `_error` field so the UI can render a friendly message
+      // instead of the supabase functions client throwing on non-2xx.
+      if (r.status >= 400) {
+        return json({ _error: r.body?.message || r.body?.error || `Upload-Post error (${r.status})`, _status: r.status }, 200);
+      }
       return json(r.body, r.status);
     }
 
@@ -71,6 +76,9 @@ Deno.serve(async (req) => {
       if (metrics) params.push(`metrics=${encodeURIComponent(metrics)}`);
       const qs = params.length ? `?${params.join("&")}` : "";
       const r = await callUploadPost(`/api/uploadposts/total-impressions/${encodeURIComponent(username)}${qs}`);
+      if (r.status >= 400) {
+        return json({ _error: r.body?.message || r.body?.error || `Upload-Post error (${r.status})`, _status: r.status }, 200);
+      }
       return json(r.body, r.status);
     }
 
