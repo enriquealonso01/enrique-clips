@@ -186,24 +186,42 @@ export function ProfileTab({ username, period, selectedPlatforms }: Props) {
         <KpiCard label="Saves" value={kpis?.saves} icon={Bookmark} accent="amber" />
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Reach / Views Over Time</CardTitle></CardHeader>
+      <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Reach / Views Over Time</CardTitle>
+        </CardHeader>
         <CardContent>
           {timeseriesData.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No time-series data available for the selected period.</div>
+            <div className="text-sm text-muted-foreground py-12 text-center">No time-series data available for the selected period.</div>
           ) : (
             <div className="h-72 w-full">
               <ResponsiveContainer>
-                <LineChart data={timeseriesData}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Legend />
+                <AreaChart data={timeseriesData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <defs>
+                    {Object.keys(q.data).filter((k) => Array.isArray(q.data![k]?.reach_timeseries)).map((k) => (
+                      <linearGradient key={k} id={`reach-${k}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={PLATFORM_COLORS[k] || "hsl(var(--primary))"} stopOpacity={0.4} />
+                        <stop offset="100%" stopColor={PLATFORM_COLORS[k] || "hsl(var(--primary))"} stopOpacity={0.02} />
+                      </linearGradient>
+                    ))}
+                  </defs>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
                   {Object.keys(q.data).filter((k) => Array.isArray(q.data![k]?.reach_timeseries)).map((k) => (
-                    <Line key={k} type="monotone" dataKey={k} stroke={PLATFORM_COLORS[k] || "hsl(var(--primary))"} strokeWidth={2} dot={false} />
+                    <Area
+                      key={k}
+                      type="monotone"
+                      dataKey={k}
+                      stroke={PLATFORM_COLORS[k] || "hsl(var(--primary))"}
+                      strokeWidth={2.5}
+                      fill={`url(#reach-${k})`}
+                      activeDot={{ r: 5, strokeWidth: 2, stroke: "hsl(var(--background))" }}
+                    />
                   ))}
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -211,40 +229,54 @@ export function ProfileTab({ username, period, selectedPlatforms }: Props) {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Followers & Impressions by Platform</CardTitle></CardHeader>
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Followers & Impressions by Platform</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="h-64 w-full">
               <ResponsiveContainer>
-                <BarChart data={platformBreakdown}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                  <XAxis dataKey="platform" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Legend />
-                  <Bar dataKey="followers" fill="hsl(var(--primary))" />
-                  <Bar dataKey="impressions" fill="hsl(var(--accent))" />
+                <BarChart data={platformBreakdown} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="followersGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.5} />
+                    </linearGradient>
+                    <linearGradient id="impressionsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(280 70% 60%)" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="hsl(280 70% 60%)" stopOpacity={0.5} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="platform" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                  <Tooltip cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
+                  <Bar dataKey="followers" fill="url(#followersGrad)" radius={[6, 6, 0, 0]} maxBarSize={40} />
+                  <Bar dataKey="impressions" fill="url(#impressionsGrad)" radius={[6, 6, 0, 0]} maxBarSize={40} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Engagement by Platform</CardTitle></CardHeader>
+        <Card className="border-border/60 shadow-sm hover:shadow-md transition-shadow">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Engagement by Platform</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="h-64 w-full">
               <ResponsiveContainer>
-                <BarChart data={engagementBreakdown}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" />
-                  <XAxis dataKey="platform" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--background))", border: "1px solid hsl(var(--border))", borderRadius: 8 }} />
-                  <Legend />
-                  <Bar dataKey="likes" stackId="a" fill="hsl(330 80% 60%)" />
-                  <Bar dataKey="comments" stackId="a" fill="hsl(210 80% 60%)" />
-                  <Bar dataKey="shares" stackId="a" fill="hsl(160 70% 50%)" />
-                  <Bar dataKey="saves" stackId="a" fill="hsl(40 90% 55%)" />
+                <BarChart data={engagementBreakdown} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="platform" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => v >= 1000 ? `${(v/1000).toFixed(0)}K` : v} />
+                  <Tooltip cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }} content={<ChartTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
+                  <Bar dataKey="likes" stackId="a" fill="hsl(330 80% 60%)" maxBarSize={48} />
+                  <Bar dataKey="comments" stackId="a" fill="hsl(210 80% 60%)" maxBarSize={48} />
+                  <Bar dataKey="shares" stackId="a" fill="hsl(160 70% 50%)" maxBarSize={48} />
+                  <Bar dataKey="saves" stackId="a" fill="hsl(40 90% 55%)" radius={[6, 6, 0, 0]} maxBarSize={48} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
