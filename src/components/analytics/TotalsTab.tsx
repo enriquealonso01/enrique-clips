@@ -190,7 +190,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     }
 
     return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile, profileTotals };
-  }, [profileQueries, profiles]);
+  }, [profileQueries, profiles, handlesByUser]);
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
