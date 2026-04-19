@@ -130,9 +130,16 @@ export function TotalsTab({ profiles, period: _period }: Props) {
 
         const tsPoints = getViewsTimeseries(platform, p);
         const firstNonZero = tsPoints.find((pt) => pt.value > 0);
-        // Try common fields the Upload-Post API may expose for the social handle/URL
-        const handle = p.username || p.handle || p.account_username || p.channel_name || null;
-        const profileUrl = (typeof p.profile_url === "string" && p.profile_url) || buildPlatformUrl(platform, handle);
+        // Pull the real social handle from the social-accounts mapping. For Facebook,
+        // prefer the configured facebook_page_id (numeric IDs always resolve at /<id>),
+        // since Upload-Post returns the user's display name there.
+        const userHandles = handlesByUser[profileMeta.profile_username.toLowerCase()] || {};
+        let profileUrl: string | null = null;
+        if (platform === "facebook" && q.data.fbPageId) {
+          profileUrl = buildPlatformUrl("facebook", q.data.fbPageId);
+        } else {
+          profileUrl = buildPlatformUrl(platform, userHandles[platform] || null);
+        }
         perProfile.push({
           username: profileMeta.profile_username,
           display,
