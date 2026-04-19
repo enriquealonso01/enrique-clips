@@ -82,7 +82,17 @@ Deno.serve(async (req) => {
       return json(r.body, r.status);
     }
 
-    return json({ error: "Unknown action. Use action=profile|totals|metrics-config" }, 400);
+    if (action === "social-accounts") {
+      // Returns the list of Upload-Post profiles with their connected social accounts (handles).
+      // We use this to build clickable links to each social profile.
+      const r = await callUploadPost(`/api/uploadposts/users`);
+      if (r.status >= 400) {
+        return json({ _error: r.body?.message || r.body?.error || `Upload-Post error (${r.status})`, _status: r.status }, 200);
+      }
+      return json(r.body, r.status);
+    }
+
+    return json({ error: "Unknown action. Use action=profile|totals|metrics-config|social-accounts" }, 400);
   } catch (e) {
     return json({ error: String((e as Error)?.message ?? e) }, 500);
   }

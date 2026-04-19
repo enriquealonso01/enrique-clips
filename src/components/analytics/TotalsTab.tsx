@@ -1,4 +1,4 @@
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getFacebookPageIdForUsername } from "@/lib/facebookPageId";
 import { KpiCard } from "./KpiCard";
@@ -43,6 +43,36 @@ function getViewsTimeseries(platform: string, p: any): Array<{ date: string; val
 }
 
 export function TotalsTab({ profiles, period: _period }: Props) {
+  // One-shot fetch of social handles for all Upload-Post profiles. Used to build clickable
+  // links per platform in the Per-Profile Breakdown table.
+  const socialAccountsQuery = useQuery({
+    queryKey: ["upload-post-social-accounts"],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke(
+        `upload-post-analytics?action=social-accounts`,
+        { method: "GET" }
+      );
+      if (error) throw error;
+      return data as { profiles?: Array<{ username: string; social_accounts?: Record<string, { handle?: string; display_name?: string }> }> };
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+  });
+
+  // username (lowercased) -> { platform -> handle }
+  const handlesByUser = useMemo(() => {
+    const map: Record<string, Record<string, string>> = {};
+    for (const p of socialAccountsQuery.data?.profiles ?? []) {
+      const key = p.username.toLowerCase();
+      const inner: Record<string, string> = {};
+      for (const [plat, info] of Object.entries(p.social_accounts ?? {})) {
+        if (info?.handle) inner[plat] = info.handle;
+      }
+      map[key] = inner;
+    }
+    return map;
+  }, [socialAccountsQuery.data]);
+
   const profileQueries = useQueries({
     queries: profiles.map((p) => ({
       queryKey: ["profile-summary", p.profile_username],
@@ -55,7 +85,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
           { method: "GET" }
         );
         if (error) throw error;
-        return { username: p.profile_username, data };
+        return { username: p.profile_username, data, fbPageId: pageId };
       },
       staleTime: 5 * 60 * 1000,
       retry: false,
@@ -100,9 +130,16 @@ export function TotalsTab({ profiles, period: _period }: Props) {
 
         const tsPoints = getViewsTimeseries(platform, p);
         const firstNonZero = tsPoints.find((pt) => pt.value > 0);
-        // Try common fields the Upload-Post API may expose for the social handle/URL
-        const handle = p.username || p.handle || p.account_username || p.channel_name || null;
-        const profileUrl = (typeof p.profile_url === "string" && p.profile_url) || buildPlatformUrl(platform, handle);
+        // Pull the real social handle from the social-accounts mapping. For Facebook,
+        // prefer the configured facebook_page_id (numeric IDs always resolve at /<id>),
+        // since Upload-Post returns the user's display name there.
+        const userHandles = handlesByUser[profileMeta.profile_username.toLowerCase()] || {};
+        let profileUrl: string | null = null;
+        if (platform === "facebook" && q.data.fbPageId) {
+          profileUrl = buildPlatformUrl("facebook", q.data.fbPageId);
+        } else {
+          profileUrl = buildPlatformUrl(platform, userHandles[platform] || null);
+        }
         perProfile.push({
           username: profileMeta.profile_username,
           display,
@@ -153,7 +190,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     }
 
     return { totalViews, totalFollowers, totalLikes, totalComments, platformChart, dayChart, perProfile, profileTotals };
-  }, [profileQueries, profiles]);
+  }, [profileQueries, profiles, handlesByUser]);
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
