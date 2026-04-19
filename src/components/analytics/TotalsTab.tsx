@@ -43,6 +43,36 @@ function getViewsTimeseries(platform: string, p: any): Array<{ date: string; val
 }
 
 export function TotalsTab({ profiles, period: _period }: Props) {
+  // One-shot fetch of social handles for all Upload-Post profiles. Used to build clickable
+  // links per platform in the Per-Profile Breakdown table.
+  const socialAccountsQuery = useQuery({
+    queryKey: ["upload-post-social-accounts"],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke(
+        `upload-post-analytics?action=social-accounts`,
+        { method: "GET" }
+      );
+      if (error) throw error;
+      return data as { profiles?: Array<{ username: string; social_accounts?: Record<string, { handle?: string; display_name?: string }> }> };
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+  });
+
+  // username (lowercased) -> { platform -> handle }
+  const handlesByUser = useMemo(() => {
+    const map: Record<string, Record<string, string>> = {};
+    for (const p of socialAccountsQuery.data?.profiles ?? []) {
+      const key = p.username.toLowerCase();
+      const inner: Record<string, string> = {};
+      for (const [plat, info] of Object.entries(p.social_accounts ?? {})) {
+        if (info?.handle) inner[plat] = info.handle;
+      }
+      map[key] = inner;
+    }
+    return map;
+  }, [socialAccountsQuery.data]);
+
   const profileQueries = useQueries({
     queries: profiles.map((p) => ({
       queryKey: ["profile-summary", p.profile_username],
@@ -55,7 +85,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
           { method: "GET" }
         );
         if (error) throw error;
-        return { username: p.profile_username, data };
+        return { username: p.profile_username, data, fbPageId: pageId };
       },
       staleTime: 5 * 60 * 1000,
       retry: false,
