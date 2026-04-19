@@ -1,4 +1,4 @@
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getFacebookPageIdForUsername } from "@/lib/facebookPageId";
 import { KpiCard } from "./KpiCard";
