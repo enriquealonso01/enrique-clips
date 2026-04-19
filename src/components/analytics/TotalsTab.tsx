@@ -303,10 +303,24 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                         <TableRow className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
                           <TableCell className="font-medium">{isFirstOfProfile ? r.display : ""}</TableCell>
                           <TableCell>
-                            <span className="inline-flex items-center gap-2 capitalize text-xs">
-                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
-                              {r.platform}
-                            </span>
+                            {r.profileUrl ? (
+                              <a
+                                href={r.profileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 capitalize text-xs text-primary hover:underline"
+                                title={`Open ${r.platform} profile`}
+                              >
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                                {r.platform}
+                                <ExternalLink className="h-3 w-3 opacity-60" />
+                              </a>
+                            ) : (
+                              <span className="inline-flex items-center gap-2 capitalize text-xs">
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                                {r.platform}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
