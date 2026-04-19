@@ -13,6 +13,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area,
 } from "recharts";
 import { Fragment, useMemo } from "react";
+import { ExternalLink } from "lucide-react";
+import { buildPlatformUrl } from "@/lib/platformUrls";
 
 interface ProfileRow { id: string; profile_username: string; display_name: string | null; }
 interface Props { profiles: ProfileRow[]; period: string; }
@@ -66,7 +68,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
     let totalViews = 0, totalFollowers = 0, totalLikes = 0, totalComments = 0;
     const perPlatform: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
     const perDayByPlatform: Record<string, Record<string, number>> = {};
-    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null; firstDataDate: string | null }> = [];
+    const perProfile: Array<{ username: string; display: string; platform: string; views: number; followers: number; likes: number | null; comments: number | null; firstDataDate: string | null; profileUrl: string | null }> = [];
     const profileTotals: Record<string, { views: number; followers: number; likes: number; comments: number }> = {};
 
     profileQueries.forEach((q, idx) => {
@@ -98,12 +100,16 @@ export function TotalsTab({ profiles, period: _period }: Props) {
 
         const tsPoints = getViewsTimeseries(platform, p);
         const firstNonZero = tsPoints.find((pt) => pt.value > 0);
+        // Try common fields the Upload-Post API may expose for the social handle/URL
+        const handle = p.username || p.handle || p.account_username || p.channel_name || null;
+        const profileUrl = (typeof p.profile_url === "string" && p.profile_url) || buildPlatformUrl(platform, handle);
         perProfile.push({
           username: profileMeta.profile_username,
           display,
           platform,
           views: v, followers: f, likes: l, comments: c,
           firstDataDate: firstNonZero ? firstNonZero.date : null,
+          profileUrl,
         });
 
         for (const point of tsPoints) {
@@ -297,10 +303,24 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                         <TableRow className={isFirstOfProfile ? "border-t-2 border-border/60" : ""}>
                           <TableCell className="font-medium">{isFirstOfProfile ? r.display : ""}</TableCell>
                           <TableCell>
-                            <span className="inline-flex items-center gap-2 capitalize text-xs">
-                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
-                              {r.platform}
-                            </span>
+                            {r.profileUrl ? (
+                              <a
+                                href={r.profileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-2 capitalize text-xs text-primary hover:underline"
+                                title={`Open ${r.platform} profile`}
+                              >
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                                {r.platform}
+                                <ExternalLink className="h-3 w-3 opacity-60" />
+                              </a>
+                            ) : (
+                              <span className="inline-flex items-center gap-2 capitalize text-xs">
+                                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: PLATFORM_COLORS[r.platform] }} />
+                                {r.platform}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="text-right font-mono">{r.views.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
