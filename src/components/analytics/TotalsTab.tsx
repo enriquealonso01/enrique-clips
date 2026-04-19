@@ -13,6 +13,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend, AreaChart, Area,
 } from "recharts";
 import { Fragment, useMemo } from "react";
+import { ExternalLink } from "lucide-react";
+import { buildPlatformUrl } from "@/lib/platformUrls";
 
 interface ProfileRow { id: string; profile_username: string; display_name: string | null; }
 interface Props { profiles: ProfileRow[]; period: string; }
