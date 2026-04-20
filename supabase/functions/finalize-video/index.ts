@@ -1967,9 +1967,13 @@ Deno.serve(async (req) => {
                 const darkAlpha = Math.max(0, Math.min(1, 1 - startLevel)).toFixed(4);
                 // Build a black source matching the final resolution & duration, fade its alpha from 1→0
                 // linearly over D seconds, then scale that alpha down to (1 - startLevel).
-                // Resolution: use the project resolution (resScale-aware width/height come from baseW/baseH).
-                const rampW = Math.round((typeof baseW === "number" ? baseW : 1080));
-                const rampH = Math.round((typeof baseH === "number" ? baseH : 1920));
+                // Compute output resolution from project aspect ratio + resScale (540p baseline height).
+                const rampH = Math.round(540 * resScale);
+                const aspectStr = String((project as any).aspect_ratio || "9:16");
+                const [arW, arH] = aspectStr.split(":").map((n: string) => parseFloat(n));
+                const rampW = (arW > 0 && arH > 0)
+                  ? Math.round((rampH * arW) / arH / 2) * 2
+                  : Math.round(rampH * 9 / 16 / 2) * 2;
                 filterParts.push(
                   `color=c=black:s=${rampW}x${rampH}:d=${d}:r=30,format=yuva420p,fade=t=out:st=0:d=${d}:alpha=1,colorchannelmixer=aa=${darkAlpha}[brmpsrc]`
                 );
