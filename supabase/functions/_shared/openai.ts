@@ -568,7 +568,7 @@ function sizeToAspectRatio(size?: string): string {
 function qualityToResolution(quality?: string): string {
   if (quality === "high") return "2K";
   if (quality === "low") return "1K";
-  return "1K";
+  return "2K";
 }
 
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
