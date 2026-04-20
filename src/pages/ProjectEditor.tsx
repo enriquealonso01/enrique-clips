@@ -732,6 +732,10 @@ export default function ProjectEditor() {
              const setCfg = (next: any) => update("teaser_intro_config" as any, next);
              const setEnabled = (v: boolean) => setCfg({ ...cfg, enabled: v, segments });
              const setDissolve = (v: number) => setCfg({ ...cfg, dissolve_sec: v, segments });
+              // Brightness ramp (lives inside teaser_intro_config so no schema change needed)
+              const brightness = cfg.brightness_ramp || { enabled: false, start_level: 0.4, duration_sec: 2.0 };
+              const setBrightness = (patch: any) =>
+                setCfg({ ...cfg, brightness_ramp: { ...brightness, ...patch } });
              const setSegment = (idx: number, patch: any) => {
                const next = segments.map((s, i) => (i === idx ? { ...s, ...patch } : s));
                setCfg({ ...cfg, enabled, segments: next });
@@ -854,6 +858,56 @@ export default function ProjectEditor() {
                      Order in the list = playback order. Segments play back-to-back with hard cuts; only the final segment
                      dissolves into the main video using the dissolve length above.
                    </p>
+
+                    {/* Brightness ramp */}
+                    <div className="border-t pt-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>Intro brightness ramp</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Start the final video dim and rise to normal brightness over the first X seconds (ease-out curve, applied to teasers + main).
+                          </p>
+                        </div>
+                        <Switch
+                          checked={!!brightness.enabled}
+                          onCheckedChange={(v) => setBrightness({ enabled: v })}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Start brightness (0.0 – 1.0)</Label>
+                          <Input
+                            type="number"
+                            step="0.05"
+                            min={0}
+                            max={1}
+                            value={brightness.start_level ?? 0.4}
+                            onChange={(e) =>
+                              setBrightness({
+                                start_level: Math.max(0, Math.min(1, parseFloat(e.target.value) || 0)),
+                              })
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">0 = black, 1 = full brightness. Typical: 0.3–0.5.</p>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Ramp duration (s)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min={0.1}
+                            max={20}
+                            value={brightness.duration_sec ?? 2.0}
+                            onChange={(e) =>
+                              setBrightness({
+                                duration_sec: Math.max(0.1, Math.min(20, parseFloat(e.target.value) || 2.0)),
+                              })
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">How long it takes to reach full brightness.</p>
+                        </div>
+                      </div>
+                    </div>
                  </CardContent>
                </Card>
              );
