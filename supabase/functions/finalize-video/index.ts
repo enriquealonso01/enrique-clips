@@ -1907,25 +1907,43 @@ Deno.serve(async (req) => {
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
               if (teaserEnabled) {
-                const lastIdx = clipInputIdxes[clipInputIdxes.length - 1];
-                const teaserStart = (baseClipDurationSec - TEASER_LEN_SEC).toFixed(2);
-                const teaserEnd = baseClipDurationSec.toFixed(2);
-                // Video teaser
-                filterParts.push(`[${lastIdx}:v]trim=start=${teaserStart}:end=${teaserEnd},setpts=PTS-STARTPTS[teaserv]`);
-                // xfade offset = teaser_duration - xfade_duration
-                const xfadeOffset = (TEASER_LEN_SEC - TEASER_XFADE_SEC).toFixed(2);
-                filterParts.push(`[teaserv][mainv]xfade=transition=dissolve:duration=${TEASER_XFADE_SEC}:offset=${xfadeOffset}[teasedv]`);
+                // Build per-segment trimmed video + audio streams
+                const vTeaseLabels: string[] = [];
+                const aTeaseLabels: string[] = [];
+                for (let si = 0; si < resolvedTeaserSegs.length; si++) {
+                  const seg = resolvedTeaserSegs[si];
+                  const inIdx = clipInputIdxes[seg.clipIdx];
+                  const vLabel = `tv${si}`;
+                  const aLabel = `ta${si}`;
+                  filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS[${vLabel}]`);
+                  filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
+                  vTeaseLabels.push(vLabel);
+                  aTeaseLabels.push(aLabel);
+                }
+                // Hard cut concat across all teaser segments → single [teaserv]/[teasera] stream
+                let teaserVideoLabel: string;
+                let teaserAudioLabel: string;
+                if (vTeaseLabels.length === 1) {
+                  teaserVideoLabel = vTeaseLabels[0];
+                  teaserAudioLabel = aTeaseLabels[0];
+                } else {
+                  const concatPairs = vTeaseLabels.map((v, i) => `[${v}][${aTeaseLabels[i]}]`).join("");
+                  filterParts.push(`${concatPairs}concat=n=${vTeaseLabels.length}:v=1:a=1[teaserv][teasera]`);
+                  teaserVideoLabel = "teaserv";
+                  teaserAudioLabel = "teasera";
+                }
+                // Dissolve teaser → main video
+                const xfadeOffset = (totalTeaserDurationSec - teaserDissolveSec).toFixed(3);
+                filterParts.push(`[${teaserVideoLabel}][mainv]xfade=transition=dissolve:duration=${teaserDissolveSec}:offset=${xfadeOffset}[teasedv]`);
                 concatVideoLabel = "teasedv";
-                // Audio teaser: always pull from the original last clip's audio (per spec)
-                filterParts.push(`[${lastIdx}:a]atrim=start=${teaserStart}:end=${teaserEnd},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[teasera]`);
+                // Audio: crossfade teaser → main when we have concat audio; otherwise keep teaser stream for later mix with music
                 if (!hasSelectedTrack) {
                   filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
-                  filterParts.push(`[teasera][mainafmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaseda]`);
+                  filterParts.push(`[${teaserAudioLabel}][mainafmt]acrossfade=d=${teaserDissolveSec}:c1=tri:c2=tri[teaseda]`);
                   concatAudioLabel = "teaseda";
                 } else {
-                  // Music track will replace concat audio later; keep teaser audio available
-                  // for downstream mixing (handled in audio map section below).
-                  concatAudioLabel = "teasera";
+                  // Music track will replace concat audio later; teaser audio is available for downstream mixing.
+                  concatAudioLabel = teaserAudioLabel;
                 }
               }
               // Maintain backward-compat label name used in the rest of the pipeline
