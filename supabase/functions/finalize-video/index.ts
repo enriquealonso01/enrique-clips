@@ -1673,15 +1673,51 @@ Deno.serve(async (req) => {
           const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
           const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
           const baseClipDurationSec = project.clip_duration_sec || 5;
-          const teaserEnabled = !!(project as any).teaser_intro_enabled && completedClips.length >= 1 && baseClipDurationSec > 3;
-          const TEASER_LEN_SEC = 3;
-          const TEASER_XFADE_SEC = 0.3;
-          // When teaser is on, total = (N * clip) + 3s teaser − 0.3s crossfade overlap
+          // ── Teaser intro config (1-3 segments, hard cuts between, dissolve into main) ──
+          // Schema: { enabled, dissolve_sec, segments: [{ scene_offset, source: 'first'|'middle'|'last', duration_sec }] }
+          // scene_offset: negative = relative to last (-1=last, -2=second-to-last); positive int = 1-based absolute scene index
+          const rawTeaserCfg: any = (project as any).teaser_intro_config || {};
+          const legacyTeaserOn = !!(project as any).teaser_intro_enabled;
+          const teaserCfgEnabled = rawTeaserCfg && typeof rawTeaserCfg === 'object'
+            ? !!rawTeaserCfg.enabled
+            : false;
+          const teaserDissolveSec = Math.max(0.05, Math.min(2.0, Number(rawTeaserCfg?.dissolve_sec) || 0.3));
+          const rawSegments: any[] = Array.isArray(rawTeaserCfg?.segments) && rawTeaserCfg.segments.length > 0
+            ? rawTeaserCfg.segments
+            : (legacyTeaserOn ? [{ scene_offset: -1, source: 'last', duration_sec: 3.0 }] : []);
+          // Resolve each segment to a concrete clip index + start/end inside that clip
+          type TeaserSeg = { clipIdx: number; startSec: number; endSec: number; durationSec: number };
+          const resolvedTeaserSegs: TeaserSeg[] = [];
+          for (const seg of rawSegments.slice(0, 3)) {
+            const offset = Number(seg?.scene_offset);
+            const duration = Math.max(0.2, Math.min(baseClipDurationSec, Number(seg?.duration_sec) || 3.0));
+            const source = (seg?.source === 'first' || seg?.source === 'middle' || seg?.source === 'last') ? seg.source : 'last';
+            let clipIdx: number;
+            if (offset < 0) clipIdx = completedClips.length + offset; // -1 → last
+            else clipIdx = Math.max(1, Math.floor(offset)) - 1; // 1-based absolute
+            if (clipIdx < 0 || clipIdx >= completedClips.length) continue;
+            let startSec: number;
+            if (source === 'first') startSec = 0;
+            else if (source === 'middle') startSec = Math.max(0, (baseClipDurationSec - duration) / 2);
+            else startSec = Math.max(0, baseClipDurationSec - duration); // 'last'
+            const endSec = Math.min(baseClipDurationSec, startSec + duration);
+            resolvedTeaserSegs.push({ clipIdx, startSec, endSec, durationSec: endSec - startSec });
+          }
+          const teaserEnabled = (teaserCfgEnabled || (legacyTeaserOn && !teaserCfgEnabled && resolvedTeaserSegs.length > 0))
+            && resolvedTeaserSegs.length > 0
+            && completedClips.length >= 1;
+          // Total teaser duration with hard cuts between segments + one dissolve into main
+          const totalTeaserDurationSec = teaserEnabled
+            ? resolvedTeaserSegs.reduce((s, x) => s + x.durationSec, 0)
+            : 0;
           const videoDurationSec = teaserEnabled
-            ? completedClips.length * baseClipDurationSec + TEASER_LEN_SEC - TEASER_XFADE_SEC
+            ? completedClips.length * baseClipDurationSec + totalTeaserDurationSec - teaserDissolveSec
             : completedClips.length * baseClipDurationSec;
           if (teaserEnabled) {
-            await log("info", `Teaser intro enabled: prepending last ${TEASER_LEN_SEC}s of clip ${completedClips.length - 1} with ${TEASER_XFADE_SEC}s dissolve. New duration: ${videoDurationSec}s`);
+            const segDesc = resolvedTeaserSegs
+              .map((s, i) => `seg${i}: clip${s.clipIdx} [${s.startSec.toFixed(2)}–${s.endSec.toFixed(2)}s] (${s.durationSec.toFixed(2)}s)`)
+              .join(', ');
+            await log("info", `Teaser intro enabled (${resolvedTeaserSegs.length} segment(s), ${teaserDissolveSec}s dissolve into main): ${segDesc}. New total duration: ${videoDurationSec.toFixed(2)}s`);
           }
 
           // ── ALL-IN-ONE RENDI PIPELINE: concat + overlays + audio ──
@@ -1871,25 +1907,43 @@ Deno.serve(async (req) => {
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
               if (teaserEnabled) {
-                const lastIdx = clipInputIdxes[clipInputIdxes.length - 1];
-                const teaserStart = (baseClipDurationSec - TEASER_LEN_SEC).toFixed(2);
-                const teaserEnd = baseClipDurationSec.toFixed(2);
-                // Video teaser
-                filterParts.push(`[${lastIdx}:v]trim=start=${teaserStart}:end=${teaserEnd},setpts=PTS-STARTPTS[teaserv]`);
-                // xfade offset = teaser_duration - xfade_duration
-                const xfadeOffset = (TEASER_LEN_SEC - TEASER_XFADE_SEC).toFixed(2);
-                filterParts.push(`[teaserv][mainv]xfade=transition=dissolve:duration=${TEASER_XFADE_SEC}:offset=${xfadeOffset}[teasedv]`);
+                // Build per-segment trimmed video + audio streams
+                const vTeaseLabels: string[] = [];
+                const aTeaseLabels: string[] = [];
+                for (let si = 0; si < resolvedTeaserSegs.length; si++) {
+                  const seg = resolvedTeaserSegs[si];
+                  const inIdx = clipInputIdxes[seg.clipIdx];
+                  const vLabel = `tv${si}`;
+                  const aLabel = `ta${si}`;
+                  filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS[${vLabel}]`);
+                  filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
+                  vTeaseLabels.push(vLabel);
+                  aTeaseLabels.push(aLabel);
+                }
+                // Hard cut concat across all teaser segments → single [teaserv]/[teasera] stream
+                let teaserVideoLabel: string;
+                let teaserAudioLabel: string;
+                if (vTeaseLabels.length === 1) {
+                  teaserVideoLabel = vTeaseLabels[0];
+                  teaserAudioLabel = aTeaseLabels[0];
+                } else {
+                  const concatPairs = vTeaseLabels.map((v, i) => `[${v}][${aTeaseLabels[i]}]`).join("");
+                  filterParts.push(`${concatPairs}concat=n=${vTeaseLabels.length}:v=1:a=1[teaserv][teasera]`);
+                  teaserVideoLabel = "teaserv";
+                  teaserAudioLabel = "teasera";
+                }
+                // Dissolve teaser → main video
+                const xfadeOffset = (totalTeaserDurationSec - teaserDissolveSec).toFixed(3);
+                filterParts.push(`[${teaserVideoLabel}][mainv]xfade=transition=dissolve:duration=${teaserDissolveSec}:offset=${xfadeOffset}[teasedv]`);
                 concatVideoLabel = "teasedv";
-                // Audio teaser: always pull from the original last clip's audio (per spec)
-                filterParts.push(`[${lastIdx}:a]atrim=start=${teaserStart}:end=${teaserEnd},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[teasera]`);
+                // Audio: crossfade teaser → main when we have concat audio; otherwise keep teaser stream for later mix with music
                 if (!hasSelectedTrack) {
                   filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
-                  filterParts.push(`[teasera][mainafmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaseda]`);
+                  filterParts.push(`[${teaserAudioLabel}][mainafmt]acrossfade=d=${teaserDissolveSec}:c1=tri:c2=tri[teaseda]`);
                   concatAudioLabel = "teaseda";
                 } else {
-                  // Music track will replace concat audio later; keep teaser audio available
-                  // for downstream mixing (handled in audio map section below).
-                  concatAudioLabel = "teasera";
+                  // Music track will replace concat audio later; teaser audio is available for downstream mixing.
+                  concatAudioLabel = teaserAudioLabel;
                 }
               }
               // Maintain backward-compat label name used in the rest of the pipeline

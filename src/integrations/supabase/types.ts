@@ -268,6 +268,7 @@ export type Database = {
           selected_track_id: string | null
           series_prompt: string | null
           series_rules: string | null
+          teaser_intro_config: Json
           teaser_intro_enabled: boolean
           timezone: string
           title: string
@@ -304,6 +305,7 @@ export type Database = {
           selected_track_id?: string | null
           series_prompt?: string | null
           series_rules?: string | null
+          teaser_intro_config?: Json
           teaser_intro_enabled?: boolean
           timezone?: string
           title?: string
@@ -340,6 +342,7 @@ export type Database = {
           selected_track_id?: string | null
           series_prompt?: string | null
           series_rules?: string | null
+          teaser_intro_config?: Json
           teaser_intro_enabled?: boolean
           timezone?: string
           title?: string

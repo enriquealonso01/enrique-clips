@@ -721,24 +721,143 @@ export default function ProjectEditor() {
           <TrackSelector projectId={projectId!} />
 
            {/* Teaser Intro */}
-           <Card>
-             <CardHeader>
-               <CardTitle>Teaser Intro</CardTitle>
-               <CardDescription>Prepend the last 3 seconds of the final clip with a quick dissolve into the video</CardDescription>
-             </CardHeader>
-             <CardContent className="space-y-3">
-               <div className="flex items-center justify-between">
-                 <div>
-                   <Label>Enable Teaser Intro</Label>
-                   <p className="text-xs text-muted-foreground">Adds a 3s preview from the last clip at the start with a 0.3s dissolve. Original clip audio plays during the teaser.</p>
-                 </div>
-                 <Switch
-                   checked={(form as any).teaser_intro_enabled || false}
-                   onCheckedChange={(v) => update("teaser_intro_enabled" as any, v)}
-                 />
-               </div>
-             </CardContent>
-           </Card>
+           {(() => {
+             const sceneCount = form.scene_count || 1;
+             const clipDur = form.clip_duration_sec || 5;
+             const defaultCfg = { enabled: false, dissolve_sec: 0.3, segments: [{ scene_offset: -1, source: "last", duration_sec: 3.0 }] };
+             const cfg: any = (form as any).teaser_intro_config || defaultCfg;
+             const enabled = !!cfg.enabled;
+             const dissolveSec = typeof cfg.dissolve_sec === "number" ? cfg.dissolve_sec : 0.3;
+             const segments: any[] = Array.isArray(cfg.segments) && cfg.segments.length > 0 ? cfg.segments : defaultCfg.segments;
+             const setCfg = (next: any) => update("teaser_intro_config" as any, next);
+             const setEnabled = (v: boolean) => setCfg({ ...cfg, enabled: v, segments });
+             const setDissolve = (v: number) => setCfg({ ...cfg, dissolve_sec: v, segments });
+             const setSegment = (idx: number, patch: any) => {
+               const next = segments.map((s, i) => (i === idx ? { ...s, ...patch } : s));
+               setCfg({ ...cfg, enabled, segments: next });
+             };
+             const addSegment = () => {
+               if (segments.length >= 3) return;
+               setCfg({ ...cfg, enabled, segments: [...segments, { scene_offset: -1, source: "last", duration_sec: 2.0 }] });
+             };
+             const removeSegment = (idx: number) => {
+               if (segments.length <= 1) return;
+               setCfg({ ...cfg, enabled, segments: segments.filter((_, i) => i !== idx) });
+             };
+             // Scene options: relative (last, 2nd-to-last...) and absolute (Scene 1..N)
+             const sceneOptions: { value: string; label: string }[] = [];
+             for (let off = -1; off >= -Math.min(sceneCount, 5); off--) {
+               const label = off === -1 ? "Last clip (n)" : off === -2 ? "Second-to-last (n−1)" : `${-off}th-to-last (n${off + 1})`;
+               sceneOptions.push({ value: String(off), label });
+             }
+             for (let i = 1; i <= sceneCount; i++) sceneOptions.push({ value: String(i), label: `Scene ${i} (absolute)` });
+             return (
+               <Card>
+                 <CardHeader>
+                   <CardTitle>Teaser Intro</CardTitle>
+                   <CardDescription>
+                     Prepend up to 3 short teaser segments (from any clip) to the start of the video. Hard cuts between
+                     teasers, then a dissolve into the main video. Each teaser carries its source clip's original audio.
+                   </CardDescription>
+                 </CardHeader>
+                 <CardContent className="space-y-4">
+                   <div className="flex items-center justify-between">
+                     <div>
+                       <Label>Enable Teaser Intro</Label>
+                       <p className="text-xs text-muted-foreground">Toggle the teaser segments on/off without losing your config below.</p>
+                     </div>
+                     <Switch checked={enabled} onCheckedChange={setEnabled} />
+                   </div>
+
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                     <div className="space-y-2">
+                       <Label>Dissolve into main (s)</Label>
+                       <Input
+                         type="number"
+                         step="0.05"
+                         min={0.05}
+                         max={2}
+                         value={dissolveSec}
+                         onChange={(e) => setDissolve(Math.max(0.05, Math.min(2, parseFloat(e.target.value) || 0.3)))}
+                       />
+                       <p className="text-xs text-muted-foreground">Crossfade length from last teaser into the start of the main video.</p>
+                     </div>
+                     <div className="space-y-2">
+                       <Label>Total teaser duration</Label>
+                       <div className="text-sm pt-2">
+                         {segments.reduce((s: number, x: any) => s + (Number(x.duration_sec) || 0), 0).toFixed(2)}s
+                         <span className="text-muted-foreground"> ({segments.length} segment{segments.length === 1 ? "" : "s"})</span>
+                       </div>
+                     </div>
+                   </div>
+
+                   <div className="space-y-3">
+                     {segments.map((seg, idx) => (
+                       <div key={idx} className="border rounded-md p-3 space-y-3 bg-muted/30">
+                         <div className="flex items-center justify-between">
+                           <Label className="text-sm">Teaser segment {idx + 1}</Label>
+                           {segments.length > 1 && (
+                             <Button variant="ghost" size="sm" onClick={() => removeSegment(idx)}>Remove</Button>
+                           )}
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                           <div className="space-y-1">
+                             <Label className="text-xs">Source scene</Label>
+                             <Select
+                               value={String(seg.scene_offset ?? -1)}
+                               onValueChange={(v) => setSegment(idx, { scene_offset: parseInt(v) })}
+                             >
+                               <SelectTrigger><SelectValue /></SelectTrigger>
+                               <SelectContent>
+                                 {sceneOptions.map((o) => (
+                                   <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                                 ))}
+                               </SelectContent>
+                             </Select>
+                           </div>
+                           <div className="space-y-1">
+                             <Label className="text-xs">Which part of the clip</Label>
+                             <Select
+                               value={seg.source || "last"}
+                               onValueChange={(v) => setSegment(idx, { source: v })}
+                             >
+                               <SelectTrigger><SelectValue /></SelectTrigger>
+                               <SelectContent>
+                                 <SelectItem value="first">First X seconds</SelectItem>
+                                 <SelectItem value="middle">Middle X seconds</SelectItem>
+                                 <SelectItem value="last">Last X seconds</SelectItem>
+                               </SelectContent>
+                             </Select>
+                           </div>
+                           <div className="space-y-1">
+                             <Label className="text-xs">Duration (s)</Label>
+                             <Input
+                               type="number"
+                               step="0.1"
+                               min={0.2}
+                               max={clipDur}
+                               value={seg.duration_sec ?? 2.0}
+                               onChange={(e) =>
+                                 setSegment(idx, { duration_sec: Math.max(0.2, Math.min(clipDur, parseFloat(e.target.value) || 2.0)) })
+                               }
+                             />
+                           </div>
+                         </div>
+                       </div>
+                     ))}
+                     {segments.length < 3 && (
+                       <Button variant="outline" size="sm" onClick={addSegment}>+ Add teaser segment ({segments.length}/3)</Button>
+                     )}
+                   </div>
+
+                   <p className="text-xs text-muted-foreground">
+                     Order in the list = playback order. Segments play back-to-back with hard cuts; only the final segment
+                     dissolves into the main video using the dissolve length above.
+                   </p>
+                 </CardContent>
+               </Card>
+             );
+           })()}
 
            {/* Vidu Settings (fal.ai) */}
            {((form as any).video_generator || "kling") === "vidu" && (
