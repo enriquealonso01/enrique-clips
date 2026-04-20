@@ -87,6 +87,12 @@ function getGeminiImageApiKey(): string {
   return getGeminiApiKey();
 }
 
+/** Backup image key — used as automatic fallback when primary returns 429 (daily quota). */
+function getGeminiImageApiKeyBackup(): string | null {
+  const backup = Deno.env.get("GOOGLE_AI_IMAGE_API_KEY_BACKUP");
+  return backup || null;
+}
+
 function getOpenAIApiKey(): string {
   const key = Deno.env.get("OPENAI_API_KEY");
   if (!key) throw new Error("OPENAI_API_KEY is not configured");
