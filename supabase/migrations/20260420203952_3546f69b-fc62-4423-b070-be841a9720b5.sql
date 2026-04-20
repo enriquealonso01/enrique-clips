@@ -1,0 +1,2 @@
+ALTER TABLE public.projects
+  ADD COLUMN IF NOT EXISTS teaser_intro_config jsonb NOT NULL DEFAULT '{"enabled": false, "dissolve_sec": 0.3, "segments": [{"scene_offset": -1, "source": "last", "duration_sec": 3.0}]}'::jsonb;
