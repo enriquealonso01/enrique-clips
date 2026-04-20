@@ -2020,8 +2020,15 @@ Deno.serve(async (req) => {
 
                 // Base audio source
                 if (hasSelectedTrack && selectedTrackUrl) {
-                  const audioInputIdx = getInputIndex("in_audio");
-                  voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  if (teaserEnabled) {
+                    // Build teaser→music crossfade as the base audio
+                    const audioInputIdx = getInputIndex("in_audio");
+                    voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[musicfmt_vo]`);
+                    voFilterParts.push(`[teasera][musicfmt_vo]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[base_audio]`);
+                  } else {
+                    const audioInputIdx = getInputIndex("in_audio");
+                    voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  }
                   voMixInputs.push("[base_audio]");
                 } else {
                   voFilterParts.push(`[${concatAudioLabel}]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
