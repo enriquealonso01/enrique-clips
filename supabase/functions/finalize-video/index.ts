@@ -1965,24 +1965,24 @@ Deno.serve(async (req) => {
                 const s = startLevel.toFixed(4);
                 const d = rampDur.toFixed(3);
                 const darkAlpha = Math.max(0, Math.min(1, 1 - startLevel)).toFixed(4);
-                // Build a black source matching the final resolution & duration, fade its alpha from 1→0
-                // linearly over D seconds, then scale that alpha down to (1 - startLevel).
-                // Compute output resolution from project aspect ratio + resScale (540p baseline height).
-                const rampH = Math.round(540 * resScale);
-                const aspectStr = String((project as any).aspect_ratio || "9:16");
-                const [arW, arH] = aspectStr.split(":").map((n: string) => parseFloat(n));
-                const rampW = (arW > 0 && arH > 0)
-                  ? Math.round((rampH * arW) / arH / 2) * 2
-                  : Math.round(rampH * 9 / 16 / 2) * 2;
+                // Build a black source, scale it to match the actual video dimensions via scale2ref
+                // (so we don't depend on knowing the post-concat resolution), fade alpha from 1→0
+                // linearly over D seconds, then scale that to the desired darkness amount.
+                // Use a generous source (1920x1920) — scale2ref will resize to match the video ref.
+                // The overlay enable expression keeps the dim layer present only during the ramp,
+                // and the alpha fade ensures it goes from `darkAlpha` → 0 smoothly.
                 filterParts.push(
-                  `color=c=black:s=${rampW}x${rampH}:d=${d}:r=30,format=yuva420p,fade=t=out:st=0:d=${d}:alpha=1,colorchannelmixer=aa=${darkAlpha}[brmpsrc]`
+                  `color=c=black:s=1920x1920:d=${d}:r=30,format=yuva420p,fade=t=out:st=0:d=${d}:alpha=1,colorchannelmixer=aa=${darkAlpha}[brmpraw]`
+                );
+                filterParts.push(
+                  `[brmpraw][${concatVideoLabel}]scale2ref=w=iw:h=ih[brmpsrc][brmpref]`
                 );
                 const rampOut = "vbright";
                 filterParts.push(
-                  `[${concatVideoLabel}][brmpsrc]overlay=shortest=0:eof_action=pass:x=0:y=0[${rampOut}]`
+                  `[brmpref][brmpsrc]overlay=enable='lt(t,${d})':shortest=0:eof_action=pass:x=0:y=0[${rampOut}]`
                 );
                 concatVideoLabel = rampOut;
-                await log("info", `Brightness ramp enabled (lightweight): start=${s}, duration=${d}s, linear fade-from-black overlay applied across full final video.`);
+                await log("info", `Brightness ramp enabled (lightweight): start=${s}, duration=${d}s, scale2ref-matched black overlay applied across full final video.`);
               }
               // Maintain backward-compat label name used in the rest of the pipeline
               let currentVideoLabel = concatVideoLabel;
