@@ -1,0 +1,1 @@
+update runs set status = 'queued', current_step = 'stitch', error_message = null, finished_at = null where id = '478f83d2-79e3-478c-8ce4-0ef435fb250c';

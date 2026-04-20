@@ -1959,10 +1959,13 @@ Deno.serve(async (req) => {
                 // FFmpeg lut expr: input pixel value 'val' (0..255), time available as 'T' (seconds).
                 const s = startLevel.toFixed(4);
                 const d = rampDur.toFixed(3);
-                // mult(t) = if(T>=D, 1, s + (1-s)*(1 - pow(1 - T/D, 2)))
+                // Ease-out brightness multiplier over time T (seconds):
+                //   mult(T) = if(T>=D, 1, s + (1-s)*(1 - (1 - T/D)^2))
+                // `lutyuv` does NOT expose frame time, so we use `geq` which supports T.
+                // Apply to luma only; copy chroma untouched to preserve color.
                 const multExpr = `if(gte(T\\,${d})\\,1\\,(${s}+(1-${s})*(1-pow(1-T/${d}\\,2))))`;
                 const rampOut = "vbright";
-                filterParts.push(`[${concatVideoLabel}]lutyuv=y='clip(val*(${multExpr})\\,0\\,255)'[${rampOut}]`);
+                filterParts.push(`[${concatVideoLabel}]geq=lum='clip(lum(X\\,Y)*(${multExpr})\\,0\\,255)':cb='cb(X\\,Y)':cr='cr(X\\,Y)'[${rampOut}]`);
                 concatVideoLabel = rampOut;
                 await log("info", `Brightness ramp enabled: start=${s}, duration=${d}s, ease-out curve, applied across full final video.`);
               }
