@@ -87,6 +87,12 @@ function getGeminiImageApiKey(): string {
   return getGeminiApiKey();
 }
 
+/** Backup image key — used as automatic fallback when primary returns 429 (daily quota). */
+function getGeminiImageApiKeyBackup(): string | null {
+  const backup = Deno.env.get("GOOGLE_AI_IMAGE_API_KEY_BACKUP");
+  return backup || null;
+}
+
 function getOpenAIApiKey(): string {
   const key = Deno.env.get("OPENAI_API_KEY");
   if (!key) throw new Error("OPENAI_API_KEY is not configured");
@@ -276,8 +282,8 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>, useImageKey = false): Promise<any> {
-  const apiKey = useImageKey ? getGeminiImageApiKey() : getGeminiApiKey();
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>, useImageKey = false, explicitApiKey?: string): Promise<any> {
+  const apiKey = explicitApiKey || (useImageKey ? getGeminiImageApiKey() : getGeminiApiKey());
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
   const controller = new AbortController();
@@ -617,10 +623,32 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   };
 
   const attemptStart = Date.now();
-  try {
-    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
+  const tryRequest = async (apiKey?: string) => {
+    return await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
       "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
-    }, true);
+    }, true, apiKey);
+  };
+
+  try {
+    let result: any;
+    try {
+      result = await tryRequest();
+    } catch (primaryErr) {
+      // On 429 (quota exhausted) from primary image key, try backup key once
+      const is429 = primaryErr instanceof GeminiApiError && primaryErr.status === 429;
+      const backupKey = is429 ? getGeminiImageApiKeyBackup() : null;
+      if (is429 && backupKey) {
+        console.warn(`[AI] Image key 429 (quota). Falling back to GOOGLE_AI_IMAGE_API_KEY_BACKUP...`);
+        logUsage({
+          endpoint: `${endpoint}_429_fallback`, model, success: false,
+          latency_ms: Date.now() - attemptStart, error: "primary_key_429_switching_to_backup",
+        });
+        result = await tryRequest(backupKey);
+      } else {
+        throw primaryErr;
+      }
+    }
+
     const latency = Date.now() - start;
 
     const candidate = result.candidates?.[0];
