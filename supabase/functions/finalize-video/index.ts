@@ -1673,15 +1673,51 @@ Deno.serve(async (req) => {
           const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
           const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
           const baseClipDurationSec = project.clip_duration_sec || 5;
-          const teaserEnabled = !!(project as any).teaser_intro_enabled && completedClips.length >= 1 && baseClipDurationSec > 3;
-          const TEASER_LEN_SEC = 3;
-          const TEASER_XFADE_SEC = 0.3;
-          // When teaser is on, total = (N * clip) + 3s teaser − 0.3s crossfade overlap
+          // ── Teaser intro config (1-3 segments, hard cuts between, dissolve into main) ──
+          // Schema: { enabled, dissolve_sec, segments: [{ scene_offset, source: 'first'|'middle'|'last', duration_sec }] }
+          // scene_offset: negative = relative to last (-1=last, -2=second-to-last); positive int = 1-based absolute scene index
+          const rawTeaserCfg: any = (project as any).teaser_intro_config || {};
+          const legacyTeaserOn = !!(project as any).teaser_intro_enabled;
+          const teaserCfgEnabled = rawTeaserCfg && typeof rawTeaserCfg === 'object'
+            ? !!rawTeaserCfg.enabled
+            : false;
+          const teaserDissolveSec = Math.max(0.05, Math.min(2.0, Number(rawTeaserCfg?.dissolve_sec) || 0.3));
+          const rawSegments: any[] = Array.isArray(rawTeaserCfg?.segments) && rawTeaserCfg.segments.length > 0
+            ? rawTeaserCfg.segments
+            : (legacyTeaserOn ? [{ scene_offset: -1, source: 'last', duration_sec: 3.0 }] : []);
+          // Resolve each segment to a concrete clip index + start/end inside that clip
+          type TeaserSeg = { clipIdx: number; startSec: number; endSec: number; durationSec: number };
+          const resolvedTeaserSegs: TeaserSeg[] = [];
+          for (const seg of rawSegments.slice(0, 3)) {
+            const offset = Number(seg?.scene_offset);
+            const duration = Math.max(0.2, Math.min(baseClipDurationSec, Number(seg?.duration_sec) || 3.0));
+            const source = (seg?.source === 'first' || seg?.source === 'middle' || seg?.source === 'last') ? seg.source : 'last';
+            let clipIdx: number;
+            if (offset < 0) clipIdx = completedClips.length + offset; // -1 → last
+            else clipIdx = Math.max(1, Math.floor(offset)) - 1; // 1-based absolute
+            if (clipIdx < 0 || clipIdx >= completedClips.length) continue;
+            let startSec: number;
+            if (source === 'first') startSec = 0;
+            else if (source === 'middle') startSec = Math.max(0, (baseClipDurationSec - duration) / 2);
+            else startSec = Math.max(0, baseClipDurationSec - duration); // 'last'
+            const endSec = Math.min(baseClipDurationSec, startSec + duration);
+            resolvedTeaserSegs.push({ clipIdx, startSec, endSec, durationSec: endSec - startSec });
+          }
+          const teaserEnabled = (teaserCfgEnabled || (legacyTeaserOn && !teaserCfgEnabled && resolvedTeaserSegs.length > 0))
+            && resolvedTeaserSegs.length > 0
+            && completedClips.length >= 1;
+          // Total teaser duration with hard cuts between segments + one dissolve into main
+          const totalTeaserDurationSec = teaserEnabled
+            ? resolvedTeaserSegs.reduce((s, x) => s + x.durationSec, 0)
+            : 0;
           const videoDurationSec = teaserEnabled
-            ? completedClips.length * baseClipDurationSec + TEASER_LEN_SEC - TEASER_XFADE_SEC
+            ? completedClips.length * baseClipDurationSec + totalTeaserDurationSec - teaserDissolveSec
             : completedClips.length * baseClipDurationSec;
           if (teaserEnabled) {
-            await log("info", `Teaser intro enabled: prepending last ${TEASER_LEN_SEC}s of clip ${completedClips.length - 1} with ${TEASER_XFADE_SEC}s dissolve. New duration: ${videoDurationSec}s`);
+            const segDesc = resolvedTeaserSegs
+              .map((s, i) => `seg${i}: clip${s.clipIdx} [${s.startSec.toFixed(2)}–${s.endSec.toFixed(2)}s] (${s.durationSec.toFixed(2)}s)`)
+              .join(', ');
+            await log("info", `Teaser intro enabled (${resolvedTeaserSegs.length} segment(s), ${teaserDissolveSec}s dissolve into main): ${segDesc}. New total duration: ${videoDurationSec.toFixed(2)}s`);
           }
 
           // ── ALL-IN-ONE RENDI PIPELINE: concat + overlays + audio ──
