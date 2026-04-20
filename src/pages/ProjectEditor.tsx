@@ -720,6 +720,26 @@ export default function ProjectEditor() {
           {/* Background Music */}
           <TrackSelector projectId={projectId!} />
 
+           {/* Teaser Intro */}
+           <Card>
+             <CardHeader>
+               <CardTitle>Teaser Intro</CardTitle>
+               <CardDescription>Prepend the last 3 seconds of the final clip with a quick dissolve into the video</CardDescription>
+             </CardHeader>
+             <CardContent className="space-y-3">
+               <div className="flex items-center justify-between">
+                 <div>
+                   <Label>Enable Teaser Intro</Label>
+                   <p className="text-xs text-muted-foreground">Adds a 3s preview from the last clip at the start with a 0.3s dissolve. Original clip audio plays during the teaser.</p>
+                 </div>
+                 <Switch
+                   checked={(form as any).teaser_intro_enabled || false}
+                   onCheckedChange={(v) => update("teaser_intro_enabled" as any, v)}
+                 />
+               </div>
+             </CardContent>
+           </Card>
+
            {/* Vidu Settings (fal.ai) */}
            {((form as any).video_generator || "kling") === "vidu" && (
              <Card>

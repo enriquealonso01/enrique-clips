@@ -1672,7 +1672,17 @@ Deno.serve(async (req) => {
           // Fallback: local muxMP3IntoMP4 if Rendi fails for audio.
           const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
           const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
-          const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
+          const baseClipDurationSec = project.clip_duration_sec || 5;
+          const teaserEnabled = !!(project as any).teaser_intro_enabled && completedClips.length >= 1 && baseClipDurationSec > 3;
+          const TEASER_LEN_SEC = 3;
+          const TEASER_XFADE_SEC = 0.3;
+          // When teaser is on, total = (N * clip) + 3s teaser − 0.3s crossfade overlap
+          const videoDurationSec = teaserEnabled
+            ? completedClips.length * baseClipDurationSec + TEASER_LEN_SEC - TEASER_XFADE_SEC
+            : completedClips.length * baseClipDurationSec;
+          if (teaserEnabled) {
+            await log("info", `Teaser intro enabled: prepending last ${TEASER_LEN_SEC}s of clip ${completedClips.length - 1} with ${TEASER_XFADE_SEC}s dissolve. New duration: ${videoDurationSec}s`);
+          }
 
           // ── ALL-IN-ONE RENDI PIPELINE: concat + overlays + audio ──
           // Instead of downloading clips into memory (OOM risk), pass all clip URLs
@@ -1851,13 +1861,39 @@ Deno.serve(async (req) => {
               // If hasSelectedTrack, we strip audio (video-only concat) and add music later
               if (hasSelectedTrack) {
                 const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[concatv]`);
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
               } else {
                 // Try to concat with audio — if clips have audio, preserve it
                 const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v][${idx}:a]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[concatv][concata]`);
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
               }
-              let currentVideoLabel = "concatv";
+              // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
+              let concatVideoLabel = "mainv";
+              let concatAudioLabel = "maina";
+              if (teaserEnabled) {
+                const lastIdx = clipInputIdxes[clipInputIdxes.length - 1];
+                const teaserStart = (baseClipDurationSec - TEASER_LEN_SEC).toFixed(2);
+                const teaserEnd = baseClipDurationSec.toFixed(2);
+                // Video teaser
+                filterParts.push(`[${lastIdx}:v]trim=start=${teaserStart}:end=${teaserEnd},setpts=PTS-STARTPTS[teaserv]`);
+                // xfade offset = teaser_duration - xfade_duration
+                const xfadeOffset = (TEASER_LEN_SEC - TEASER_XFADE_SEC).toFixed(2);
+                filterParts.push(`[teaserv][mainv]xfade=transition=dissolve:duration=${TEASER_XFADE_SEC}:offset=${xfadeOffset}[teasedv]`);
+                concatVideoLabel = "teasedv";
+                // Audio teaser: always pull from the original last clip's audio (per spec)
+                filterParts.push(`[${lastIdx}:a]atrim=start=${teaserStart}:end=${teaserEnd},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[teasera]`);
+                if (!hasSelectedTrack) {
+                  filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
+                  filterParts.push(`[teasera][mainafmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaseda]`);
+                  concatAudioLabel = "teaseda";
+                } else {
+                  // Music track will replace concat audio later; keep teaser audio available
+                  // for downstream mixing (handled in audio map section below).
+                  concatAudioLabel = "teasera";
+                }
+              }
+              // Maintain backward-compat label name used in the rest of the pipeline
+              let currentVideoLabel = concatVideoLabel;
               let filterIdx = 0;
 
               // Image overlays: chain overlay filters
@@ -1965,6 +2001,17 @@ Deno.serve(async (req) => {
               // Build audio mixing filter for voiceover clips
               const hasVO = voiceoverAudioPaths.length > 0;
               let audioMapStr = "";
+              // Special case: teaser + selected music track (no VO) — crossfade teaser
+              // audio (from clip) into the music track so the first 3s plays the
+              // original clip audio, then dissolves into the music.
+              let teaserMusicMixed = false;
+              if (teaserEnabled && hasSelectedTrack && selectedTrackUrl && !hasVO) {
+                const audioInputIdx = getInputIndex("in_audio");
+                filterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[musicfmt]`);
+                // teasera was already produced above; crossfade into music
+                filterParts.push(`[teasera][musicfmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaser_music_mix]`);
+                teaserMusicMixed = true;
+              }
 
               if (hasVO) {
                 // Build adelay + amix filter chain for voiceover
@@ -1973,11 +2020,18 @@ Deno.serve(async (req) => {
 
                 // Base audio source
                 if (hasSelectedTrack && selectedTrackUrl) {
-                  const audioInputIdx = getInputIndex("in_audio");
-                  voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  if (teaserEnabled) {
+                    // Build teaser→music crossfade as the base audio
+                    const audioInputIdx = getInputIndex("in_audio");
+                    voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[musicfmt_vo]`);
+                    voFilterParts.push(`[teasera][musicfmt_vo]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[base_audio]`);
+                  } else {
+                    const audioInputIdx = getInputIndex("in_audio");
+                    voFilterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  }
                   voMixInputs.push("[base_audio]");
                 } else {
-                  voFilterParts.push(`[concata]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
+                  voFilterParts.push(`[${concatAudioLabel}]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[base_audio]`);
                   voMixInputs.push("[base_audio]");
                 }
 
@@ -2008,25 +2062,31 @@ Deno.serve(async (req) => {
                 const filterComplex = filterParts.join(";");
                 if (hasVO) {
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else if (teaserMusicMixed) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[teaser_music_mix]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else {
                   // Keep concatenated clip audio when no replacement music track is selected
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[${concatAudioLabel}]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
                 }
               } else if (hasSelectedTrack && selectedTrackUrl) {
                 // No overlays, just concat + audio merge
                 const audioInputIdx = getInputIndex("in_audio");
                 const filterComplex = filterParts.join(";");
-                ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                if (teaserMusicMixed) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map "[teaser_music_mix]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                }
               } else {
                 // No overlays, no music — just concat
                 if (clipUrls.length === 1) {
                   ffmpegCmd = ""; // single clip, no processing needed
                 } else {
                   const filterComplex = filterParts.join(";");
-                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[concatv]" -map "[concata]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map "[${concatAudioLabel}]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -movflags +faststart {{out_1}}`;
                 }
               }
 
