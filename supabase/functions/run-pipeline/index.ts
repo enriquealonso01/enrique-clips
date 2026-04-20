@@ -977,7 +977,7 @@ Generate the timed text frames.`,
           const k0Result = await callAI(
             [{ role: "user", content: k0Compiled.prompt }],
             undefined, undefined,
-            "google/gemini-3-pro-image-preview",
+            "google/gemini-3.1-flash-image-preview",
             ["image", "text"]
           );
 
@@ -1104,7 +1104,7 @@ Generate the timed text frames.`,
             const imageResult = await callAI(
               [{ role: "user", content: userContent }],
               undefined, undefined,
-              "google/gemini-3-pro-image-preview",
+              "google/gemini-3.1-flash-image-preview",
               ["image", "text"]
             );
 

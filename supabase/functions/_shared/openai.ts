@@ -13,9 +13,9 @@ export const MODELS = {
   /** Premium reasoning — same as default */
   TEXT_PREMIUM: "gpt-5.3-chat-latest",
   /** Draft image generation */
-  IMAGE_DRAFT: "gemini-3-pro-image-preview",
+  IMAGE_DRAFT: "gemini-3.1-flash-image-preview",
   /** Final image generation */
-  IMAGE_FINAL: "gemini-3-pro-image-preview",
+  IMAGE_FINAL: "gemini-3.1-flash-image-preview",
 } as const;
 
 export type TextModel = string;

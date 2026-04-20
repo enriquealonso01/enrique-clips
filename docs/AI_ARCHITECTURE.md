@@ -4,7 +4,7 @@
 
 This project uses a **hybrid AI architecture**:
 - **OpenAI `gpt-5.3-chat-latest`** for all text generation (planning, style bibles, overlays, metadata)
-- **Google Gemini** for image generation only (`gemini-3-pro-image-preview`)
+- **Google Gemini** for image generation only (`gemini-3.1-flash-image-preview`)
 
 All API calls are made **server-side only** through Supabase Edge Functions.
 
@@ -32,14 +32,14 @@ All API calls are made **server-side only** through Supabase Edge Functions.
 | Overlay content | `gpt-5.3-chat-latest` | OpenAI | When overlays have `ai_generated` mode |
 | Platform metadata | `gemini-2.5-flash` | Google | Post-production metadata |
 | Premium reasoning | `gpt-5.3-chat-latest` | OpenAI | Only when `premium=true` or validation fails |
-| Draft keyframes | `gemini-3-pro-image-preview` | Google | During pipeline keyframe step |
-| Final keyframes | `gemini-3-pro-image-preview` | Google | When explicitly requested |
+| Draft keyframes | `gemini-3.1-flash-image-preview` | Google | During pipeline keyframe step |
+| Final keyframes | `gemini-3.1-flash-image-preview` | Google | When explicitly requested |
 
 ### Model Selection Rationale
 
 1. **`gpt-5.3-chat-latest` for text** — More reliable than `gemini-2.5-pro` for structured output and prompt following
 2. **`gemini-2.5-flash` for metadata** — Classification/tagging doesn't need deep reasoning, cheap and fast
-3. **`gemini-3-pro-image-preview` for images** — Native image generation with Flex pricing tier
+3. **`gemini-3.1-flash-image-preview` for images** — Native image generation with Flex pricing tier
 4. **Automatic model detection** — `isOpenAIModel()` routes based on model name prefix (`gpt-` or `openai/`)
 
 ## Secret Management
@@ -73,8 +73,8 @@ Standalone REST endpoints for direct AI calls from the frontend:
 | `/style-bible` | POST | gpt-5.3-chat-latest | Generate style bible |
 | `/platform-metadata` | POST | gemini-2.5-flash | Generate platform metadata |
 | `/overlay` | POST | gpt-5.3-chat-latest | Generate overlay content |
-| `/image/draft` | POST | gemini-3-pro-image-preview | Draft keyframe image |
-| `/image/final` | POST | gemini-3-pro-image-preview | Final keyframe image |
+| `/image/draft` | POST | gemini-3.1-flash-image-preview | Draft keyframe image |
+| `/image/final` | POST | gemini-3.1-flash-image-preview | Final keyframe image |
 | `/usage` | GET | — | View usage log |
 
 ### Pipeline Integration
