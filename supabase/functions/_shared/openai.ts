@@ -282,8 +282,8 @@ function convertToolChoice(toolChoice: any): any {
 
 // ── Gemini API Call ──────────────────────────────────────
 
-async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>, useImageKey = false): Promise<any> {
-  const apiKey = useImageKey ? getGeminiImageApiKey() : getGeminiApiKey();
+async function geminiRequest(model: string, body: any, timeoutMs = DEFAULT_TIMEOUT_MS, extraHeaders?: Record<string, string>, useImageKey = false, explicitApiKey?: string): Promise<any> {
+  const apiKey = explicitApiKey || (useImageKey ? getGeminiImageApiKey() : getGeminiApiKey());
   const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`;
 
   const controller = new AbortController();
