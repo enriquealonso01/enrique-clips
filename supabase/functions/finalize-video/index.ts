@@ -1672,7 +1672,17 @@ Deno.serve(async (req) => {
           // Fallback: local muxMP3IntoMP4 if Rendi fails for audio.
           const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
           const FAL_KEY = Deno.env.get("FAL_KEY"); // kept for backward compat
-          const videoDurationSec = completedClips.length * (project.clip_duration_sec || 5);
+          const baseClipDurationSec = project.clip_duration_sec || 5;
+          const teaserEnabled = !!(project as any).teaser_intro_enabled && completedClips.length >= 1 && baseClipDurationSec > 3;
+          const TEASER_LEN_SEC = 3;
+          const TEASER_XFADE_SEC = 0.3;
+          // When teaser is on, total = (N * clip) + 3s teaser − 0.3s crossfade overlap
+          const videoDurationSec = teaserEnabled
+            ? completedClips.length * baseClipDurationSec + TEASER_LEN_SEC - TEASER_XFADE_SEC
+            : completedClips.length * baseClipDurationSec;
+          if (teaserEnabled) {
+            await log("info", `Teaser intro enabled: prepending last ${TEASER_LEN_SEC}s of clip ${completedClips.length - 1} with ${TEASER_XFADE_SEC}s dissolve. New duration: ${videoDurationSec}s`);
+          }
 
           // ── ALL-IN-ONE RENDI PIPELINE: concat + overlays + audio ──
           // Instead of downloading clips into memory (OOM risk), pass all clip URLs
