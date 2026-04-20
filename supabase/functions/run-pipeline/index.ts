@@ -1149,8 +1149,8 @@ Generate the timed text frames.`,
             return json({ status: "keyframe_retriable_rechain", run_id: runId, reason: sceneErr.reason });
           }
           await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
-          await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
-          generatedCount++; // Count as processed even if failed, to avoid infinite loop
+          await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+          generatedCount++; // Count as processed even if failed; abort check below catches missing assets
         }
 
         const totalDone = (scenes.length - pendingScenes.length) + generatedCount;
@@ -1158,10 +1158,30 @@ Generate the timed text frames.`,
         await updateRun({ progress_pct: progress });
       }
 
+      // ── Verify EVERY scene has a keyframe asset before advancing ──
+      // We must never submit videos with missing keyframes (Vidu/Kling would
+      // generate clips from wrong images or skip pairs entirely).
+      const { data: finalKfAssets } = await supabase
+        .from("assets")
+        .select("scene_id")
+        .eq("run_id", runId)
+        .eq("type", "keyframe")
+        .not("scene_id", "is", null);
+      const finalKfSceneIds = new Set((finalKfAssets || []).map(a => a.scene_id));
+      const missingKfScenes = scenes.filter(s => !finalKfSceneIds.has(s.id));
+
+      if (missingKfScenes.length > 0) {
+        const missingList = missingKfScenes.map(s => `K${s.scene_index} (${s.scene_title || "untitled"})`).join(", ");
+        const errMsg = `Aborting run: ${missingKfScenes.length}/${scenes.length} keyframe(s) missing — ${missingList}. Common cause: Gemini image API quota (429). Will not submit video clips with missing keyframes.`;
+        await log("error", errMsg);
+        await updateRun({ status: "failed", error_message: errMsg });
+        return json({ error: "missing_keyframes", missing: missingKfScenes.map(s => s.scene_index) }, 500);
+      }
+
       // All keyframes done — clean up attempt tracking and advance to kling
       delete metadataState.keyframe_attempts;
       await updateRun({ current_step: "kling", progress_pct: 40, generated_metadata: metadataState });
-      await log("info", "Chained keyframe generation complete. Chaining to kling step.");
+      await log("info", `All ${scenes.length} keyframes verified. Chaining to kling step.`);
       chainNextStep();
       return json({ status: "keyframes_complete", run_id: runId });
     }
