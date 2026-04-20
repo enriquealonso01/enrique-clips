@@ -616,6 +616,7 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
+    service_tier: "flex",
   };
 
   const attemptStart = Date.now();
