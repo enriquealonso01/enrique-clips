@@ -623,10 +623,32 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
   };
 
   const attemptStart = Date.now();
-  try {
-    const result = await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
+  const tryRequest = async (apiKey?: string) => {
+    return await geminiRequest(model, body, IMAGE_TIMEOUT_MS, {
       "X-Server-Timeout": String(Math.floor(IMAGE_TIMEOUT_MS / 1000)),
-    }, true);
+    }, true, apiKey);
+  };
+
+  try {
+    let result: any;
+    try {
+      result = await tryRequest();
+    } catch (primaryErr) {
+      // On 429 (quota exhausted) from primary image key, try backup key once
+      const is429 = primaryErr instanceof GeminiApiError && primaryErr.status === 429;
+      const backupKey = is429 ? getGeminiImageApiKeyBackup() : null;
+      if (is429 && backupKey) {
+        console.warn(`[AI] Image key 429 (quota). Falling back to GOOGLE_AI_IMAGE_API_KEY_BACKUP...`);
+        logUsage({
+          endpoint: `${endpoint}_429_fallback`, model, success: false,
+          latency_ms: Date.now() - attemptStart, error: "primary_key_429_switching_to_backup",
+        });
+        result = await tryRequest(backupKey);
+      } else {
+        throw primaryErr;
+      }
+    }
+
     const latency = Date.now() - start;
 
     const candidate = result.candidates?.[0];
