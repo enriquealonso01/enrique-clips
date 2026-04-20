@@ -1954,20 +1954,31 @@ Deno.serve(async (req) => {
               if (brightnessEnabled) {
                 const startLevel = Math.max(0, Math.min(1, Number(brightnessCfg.start_level) ?? 0.4));
                 const rampDur = Math.max(0.1, Math.min(videoDurationSec, Number(brightnessCfg.duration_sec) || 2.0));
-                // Ease-out: fast rise, slow finish. brightness(t) = start + (1-start) * (1 - (1 - t/D)^2) for t in [0,D], else 1.
-                // Use lut filter with luma expression; chroma is left alone to preserve color.
-                // FFmpeg lut expr: input pixel value 'val' (0..255), time available as 'T' (seconds).
+                // ── Lightweight brightness ramp ──
+                // Previous implementation used `geq` (per-pixel Y/Cb/Cr expressions), which is extremely
+                // CPU-heavy and pushed the Rendi job past its 60s FFmpeg time budget. We now compose a
+                // black overlay with linearly fading alpha on top of the video — visually almost identical
+                // to a true brightness ramp but ~10–20× cheaper since it uses native blend ops.
+                //
+                // initial darkness amount = (1 - startLevel)  → fades to 0 over rampDur seconds (linear).
+                // Linear (instead of ease-out) is intentional for performance; perceptually very close.
                 const s = startLevel.toFixed(4);
                 const d = rampDur.toFixed(3);
-                // Ease-out brightness multiplier over time T (seconds):
-                //   mult(T) = if(T>=D, 1, s + (1-s)*(1 - (1 - T/D)^2))
-                // `lutyuv` does NOT expose frame time, so we use `geq` which supports T.
-                // Apply to luma only; copy chroma untouched to preserve color.
-                const multExpr = `if(gte(T\\,${d})\\,1\\,(${s}+(1-${s})*(1-pow(1-T/${d}\\,2))))`;
+                const darkAlpha = Math.max(0, Math.min(1, 1 - startLevel)).toFixed(4);
+                // Build a black source matching the final resolution & duration, fade its alpha from 1→0
+                // linearly over D seconds, then scale that alpha down to (1 - startLevel).
+                // Resolution: use the project resolution (resScale-aware width/height come from baseW/baseH).
+                const rampW = Math.round((typeof baseW === "number" ? baseW : 1080));
+                const rampH = Math.round((typeof baseH === "number" ? baseH : 1920));
+                filterParts.push(
+                  `color=c=black:s=${rampW}x${rampH}:d=${d}:r=30,format=yuva420p,fade=t=out:st=0:d=${d}:alpha=1,colorchannelmixer=aa=${darkAlpha}[brmpsrc]`
+                );
                 const rampOut = "vbright";
-                filterParts.push(`[${concatVideoLabel}]geq=lum='clip(lum(X\\,Y)*(${multExpr})\\,0\\,255)':cb='cb(X\\,Y)':cr='cr(X\\,Y)'[${rampOut}]`);
+                filterParts.push(
+                  `[${concatVideoLabel}][brmpsrc]overlay=shortest=0:eof_action=pass:x=0:y=0[${rampOut}]`
+                );
                 concatVideoLabel = rampOut;
-                await log("info", `Brightness ramp enabled: start=${s}, duration=${d}s, ease-out curve, applied across full final video.`);
+                await log("info", `Brightness ramp enabled (lightweight): start=${s}, duration=${d}s, linear fade-from-black overlay applied across full final video.`);
               }
               // Maintain backward-compat label name used in the rest of the pipeline
               let currentVideoLabel = concatVideoLabel;
