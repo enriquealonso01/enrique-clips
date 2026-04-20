@@ -616,10 +616,6 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
-    // Flex tier = 50% cheaper for image output ($0.067 vs $0.134 per 1K/2K image).
-    // Per Google REST docs (https://ai.google.dev/gemini-api/docs/flex-inference),
-    // this is a TOP-LEVEL field, snake_case, lowercase value — NOT inside generationConfig.
-    service_tier: "flex",
   };
 
   const attemptStart = Date.now();
