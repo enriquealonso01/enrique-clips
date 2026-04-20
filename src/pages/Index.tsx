@@ -4,9 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Plus, Play, Pause, Square } from "lucide-react";
+import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -65,25 +71,30 @@ export default function ProjectsPage() {
   });
 
   const runNow = useMutation({
-    mutationFn: async (projectId: string) => {
+    mutationFn: async ({ projectId, skipPublish }: { projectId: string; skipPublish?: boolean }) => {
       const { data, error } = await supabase
         .from("runs")
         .insert({ project_id: projectId, status: "queued" as const })
         .select()
         .single();
       if (error) throw error;
-      return data;
+      return { run: data, skipPublish: !!skipPublish };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ run, skipPublish }) => {
       queryClient.invalidateQueries({ queryKey: ["latest-runs"] });
-      toast({ title: "Run created", description: "Pipeline starting..." });
+      toast({
+        title: "Run created",
+        description: skipPublish ? "Pipeline starting (no publish)..." : "Pipeline starting...",
+      });
       // Fire and forget - invoke pipeline
-      supabase.functions.invoke('run-pipeline', { body: { run_id: data.id } })
+      supabase.functions.invoke('run-pipeline', {
+        body: { run_id: run.id, ...(skipPublish ? { skip_publish: true } : {}) },
+      })
         .then((res) => {
           if (res.error) console.error('Pipeline invoke error:', res.error);
         })
         .catch(err => console.error('Pipeline invoke failed:', err));
-      navigate(`/runs/${data.id}`);
+      navigate(`/runs/${run.id}`);
     },
     onError: () => toast({ title: "Error", description: "Failed to create run", variant: "destructive" }),
   });
@@ -180,17 +191,53 @@ export default function ProjectsPage() {
                     <span>{project.scene_count} × {project.clip_duration_sec}s</span>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={runNow.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runNow.mutate(project.id);
-                      }}
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
+                    <div className="flex" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-r-none border-r-0"
+                        disabled={runNow.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          runNow.mutate({ projectId: project.id });
+                        }}
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="rounded-l-none px-1.5"
+                            disabled={runNow.isPending}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ChevronDown className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              runNow.mutate({ projectId: project.id });
+                            }}
+                          >
+                            <UploadCloud className="mr-2 h-4 w-4" />
+                            Run &amp; publish
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              runNow.mutate({ projectId: project.id, skipPublish: true });
+                            }}
+                          >
+                            <Upload className="mr-2 h-4 w-4 opacity-50" />
+                            Run without publishing
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
