@@ -1149,8 +1149,8 @@ Generate the timed text frames.`,
             return json({ status: "keyframe_retriable_rechain", run_id: runId, reason: sceneErr.reason });
           }
           await log("warn", `Keyframe generation failed for scene ${scene.scene_index}: ${sceneErr.message}`);
-          await supabase.from("scenes").update({ status: "keyframes_ready" as const }).eq("id", scene.id);
-          generatedCount++; // Count as processed even if failed, to avoid infinite loop
+          await supabase.from("scenes").update({ status: "failed" as const }).eq("id", scene.id);
+          generatedCount++; // Count as processed even if failed; abort check below catches missing assets
         }
 
         const totalDone = (scenes.length - pendingScenes.length) + generatedCount;
