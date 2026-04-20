@@ -1861,13 +1861,39 @@ Deno.serve(async (req) => {
               // If hasSelectedTrack, we strip audio (video-only concat) and add music later
               if (hasSelectedTrack) {
                 const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[concatv]`);
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
               } else {
                 // Try to concat with audio — if clips have audio, preserve it
                 const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v][${idx}:a]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[concatv][concata]`);
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
               }
-              let currentVideoLabel = "concatv";
+              // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
+              let concatVideoLabel = "mainv";
+              let concatAudioLabel = "maina";
+              if (teaserEnabled) {
+                const lastIdx = clipInputIdxes[clipInputIdxes.length - 1];
+                const teaserStart = (baseClipDurationSec - TEASER_LEN_SEC).toFixed(2);
+                const teaserEnd = baseClipDurationSec.toFixed(2);
+                // Video teaser
+                filterParts.push(`[${lastIdx}:v]trim=start=${teaserStart}:end=${teaserEnd},setpts=PTS-STARTPTS[teaserv]`);
+                // xfade offset = teaser_duration - xfade_duration
+                const xfadeOffset = (TEASER_LEN_SEC - TEASER_XFADE_SEC).toFixed(2);
+                filterParts.push(`[teaserv][mainv]xfade=transition=dissolve:duration=${TEASER_XFADE_SEC}:offset=${xfadeOffset}[teasedv]`);
+                concatVideoLabel = "teasedv";
+                // Audio teaser: always pull from the original last clip's audio (per spec)
+                filterParts.push(`[${lastIdx}:a]atrim=start=${teaserStart}:end=${teaserEnd},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[teasera]`);
+                if (!hasSelectedTrack) {
+                  filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
+                  filterParts.push(`[teasera][mainafmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaseda]`);
+                  concatAudioLabel = "teaseda";
+                } else {
+                  // Music track will replace concat audio later; keep teaser audio available
+                  // for downstream mixing (handled in audio map section below).
+                  concatAudioLabel = "teasera";
+                }
+              }
+              // Maintain backward-compat label name used in the rest of the pipeline
+              let currentVideoLabel = concatVideoLabel;
               let filterIdx = 0;
 
               // Image overlays: chain overlay filters
