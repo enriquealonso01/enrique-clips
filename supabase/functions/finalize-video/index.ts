@@ -2001,6 +2001,17 @@ Deno.serve(async (req) => {
               // Build audio mixing filter for voiceover clips
               const hasVO = voiceoverAudioPaths.length > 0;
               let audioMapStr = "";
+              // Special case: teaser + selected music track (no VO) — crossfade teaser
+              // audio (from clip) into the music track so the first 3s plays the
+              // original clip audio, then dissolves into the music.
+              let teaserMusicMixed = false;
+              if (teaserEnabled && hasSelectedTrack && selectedTrackUrl && !hasVO) {
+                const audioInputIdx = getInputIndex("in_audio");
+                filterParts.push(`[${audioInputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[musicfmt]`);
+                // teasera was already produced above; crossfade into music
+                filterParts.push(`[teasera][musicfmt]acrossfade=d=${TEASER_XFADE_SEC}:c1=tri:c2=tri[teaser_music_mix]`);
+                teaserMusicMixed = true;
+              }
 
               if (hasVO) {
                 // Build adelay + amix filter chain for voiceover
@@ -2044,6 +2055,8 @@ Deno.serve(async (req) => {
                 const filterComplex = filterParts.join(";");
                 if (hasVO) {
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" ${audioMapStr} -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else if (teaserMusicMixed) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map "[teaser_music_mix]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
                 } else if (hasSelectedTrack && selectedTrackUrl) {
                   const audioInputIdx = getInputIndex("in_audio");
                   ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${currentVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
@@ -2055,7 +2068,11 @@ Deno.serve(async (req) => {
                 // No overlays, just concat + audio merge
                 const audioInputIdx = getInputIndex("in_audio");
                 const filterComplex = filterParts.join(";");
-                ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                if (teaserMusicMixed) {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map "[teaser_music_mix]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                } else {
+                  ffmpegCmd = `${inputArgs} -filter_complex "${filterComplex}" -map "[${concatVideoLabel}]" -map ${audioInputIdx}:a -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 192k -shortest -movflags +faststart {{out_1}}`;
+                }
               } else {
                 // No overlays, no music — just concat
                 if (clipUrls.length === 1) {
