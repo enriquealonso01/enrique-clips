@@ -71,25 +71,30 @@ export default function ProjectsPage() {
   });
 
   const runNow = useMutation({
-    mutationFn: async (projectId: string) => {
+    mutationFn: async ({ projectId, skipPublish }: { projectId: string; skipPublish?: boolean }) => {
       const { data, error } = await supabase
         .from("runs")
         .insert({ project_id: projectId, status: "queued" as const })
         .select()
         .single();
       if (error) throw error;
-      return data;
+      return { run: data, skipPublish: !!skipPublish };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ run, skipPublish }) => {
       queryClient.invalidateQueries({ queryKey: ["latest-runs"] });
-      toast({ title: "Run created", description: "Pipeline starting..." });
+      toast({
+        title: "Run created",
+        description: skipPublish ? "Pipeline starting (no publish)..." : "Pipeline starting...",
+      });
       // Fire and forget - invoke pipeline
-      supabase.functions.invoke('run-pipeline', { body: { run_id: data.id } })
+      supabase.functions.invoke('run-pipeline', {
+        body: { run_id: run.id, ...(skipPublish ? { skip_publish: true } : {}) },
+      })
         .then((res) => {
           if (res.error) console.error('Pipeline invoke error:', res.error);
         })
         .catch(err => console.error('Pipeline invoke failed:', err));
-      navigate(`/runs/${data.id}`);
+      navigate(`/runs/${run.id}`);
     },
     onError: () => toast({ title: "Error", description: "Failed to create run", variant: "destructive" }),
   });
