@@ -191,17 +191,53 @@ export default function ProjectsPage() {
                     <span>{project.scene_count} × {project.clip_duration_sec}s</span>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={runNow.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runNow.mutate(project.id);
-                      }}
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
+                    <div className="flex" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-r-none border-r-0"
+                        disabled={runNow.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          runNow.mutate({ projectId: project.id });
+                        }}
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="rounded-l-none px-1.5"
+                            disabled={runNow.isPending}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ChevronDown className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              runNow.mutate({ projectId: project.id });
+                            }}
+                          >
+                            <UploadCloud className="mr-2 h-4 w-4" />
+                            Run &amp; publish
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              runNow.mutate({ projectId: project.id, skipPublish: true });
+                            }}
+                          >
+                            <Upload className="mr-2 h-4 w-4 opacity-50" />
+                            Run without publishing
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                     <Button
                       size="sm"
                       variant="outline"
