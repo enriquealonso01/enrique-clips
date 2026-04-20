@@ -1946,6 +1946,26 @@ Deno.serve(async (req) => {
                   concatAudioLabel = teaserAudioLabel;
                 }
               }
+              // ── Brightness ramp (ease-out): start dim, rise to normal over the first N seconds of the final video ──
+              // Config lives inside teaser_intro_config.brightness_ramp = { enabled, start_level (0-1), duration_sec }
+              // Applied to the combined output (teasers + main) BEFORE overlays so overlays render at full brightness.
+              const brightnessCfg: any = (rawTeaserCfg && typeof rawTeaserCfg === 'object') ? rawTeaserCfg.brightness_ramp : null;
+              const brightnessEnabled = !!(brightnessCfg && brightnessCfg.enabled);
+              if (brightnessEnabled) {
+                const startLevel = Math.max(0, Math.min(1, Number(brightnessCfg.start_level) ?? 0.4));
+                const rampDur = Math.max(0.1, Math.min(videoDurationSec, Number(brightnessCfg.duration_sec) || 2.0));
+                // Ease-out: fast rise, slow finish. brightness(t) = start + (1-start) * (1 - (1 - t/D)^2) for t in [0,D], else 1.
+                // Use lut filter with luma expression; chroma is left alone to preserve color.
+                // FFmpeg lut expr: input pixel value 'val' (0..255), time available as 'T' (seconds).
+                const s = startLevel.toFixed(4);
+                const d = rampDur.toFixed(3);
+                // mult(t) = if(T>=D, 1, s + (1-s)*(1 - pow(1 - T/D, 2)))
+                const multExpr = `if(gte(T\\,${d})\\,1\\,(${s}+(1-${s})*(1-pow(1-T/${d}\\,2))))`;
+                const rampOut = "vbright";
+                filterParts.push(`[${concatVideoLabel}]lutyuv=y='clip(val*(${multExpr})\\,0\\,255)'[${rampOut}]`);
+                concatVideoLabel = rampOut;
+                await log("info", `Brightness ramp enabled: start=${s}, duration=${d}s, ease-out curve, applied across full final video.`);
+              }
               // Maintain backward-compat label name used in the rest of the pipeline
               let currentVideoLabel = concatVideoLabel;
               let filterIdx = 0;
