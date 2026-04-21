@@ -537,7 +537,7 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
-- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total at a natural ~2.5 words-per-second narrator pace. Keep beats roughly even in length (avoid one-word beats next to long paragraph beats).
+- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total. CRITICAL: each beat is voiced separately and silence is trimmed between them, so write more text than feels intuitive. Use MANY SHORT beats (8-15 words each) rather than a few long ones — short beats produce tighter audio. Keep beats roughly even in length.
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
