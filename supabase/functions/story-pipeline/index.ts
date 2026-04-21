@@ -193,7 +193,9 @@ async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuratio
 - Visual potential${categoryInstruction}
 - Story depth should match a ${targetDuration}s video (${targetDuration <= 60 ? "concise and punchy" : targetDuration <= 120 ? "moderate depth with good pacing" : "deeper narrative with multiple beats"})${titlesBlock}
 
-Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
+Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","event_date":"when the story happened — e.g. 'March 2023', 'June 12, 2024', or '' if unknown","event_location":"where it happened — e.g. 'Austin, Texas' or 'Tokyo, Japan', or '' if unknown","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
+
+IMPORTANT: For event_date and event_location, only include if you have a real, verifiable answer based on the story. Use "" (empty string) when unknown — do not guess.
 
 IMPORTANT: Provide ${minBeats}-${maxBeats} draft beats to fill ~${targetDuration} seconds of narration.` },
     ],
