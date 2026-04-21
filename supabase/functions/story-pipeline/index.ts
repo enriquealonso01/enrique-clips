@@ -76,7 +76,7 @@ async function chainFunction(fnName: string, body: any) {
 
 async function fetchImageAsBase64(url: string): Promise<string | undefined> {
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!resp.ok) return undefined;
     const buffer = await resp.arrayBuffer();
     const bytes = new Uint8Array(buffer);
