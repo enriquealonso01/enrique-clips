@@ -82,6 +82,14 @@ Deno.serve(async (req) => {
       return json({ status: "already_finalized", run_id: runId });
     }
 
+    // ── Resume shortcut: if captioned video already exists, skip clip download + Rendi + Submagic ──
+    const { data: existingCaptioned } = await sb.from("story_assets")
+      .select("supabase_path").eq("run_id", runId).eq("type", "captioned_story_video").limit(1).maybeSingle();
+    const resumeFromEndCard = !!existingCaptioned?.supabase_path;
+    if (resumeFromEndCard) {
+      await log("info", `Resume detected: captioned video already exists at ${existingCaptioned!.supabase_path}. Skipping to end card.`);
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
