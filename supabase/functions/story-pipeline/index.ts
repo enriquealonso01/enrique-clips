@@ -759,19 +759,16 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   }
 
   // Build Rendi FFmpeg command:
-  // LAYER A (gentle): trim only the leading silence that exceeds 300ms below -40dB.
-  //   Previously we stripped ALL leading silence + trailing silence >600ms, which
-  //   collapsed beat-based segments by ~70% (ElevenLabs pads dramatic pauses inside
-  //   long emotional beats). Now we keep natural pauses intact and only clip the
-  //   long dead air ElevenLabs prepends to each segment.
-  //   start_duration=0.3 → only strip leading silence longer than 300ms
-  //   no stop_periods → trailing silence is preserved (the apad gap controls spacing)
+  // LAYER A: aggressive silenceremove on each segment (strip leading silence completely
+  // and trailing silence >600ms). This produces the tight, punchy narration pace the
+  // user prefers. To compensate for length loss, the script writer is instructed to
+  // produce many short beats with extra word count.
   const gapSeconds = Math.max(0, gapMs / 1000);
   const inputFiles: Record<string, string> = {};
   const outputFiles: Record<string, string> = { out_narration: "narration_stitched.mp3" };
   segUrls.forEach((url, i) => { inputFiles[`in_seg${i}`] = url; });
 
-  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0.3:start_threshold=-40dB:detection=peak";
+  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0:start_threshold=-40dB:stop_periods=1:stop_duration=0.6:stop_threshold=-40dB:detection=peak";
 
   let filter = "";
   const labels: string[] = [];
