@@ -203,17 +203,7 @@ Deno.serve(async (req) => {
       inputArgs.push(`-i {{in_bgm}}`);
     }
 
-    // Build filter_complex with dissolves between clips
-    const timedBeats = meta.timed_beats || [];
-    const dissolveDuration = 0.3;
-    const clipDurations = completedClips.map((clip: any, i: number) => {
-      const m = (clip.metadata as any) || {};
-      const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
-      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
-      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
-      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
-    });
-    const storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum, duration) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
+    // Build filter_complex with dissolves between clips (durations already computed above)
     let filterParts: string[] = completedClips.map((_: any, i: number) =>
       `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${clipDurations[i].toFixed(3)},setpts=PTS-STARTPTS[vclip${i}]`
     );
@@ -304,7 +294,7 @@ Deno.serve(async (req) => {
     // Download and store story video
     const storyDl = await fetch(storyVideoUrl);
     const storyBytes = new Uint8Array(await storyDl.arrayBuffer());
-    const storyPath = `story-runs/${runId}/story_video.mp4`;
+    storyPath = `story-runs/${runId}/story_video.mp4`;
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
     await updateRun({ progress_pct: 80 });
