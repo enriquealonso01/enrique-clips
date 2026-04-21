@@ -700,8 +700,17 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   if (!RENDI_API_KEY) throw new Error("RENDI_API_KEY not configured (required for segmented narration stitching)");
 
   const fullText: string = script.full_script;
-  const segments = splitIntoSegments(fullText);
-  await log(sb, runId, "info", `Segmented narration: ${segments.length} segments from ${fullText.length} chars`);
+  // Segment by NARRATIVE BEATS, not by sentence punctuation. Beats are the unit
+  // of meaning the script writer composed; splitting on internal punctuation
+  // (e.g. "...heartbeat, then hid that sound...") causes silenceremove to glue
+  // the two halves with an unnatural cut. One beat = one ElevenLabs call.
+  const beatTexts: string[] = Array.isArray(script.beats)
+    ? script.beats
+        .map((b: any) => (typeof b?.text === "string" ? b.text.replace(/\s+/g, " ").trim() : ""))
+        .filter((s: string) => s.length > 0)
+    : [];
+  const segments = beatTexts.length > 0 ? beatTexts : splitIntoSegments(fullText);
+  await log(sb, runId, "info", `Segmented narration: ${segments.length} segments (beat-based=${beatTexts.length > 0}) from ${fullText.length} chars`);
 
   if (segments.length < 2) {
     await log(sb, runId, "info", "Only one segment — falling back to single-call narration");
