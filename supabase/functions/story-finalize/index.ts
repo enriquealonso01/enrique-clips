@@ -90,6 +90,16 @@ Deno.serve(async (req) => {
       await log("info", `Resume detected: captioned video already exists at ${existingCaptioned!.supabase_path}. Skipping to end card.`);
     }
 
+    // ── Resume shortcut #2: Submagic project already submitted but not yet downloaded ──
+    const { data: priorRun } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+    const priorMeta = (priorRun?.generated_metadata as any) || {};
+    const existingSubmagicId: string | null = !resumeFromEndCard && priorMeta.submagic_project_id ? priorMeta.submagic_project_id : null;
+    const existingSubmagicStoryPath: string | null = !resumeFromEndCard && priorMeta.submagic_story_path ? priorMeta.submagic_story_path : null;
+    const resumeFromSubmagic = !!existingSubmagicId && !!existingSubmagicStoryPath;
+    if (resumeFromSubmagic) {
+      await log("info", `Resume detected: Submagic project ${existingSubmagicId} already submitted. Skipping Rendi, polling Submagic.`);
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
