@@ -177,6 +177,10 @@ Deno.serve(async (req) => {
       captionedPath = existingCaptioned!.supabase_path;
       storyPath = captionedPath;
       await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
+    } else if (resumeFromSubmagic) {
+      storyPath = existingSubmagicStoryPath!;
+      captionedPath = storyPath; // will be overwritten by Submagic download below
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to Submagic poll.`);
     } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
