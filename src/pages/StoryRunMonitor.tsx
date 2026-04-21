@@ -111,6 +111,8 @@ export default function StoryRunMonitor() {
   const [playingAssetId, setPlayingAssetId] = useState<string | null>(null);
   const [signingUrl, setSigningUrl] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioUrls, setAudioUrls] = useState<Record<string, string>>({});
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
 
   const getSignedUrl = async (path: string): Promise<string | null> => {
     const { data } = await supabase.storage.from("project-assets").createSignedUrl(path, 600);
@@ -131,6 +133,15 @@ export default function StoryRunMonitor() {
     audio.play();
     audioRef.current = audio;
     setPlayingAssetId(assetId);
+  };
+
+  const loadAudio = async (assetPath: string, assetId: string) => {
+    if (audioUrls[assetId]) return;
+    setLoadingAudioId(assetId);
+    const url = await getSignedUrl(assetPath);
+    if (url) setAudioUrls((prev) => ({ ...prev, [assetId]: url }));
+    else toast.error("Could not get audio URL");
+    setLoadingAudioId(null);
   };
 
   const [videoUrls, setVideoUrls] = useState<Record<string, string>>({});
