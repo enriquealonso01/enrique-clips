@@ -217,6 +217,9 @@ Deno.serve(async (req) => {
         "narration_generated",
         "beats_extracted",
         "scene_images_generating",
+        "audio_mixing",
+        "subtitles_processing",
+        "end_card_rendering",
       ];
       const { data: stuckStoryRuns } = await supabase
         .from("story_runs")
@@ -237,33 +240,41 @@ Deno.serve(async (req) => {
 
           // Map current_stage → safest resume_stage for story-pipeline
           let resumeStage: string | null = null;
+          let targetFn: "story-pipeline" | "story-finalize" = "story-pipeline";
           switch (stuck.current_stage) {
             case "scene_images_generating": resumeStage = "stage10_continue"; break;
             case "beats_extracted":         resumeStage = "stage9"; break;
             case "narration_generated":     resumeStage = "stage9"; break;
             case "cast_generated":          resumeStage = "stage6"; break;
             case "story_selected":          resumeStage = "stage5"; break;
+            case "audio_mixing":
+            case "subtitles_processing":
+            case "end_card_rendering":
+              targetFn = "story-finalize";
+              resumeStage = null;
+              break;
             case "researching_story":
             case "queued":
             default:                        resumeStage = null; // restart from stage 1
           }
 
-          console.log(`Story watchdog: re-triggering ${stuck.id} (stage=${stuck.current_stage}, resume=${resumeStage ?? "full"})`);
+          console.log(`Story watchdog: re-triggering ${stuck.id} → ${targetFn} (stage=${stuck.current_stage}, resume=${resumeStage ?? "full"})`);
           await supabase.from("story_run_logs").insert({
             run_id: stuck.id,
             level: "warn" as any,
-            message: `Watchdog: story run stuck at stage="${stuck.current_stage}". Re-triggering pipeline (resume=${resumeStage ?? "full"}).`,
+            message: `Watchdog: story run stuck at stage="${stuck.current_stage}". Re-triggering ${targetFn} (resume=${resumeStage ?? "full"}).`,
           });
 
-          const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-pipeline`;
+          const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/${targetFn}`;
           const body: any = { run_id: stuck.id };
           if (resumeStage) body.resume_stage = resumeStage;
+          if (targetFn === "story-finalize") body.force_retry = true;
           fetch(fnUrl, {
             method: "POST",
             headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }).catch((e) => console.error(`Story watchdog error for ${stuck.id}:`, e));
-          storyStuckResults.push(`${stuck.id} (stage=${stuck.current_stage} → ${resumeStage ?? "full"})`);
+          storyStuckResults.push(`${stuck.id} (stage=${stuck.current_stage} → ${targetFn}:${resumeStage ?? "full"})`);
         }
       }
     } catch (storyWatchdogErr) {

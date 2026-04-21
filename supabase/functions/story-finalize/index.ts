@@ -82,6 +82,14 @@ Deno.serve(async (req) => {
       return json({ status: "already_finalized", run_id: runId });
     }
 
+    // ── Resume shortcut: if captioned video already exists, skip clip download + Rendi + Submagic ──
+    const { data: existingCaptioned } = await sb.from("story_assets")
+      .select("supabase_path").eq("run_id", runId).eq("type", "captioned_story_video").limit(1).maybeSingle();
+    const resumeFromEndCard = !!existingCaptioned?.supabase_path;
+    if (resumeFromEndCard) {
+      await log("info", `Resume detected: captioned video already exists at ${existingCaptioned!.supabase_path}. Skipping to end card.`);
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
@@ -105,16 +113,17 @@ Deno.serve(async (req) => {
       narrationUrl = nUrl?.signedUrl || null;
     }
 
-    // ── Get clip URLs ──
+    // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    for (const clip of completedClips) {
-      const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
-      if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
-    }
-
-    if (clipUrls.length === 0) {
-      await failRun("No clip URLs available");
-      return json({ error: "No clip URLs" }, 500);
+    if (!resumeFromEndCard) {
+      for (const clip of completedClips) {
+        const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
+        if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
+      }
+      if (clipUrls.length === 0) {
+        await failRun("No clip URLs available");
+        return json({ error: "No clip URLs" }, 500);
+      }
     }
 
     // ── Get background music URL if uploaded ──
@@ -138,6 +147,27 @@ Deno.serve(async (req) => {
     // STAGE 12-13: Assemble story video with Rendi
     // ══════════════════════════════════════════════════════
 
+    let storyPath: string;
+    let captionedPath: string;
+    let storyVideoDurationSec: number;
+
+    // Compute clip durations (needed for end-card xfade offset even on resume)
+    const timedBeats = meta.timed_beats || [];
+    const dissolveDuration = 0.3;
+    const clipDurations = completedClips.map((clip: any, i: number) => {
+      const m = (clip.metadata as any) || {};
+      const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
+      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
+      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
+      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
+    });
+    storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum: number, duration: number) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
+
+    if (resumeFromEndCard) {
+      captionedPath = existingCaptioned!.supabase_path;
+      storyPath = captionedPath;
+      await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
+    } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
 
@@ -173,17 +203,7 @@ Deno.serve(async (req) => {
       inputArgs.push(`-i {{in_bgm}}`);
     }
 
-    // Build filter_complex with dissolves between clips
-    const timedBeats = meta.timed_beats || [];
-    const dissolveDuration = 0.3;
-    const clipDurations = completedClips.map((clip: any, i: number) => {
-      const m = (clip.metadata as any) || {};
-      const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
-      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
-      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
-      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
-    });
-    const storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum, duration) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
+    // Build filter_complex with dissolves between clips (durations already computed above)
     let filterParts: string[] = completedClips.map((_: any, i: number) =>
       `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${clipDurations[i].toFixed(3)},setpts=PTS-STARTPTS[vclip${i}]`
     );
@@ -274,7 +294,7 @@ Deno.serve(async (req) => {
     // Download and store story video
     const storyDl = await fetch(storyVideoUrl);
     const storyBytes = new Uint8Array(await storyDl.arrayBuffer());
-    const storyPath = `story-runs/${runId}/story_video.mp4`;
+    storyPath = `story-runs/${runId}/story_video.mp4`;
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
     await updateRun({ progress_pct: 80 });
@@ -286,7 +306,7 @@ Deno.serve(async (req) => {
 
     await updateRun({ current_stage: "subtitles_processing", progress_pct: 82 });
 
-    let captionedPath = storyPath; // fallback: use uncaptioned video
+    captionedPath = storyPath; // fallback: use uncaptioned video
 
     if (SUBMAGIC_API_KEY) {
       await log("info", "Stage 14: Adding subtitles via Submagic API");
@@ -411,6 +431,16 @@ Deno.serve(async (req) => {
         });
 
         await log("info", `Captioned video stored: ${(captBytes.length / 1024 / 1024).toFixed(1)}MB`);
+
+        // ── Chain: re-invoke self to continue with end card stage (avoid 150s timeout) ──
+        await log("info", "Chaining: re-invoking story-finalize for end card stage");
+        const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+        fetch(chainUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ run_id: runId, force_retry: true }),
+        }).catch(() => {});
+        return json({ status: "chained_to_endcard", run_id: runId });
       } catch (subErr) {
         await log("warn", `Submagic subtitles failed: ${(subErr as Error).message}. Continuing without subtitles.`);
         captionedPath = storyPath; // fallback
@@ -418,6 +448,7 @@ Deno.serve(async (req) => {
     } else {
       await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured)");
     }
+    } // end if (!resumeFromEndCard)
 
     // ══════════════════════════════════════════════════════
     // STAGE 15-17: End Card
