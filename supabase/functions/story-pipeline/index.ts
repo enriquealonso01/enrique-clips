@@ -975,8 +975,27 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
         return { partial: true, completed: i, imageUrls };
       }
 
-      await log(sb, runId, "error", `Scene image ${i + 1}/${scenes.length} failed: ${(err as Error).message}`);
-      imageUrls.push(""); // placeholder
+      const message = `Scene image ${i + 1}/${scenes.length} failed: ${(err as Error).message}`;
+      const { data: cur } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+      const existingMeta = (cur?.generated_metadata as any) || {};
+      const retryCounts = { ...(existingMeta.scene_image_retry_counts || {}) };
+      retryCounts[i] = (retryCounts[i] || 0) + 1;
+
+      if (retryCounts[i] < 3) {
+        await updateRun(sb, runId, {
+          generated_metadata: {
+            ...existingMeta,
+            scene_image_retry_counts: retryCounts,
+            scene_image_retry: { scene_index: i, reason: (err as Error).message, at: new Date().toISOString() },
+          },
+          progress_pct: 48 + Math.round((i / scenes.length) * 12),
+        });
+        await log(sb, runId, "warn", `${message}; retrying via re-chain (${retryCounts[i]}/3)`);
+        return { partial: true, completed: i, imageUrls };
+      }
+
+      await failRun(sb, runId, `${message} after ${retryCounts[i]} attempts`);
+      throw err;
     }
   }
 
@@ -999,7 +1018,21 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     .select("*").eq("run_id", runId).eq("type", "scene_image")
     .order("scene_index", { ascending: true });
 
-  if (!sceneAssets?.length) throw new Error("No scene images found");
+  if (!sceneAssets?.length) {
+    await failRun(sb, runId, "No scene images found");
+    throw new Error("No scene images found");
+  }
+
+  const sceneAssetByIndex = new Map<number, any>();
+  for (const asset of sceneAssets) {
+    if (asset.scene_index != null) sceneAssetByIndex.set(asset.scene_index, asset);
+  }
+  const missingImages = scenes.map((_: any, idx: number) => idx).filter((idx: number) => !sceneAssetByIndex.has(idx));
+  if (missingImages.length > 0) {
+    const message = `Missing scene images for beat(s): ${missingImages.map((i: number) => i + 1).join(", ")}; refusing to generate a partial story video`;
+    await failRun(sb, runId, message);
+    throw new Error(message);
+  }
 
   // Check for already-submitted clips (idempotency on re-chain)
   const { data: existingClips } = await sb.from("story_assets")
@@ -1023,7 +1056,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     }
   }
 
-  for (let i = 0; i < sceneAssets.length; i++) {
+  for (let i = 0; i < scenes.length; i++) {
     // Skip already-submitted scenes
     if (submittedIndices.has(i)) {
       await log(sb, runId, "debug", `Scene ${i} already submitted, skipping`);
@@ -1033,7 +1066,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     // Check cancellation during long submission loops
     await checkCancelled(sb, runId);
 
-    const asset = sceneAssets[i];
+    const asset = sceneAssetByIndex.get(i)!;
     const scene = scenes[i] || {};
     const targetDuration = scene.target_duration || 4;
     const requestDuration = Math.ceil(targetDuration);
@@ -1041,7 +1074,11 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     const { data: signedData } = await sb.storage.from("project-assets")
       .createSignedUrl(asset.supabase_path, 3600);
     const imageUrl = signedData?.signedUrl;
-    if (!imageUrl) { await log(sb, runId, "warn", `No URL for scene image ${i}`); continue; }
+    if (!imageUrl) {
+      const message = `No URL for scene image ${i + 1}`;
+      await failRun(sb, runId, message);
+      throw new Error(message);
+    }
 
     try {
       const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
