@@ -624,6 +624,15 @@ async function callElevenLabsWithTimestamps(text: string, prev?: string, next?: 
 
 // Concatenate per-segment alignments into one global alignment, shifted by cumulative offsets.
 // gapSeconds is the silent gap inserted between segments by the FFmpeg concat.
+//
+// IMPORTANT: The Rendi stitch step applies `silenceremove` to each segment, stripping the
+// leading silence and any trailing silence longer than ~600ms below -40dB. ElevenLabs'
+// reported duration (`seg.duration` = end time of last char) includes the spoken portion,
+// but ElevenLabs often appends extra trailing silence/breath to the MP3 itself that is NOT
+// reflected in the alignment data. The alignment is already a tight upper bound on the
+// spoken portion, so we use it directly: the stitched timeline equals the sum of
+// (last_char_end_time) per segment + inter-segment gaps. This keeps downstream beat
+// durations aligned with the trimmed audio that scene clips are planned around.
 function mergeAlignments(perSegment: { alignment: any; duration: number }[], gapSeconds: number) {
   const characters: string[] = [];
   const starts: number[] = [];
@@ -632,20 +641,30 @@ function mergeAlignments(perSegment: { alignment: any; duration: number }[], gap
   for (let i = 0; i < perSegment.length; i++) {
     const seg = perSegment[i];
     const a = seg.alignment;
+    // Spoken duration = last char's end time (already excludes trailing silence in MP3).
+    const spokenDur = (a?.character_end_times_seconds && a.character_end_times_seconds.length > 0)
+      ? a.character_end_times_seconds[a.character_end_times_seconds.length - 1]
+      : seg.duration;
+    // Leading silence = first char's start time. silenceremove strips it, so shift chars left.
+    const leadingSilence = (a?.character_start_times_seconds && a.character_start_times_seconds.length > 0)
+      ? a.character_start_times_seconds[0]
+      : 0;
+    const effectiveDur = Math.max(0, spokenDur - leadingSilence);
+
     if (a?.characters && a?.character_start_times_seconds && a?.character_end_times_seconds) {
       for (let j = 0; j < a.characters.length; j++) {
         characters.push(a.characters[j]);
-        starts.push(a.character_start_times_seconds[j] + offset);
-        ends.push(a.character_end_times_seconds[j] + offset);
+        starts.push(Math.max(0, a.character_start_times_seconds[j] - leadingSilence) + offset);
+        ends.push(Math.max(0, a.character_end_times_seconds[j] - leadingSilence) + offset);
       }
     }
     // Insert a space char to represent the inter-segment gap (so beat-text matching still works)
     if (i < perSegment.length - 1) {
       characters.push(" ");
-      starts.push(offset + seg.duration);
-      ends.push(offset + seg.duration + gapSeconds);
+      starts.push(offset + effectiveDur);
+      ends.push(offset + effectiveDur + gapSeconds);
     }
-    offset += seg.duration + (i < perSegment.length - 1 ? gapSeconds : 0);
+    offset += effectiveDur + (i < perSegment.length - 1 ? gapSeconds : 0);
   }
   return { characters, character_start_times_seconds: starts, character_end_times_seconds: ends };
 }
