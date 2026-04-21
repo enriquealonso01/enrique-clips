@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
 
     // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    if (!resumeFromEndCard) {
+    if (!resumeFromEndCard && !resumeFromSubmagic) {
       for (const clip of completedClips) {
         const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
         if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
