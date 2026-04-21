@@ -797,13 +797,43 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   if (!stitchedResp.ok) throw new Error(`Failed to download stitched MP3: ${stitchedResp.status}`);
   const stitchedBytes = new Uint8Array(await stitchedResp.arrayBuffer());
 
-  // Build merged alignment so stage 8 can derive beat timings from text matching
-  const alignment = mergeAlignments(perSegment, gapSeconds);
-  const totalDuration = alignment.character_end_times_seconds.slice(-1)[0] || 0;
+  // Estimate the ACTUAL duration of the stitched MP3 (post silenceremove).
+  // Output is libmp3lame CBR at 128 kbps → bytes * 8 / 128000 ≈ seconds (very accurate for CBR).
+  // We use this to proportionally scale per-segment durations in mergeAlignments so beat
+  // timings (and downstream Vidu scene-clip targets) sum to the real final narration length.
+  const BITRATE_BPS = 128_000;
+  const ID3_OVERHEAD_BYTES = 1024; // small constant to discount tag bytes
+  const measuredStitchedDuration = Math.max(
+    0.1,
+    ((stitchedBytes.length - ID3_OVERHEAD_BYTES) * 8) / BITRATE_BPS,
+  );
+
+  // Sum of original per-segment effective spoken durations (pre-trim-aware).
+  const sumOriginalSpoken = perSegment.reduce((acc, seg) => {
+    const a = seg.alignment;
+    const spoken = a?.character_end_times_seconds?.slice(-1)?.[0] ?? seg.duration;
+    const lead = a?.character_start_times_seconds?.[0] ?? 0;
+    return acc + Math.max(0, spoken - lead);
+  }, 0);
+  const totalGaps = Math.max(0, perSegment.length - 1) * gapSeconds;
+  const reductionRatio = sumOriginalSpoken > 0
+    ? (measuredStitchedDuration - totalGaps) / sumOriginalSpoken
+    : 1;
+  await log(sb, runId, "info",
+    `Stitched audio: measured=${measuredStitchedDuration.toFixed(2)}s, ` +
+    `sum(original spoken)=${sumOriginalSpoken.toFixed(2)}s, ` +
+    `gaps=${totalGaps.toFixed(2)}s, scale=${reductionRatio.toFixed(3)}`);
+
+  // Build merged alignment scaled so beat timings sum to the real stitched duration.
+  const alignment = mergeAlignments(perSegment, gapSeconds, measuredStitchedDuration);
+  const totalDuration = alignment.character_end_times_seconds.slice(-1)[0] || measuredStitchedDuration;
 
   const path = `story-runs/${runId}/narration.mp3`;
   const url = await uploadAndStoreAsset(sb, runId, path, stitchedBytes, "narration_audio", {
     duration_estimate: totalDuration,
+    measured_stitched_duration: measuredStitchedDuration,
+    sum_original_spoken: sumOriginalSpoken,
+    silence_trim_scale: reductionRatio,
     character_count: fullText.length,
     segmented: true,
     segment_count: segments.length,
