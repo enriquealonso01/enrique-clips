@@ -662,7 +662,15 @@ Deno.serve(async (req) => {
 
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
-        const storySummary = meta.story?.hook || meta.story?.summary || "";
+        const baseSummary = meta.story?.hook || meta.story?.summary || "";
+        const eventDate = (meta.story?.event_date || "").toString().trim();
+        const eventLocation = (meta.story?.event_location || "").toString().trim();
+        // Prepend date + place when available, e.g. "March 2023 — Austin, Texas\n\n<summary>"
+        let prefix = "";
+        if (eventDate && eventLocation) prefix = `${eventDate} — ${eventLocation}`;
+        else if (eventDate) prefix = eventDate;
+        else if (eventLocation) prefix = eventLocation;
+        const storySummary = prefix ? `${prefix}\n\n${baseSummary}` : baseSummary;
 
         const formData = new FormData();
         formData.append("video", videoUrl);
