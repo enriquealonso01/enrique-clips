@@ -515,8 +515,11 @@ async function stage6(sb: SB, runId: string, story: any, targetDuration: number 
 
   const minBeats = Math.max(4, Math.round(targetDuration / 12));
   const maxBeats = Math.max(6, Math.round(targetDuration / 5));
-  // Estimate words: ~2.5 words/sec for narration
-  const targetWords = Math.round(targetDuration * 2.5);
+  // Narration pace ~2.5 wps, but per-segment silence trimming removes ~0.4-0.6s
+  // of trailing pause from each beat. Inflate the word budget by ~18% so the
+  // stitched narration matches the target duration after silence removal.
+  const WORDS_PER_SEC_AFTER_TRIM = 2.95;
+  const targetWords = Math.round(targetDuration * WORDS_PER_SEC_AFTER_TRIM);
 
   const result = await callStructured({
     messages: [
@@ -530,7 +533,7 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
-- Target video duration: ${targetDuration} seconds (aim for ~${targetWords} words total)
+- Target video duration: ${targetDuration} seconds (aim for ~${targetWords} words total — trailing pauses between beats are trimmed during stitching, so write enough words to actually fill the duration when spoken at a natural pace)
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
