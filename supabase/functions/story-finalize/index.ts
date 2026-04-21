@@ -306,7 +306,7 @@ Deno.serve(async (req) => {
 
     await updateRun({ current_stage: "subtitles_processing", progress_pct: 82 });
 
-    let captionedPath = storyPath; // fallback: use uncaptioned video
+    captionedPath = storyPath; // fallback: use uncaptioned video
 
     if (SUBMAGIC_API_KEY) {
       await log("info", "Stage 14: Adding subtitles via Submagic API");
