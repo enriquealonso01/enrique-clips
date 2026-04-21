@@ -328,35 +328,34 @@ Deno.serve(async (req) => {
       await log("info", "Stage 14: Adding subtitles via Submagic API");
 
       try {
-        // Get a public signed URL for the story video (Submagic needs a public URL)
-        const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
-        const videoUrl = storySignedUrl?.signedUrl;
+        let subProjectId: string;
+        if (existingSubmagicId) {
+          subProjectId = existingSubmagicId;
+          await log("info", `Reusing existing Submagic project: ${subProjectId}`);
+        } else {
+          // Get a public signed URL for the story video (Submagic needs a public URL)
+          const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
+          const videoUrl = storySignedUrl?.signedUrl;
+          if (!videoUrl) throw new Error("Could not get signed URL for story video");
 
-        if (!videoUrl) throw new Error("Could not get signed URL for story video");
-
-        // Step 1: Create project in Submagic
-        const createResp = await fetch("https://api.submagic.co/v1/projects", {
-          method: "POST",
-          headers: {
-            "x-api-key": SUBMAGIC_API_KEY,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: (meta.story?.title || "Story Video").substring(0, 100),
-            language: "en",
-            videoUrl: videoUrl,
-            userThemeId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
-          }),
-        });
-
-        if (!createResp.ok) {
-          const errText = await createResp.text();
-          throw new Error(`Submagic create project failed: ${createResp.status} ${errText.substring(0, 200)}`);
+          const createResp = await fetch("https://api.submagic.co/v1/projects", {
+            method: "POST",
+            headers: { "x-api-key": SUBMAGIC_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: (meta.story?.title || "Story Video").substring(0, 100),
+              language: "en",
+              videoUrl: videoUrl,
+              userThemeId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
+            }),
+          });
+          if (!createResp.ok) {
+            const errText = await createResp.text();
+            throw new Error(`Submagic create project failed: ${createResp.status} ${errText.substring(0, 200)}`);
+          }
+          const subProject = await createResp.json();
+          subProjectId = subProject.id;
+          await log("info", `Submagic project created: ${subProjectId}`);
         }
-
-        const subProject = await createResp.json();
-        const subProjectId = subProject.id;
-        await log("info", `Submagic project created: ${subProjectId}`);
 
         // Persist project ID immediately so chained invocations can resume polling without re-creating
         const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
