@@ -18,6 +18,21 @@ function getResolutionScale(pikaResolution: string): number {
   return targetHeight / 540;
 }
 
+function getTargetVideoDimensions(aspectRatio: string, resolution: string): { width: number; height: number } {
+  const shortSideMap: Record<string, number> = { "540p": 540, "720p": 720, "1080p": 1080 };
+  const shortSide = shortSideMap[resolution] || 1080;
+
+  if (aspectRatio === "16:9") {
+    return { width: Math.round(shortSide * 16 / 9), height: shortSide };
+  }
+
+  if (aspectRatio === "1:1") {
+    return { width: shortSide, height: shortSide };
+  }
+
+  return { width: shortSide, height: Math.round(shortSide * 16 / 9) };
+}
+
 // Wrap text to fit within ~70% of a 9:16 frame width
 // Estimates chars per line based on font size vs frame width (assumes 540p baseline width = 304px for 9:16)
 function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
@@ -1893,14 +1908,32 @@ Deno.serve(async (req) => {
               // Build FFmpeg filter_complex
               const filterParts: string[] = [];
 
+              const { width: targetVideoWidth, height: targetVideoHeight } = getTargetVideoDimensions(
+                (project as any).aspect_ratio || "9:16",
+                (project as any).pika_resolution || "1080p"
+              );
+              const normalizedClipVideoLabels = clipInputIdxes.map((_, ci) => `clipv${ci}`);
+              const normalizedClipAudioLabels = clipInputIdxes.map((_, ci) => `clipa${ci}`);
+
+              for (let ci = 0; ci < clipInputIdxes.length; ci++) {
+                const inputIdx = clipInputIdxes[ci];
+                filterParts.push(
+                  `[${inputIdx}:v]scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${normalizedClipVideoLabels[ci]}]`
+                );
+                filterParts.push(
+                  `[${inputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${normalizedClipAudioLabels[ci]}]`
+                );
+              }
+              await log("info", `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat to prevent mixed-dimension stitch failures.`);
+
               // Concat filter: [0:v][0:a][1:v][1:a]...concat=n=N:v=1:a=1[cv][ca]
               // If hasSelectedTrack, we strip audio (video-only concat) and add music later
               if (hasSelectedTrack) {
-                const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v]`).join("");
+                const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
                 filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
               } else {
                 // Try to concat with audio — if clips have audio, preserve it
-                const concatInputs = clipInputIdxes.map((idx) => `[${idx}:v][${idx}:a]`).join("");
+                const concatInputs = normalizedClipVideoLabels.map((label, idx) => `[${label}][${normalizedClipAudioLabels[idx]}]`).join("");
                 filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
               }
               // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
@@ -1915,7 +1948,7 @@ Deno.serve(async (req) => {
                   const inIdx = clipInputIdxes[seg.clipIdx];
                   const vLabel = `tv${si}`;
                   const aLabel = `ta${si}`;
-                  filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS[${vLabel}]`);
+                  filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS,scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${vLabel}]`);
                   filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
                   vTeaseLabels.push(vLabel);
                   aTeaseLabels.push(aLabel);
