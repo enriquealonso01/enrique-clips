@@ -407,7 +407,8 @@ Deno.serve(async (req) => {
 
         // Step 4: Poll for export completion
         let captionedVideoUrl: string | null = null;
-        for (let poll = 0; poll < 120; poll++) {
+        const tExp = Date.now();
+        for (let poll = 0; poll < 120 && (Date.now() - tExp) < 60000; poll++) {
           await sleep(5000);
           const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
             headers: { "x-api-key": SUBMAGIC_API_KEY },
@@ -428,7 +429,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (!captionedVideoUrl) throw new Error("Submagic export timed out after 10 minutes");
+        if (!captionedVideoUrl) {
+          await log("info", "Submagic still exporting — chaining to fresh invocation");
+          const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+          fetch(chainUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, force_retry: true }),
+          }).catch(() => {});
+          return json({ status: "chained_submagic_export", run_id: runId });
+        }
 
         // Step 5: Download captioned video and store
         const captDl = await fetch(captionedVideoUrl);
