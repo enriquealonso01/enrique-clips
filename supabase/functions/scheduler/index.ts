@@ -204,7 +204,73 @@ Deno.serve(async (req) => {
       console.error("Watchdog error:", watchdogErr);
     }
 
-    return json({ status: "ok", triggered_count: triggered.length, triggered, story_triggered: storyTriggered, watchdog_retried: stuckResults });
+    // ── Story-run watchdog ──
+    const storyStuckResults: string[] = [];
+    try {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      // Stages where the pipeline is doing synchronous work in story-pipeline (not waiting on external pollers)
+      const ACTIVE_STAGES = [
+        "queued",
+        "researching_story",
+        "story_selected",
+        "cast_generated",
+        "narration_generated",
+        "beats_extracted",
+        "scene_images_generating",
+      ];
+      const { data: stuckStoryRuns } = await supabase
+        .from("story_runs")
+        .select("id, current_stage, status, started_at")
+        .in("status", ACTIVE_STAGES as any)
+        .lt("started_at", fiveMinAgo);
+
+      if (stuckStoryRuns && stuckStoryRuns.length > 0) {
+        for (const stuck of stuckStoryRuns as any[]) {
+          const { data: recentLogs } = await supabase
+            .from("story_run_logs")
+            .select("created_at")
+            .eq("run_id", stuck.id)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          const lastLogAt = recentLogs?.[0]?.created_at;
+          if (lastLogAt && new Date(lastLogAt).getTime() > Date.now() - 5 * 60 * 1000) continue;
+
+          // Map current_stage → safest resume_stage for story-pipeline
+          let resumeStage: string | null = null;
+          switch (stuck.current_stage) {
+            case "scene_images_generating": resumeStage = "stage10_continue"; break;
+            case "beats_extracted":         resumeStage = "stage9"; break;
+            case "narration_generated":     resumeStage = "stage9"; break;
+            case "cast_generated":          resumeStage = "stage6"; break;
+            case "story_selected":          resumeStage = "stage5"; break;
+            case "researching_story":
+            case "queued":
+            default:                        resumeStage = null; // restart from stage 1
+          }
+
+          console.log(`Story watchdog: re-triggering ${stuck.id} (stage=${stuck.current_stage}, resume=${resumeStage ?? "full"})`);
+          await supabase.from("story_run_logs").insert({
+            run_id: stuck.id,
+            level: "warn" as any,
+            message: `Watchdog: story run stuck at stage="${stuck.current_stage}". Re-triggering pipeline (resume=${resumeStage ?? "full"}).`,
+          });
+
+          const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-pipeline`;
+          const body: any = { run_id: stuck.id };
+          if (resumeStage) body.resume_stage = resumeStage;
+          fetch(fnUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }).catch((e) => console.error(`Story watchdog error for ${stuck.id}:`, e));
+          storyStuckResults.push(`${stuck.id} (stage=${stuck.current_stage} → ${resumeStage ?? "full"})`);
+        }
+      }
+    } catch (storyWatchdogErr) {
+      console.error("Story watchdog error:", storyWatchdogErr);
+    }
+
+    return json({ status: "ok", triggered_count: triggered.length, triggered, story_triggered: storyTriggered, watchdog_retried: stuckResults, story_watchdog_retried: storyStuckResults });
   } catch (err) {
     console.error("Scheduler error:", err);
     return json({ error: err.message }, 500);
