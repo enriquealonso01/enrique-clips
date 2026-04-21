@@ -76,7 +76,7 @@ async function chainFunction(fnName: string, body: any) {
 
 async function fetchImageAsBase64(url: string): Promise<string | undefined> {
   try {
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!resp.ok) return undefined;
     const buffer = await resp.arrayBuffer();
     const bytes = new Uint8Array(buffer);
@@ -220,9 +220,16 @@ async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: 
   const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
   if (!key) return [];
   const params = new URLSearchParams({ q: query, count: String(count), safesearch: "off" });
-  const resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
-    headers: { Accept: "application/json", "X-Subscription-Token": key },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (e) {
+    console.error(`Brave image search fetch error: ${(e as Error).message}`);
+    return [];
+  }
   if (!resp.ok) {
     const body = await resp.text();
     console.error(`Brave image search failed: ${resp.status} — ${body.substring(0, 300)}`);
@@ -242,9 +249,16 @@ async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ u
   const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
   if (!key) return [];
   const params = new URLSearchParams({ q: query, count: String(count) });
-  const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-    headers: { Accept: "application/json", "X-Subscription-Token": key },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (e) {
+    console.error(`Brave web search fetch error: ${(e as Error).message}`);
+    return [];
+  }
   if (!resp.ok) { await resp.text(); return []; }
   const data = await resp.json();
   const images: Array<{ url: string; title: string }> = [];
@@ -257,7 +271,7 @@ async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ u
 
 async function validateImageUrl(url: string): Promise<boolean> {
   try {
-    const headResp = await fetch(url, { method: "HEAD", redirect: "follow" });
+    const headResp = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(8_000) });
     const headType = headResp.headers.get("content-type") || "";
     if (headResp.ok && headType.startsWith("image")) return true;
   } catch {
@@ -272,6 +286,7 @@ async function validateImageUrl(url: string): Promise<boolean> {
         Accept: "image/*,*/*;q=0.8",
         Range: "bytes=0-0",
       },
+      signal: AbortSignal.timeout(8_000),
     });
     const contentType = resp.headers.get("content-type") || "";
     return resp.ok && (
