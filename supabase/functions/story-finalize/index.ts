@@ -313,11 +313,13 @@ Deno.serve(async (req) => {
 
     await updateRun({ progress_pct: 80 });
     if (await checkCancelled()) return json({ status: "cancelled" });
+    } // end Rendi else (skipped on resumeFromEndCard / resumeFromSubmagic)
 
     // ══════════════════════════════════════════════════════
     // STAGE 14: Subtitles via Submagic API
     // ══════════════════════════════════════════════════════
 
+    if (!resumeFromEndCard) {
     await updateRun({ current_stage: "subtitles_processing", progress_pct: 82 });
 
     captionedPath = storyPath; // fallback: use uncaptioned video
