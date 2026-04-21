@@ -194,15 +194,17 @@ Deno.serve(async (req) => {
     const bgmGain = audioMix.background_music_gain_db ?? -22;
 
     if (narrationIdx >= 0 && bgmIdx >= 0) {
-      audioFilter = `;[${bgmIdx}:a]volume=${bgmGain}dB[bgm_low];[${narrationIdx}:a][bgm_low]amix=inputs=2:duration=first:dropout_transition=2[aout]`;
+      audioFilter = `;[${bgmIdx}:a]volume=${bgmGain}dB[bgm_low];[${narrationIdx}:a][bgm_low]amix=inputs=2:duration=first:dropout_transition=2,apad[aout]`;
     } else if (narrationIdx >= 0) {
-      audioFilter = `;[${narrationIdx}:a]acopy[aout]`;
+      audioFilter = `;[${narrationIdx}:a]apad[aout]`;
     } else {
       audioFilter = `;anullsrc=r=44100:cl=stereo[aout]`;
     }
 
     const fullFilter = filterParts.join(";") + audioFilter;
-    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -shortest -movflags +faststart {{out_1}}`;
+    // Use video duration as authoritative cap; audio is apadded to match (no -shortest, which would
+    // truncate to the narration length and create an audio/video desync at the end card concat).
+    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart {{out_1}}`;
 
     await log("info", `Rendi story FFmpeg: ${storyCmd.substring(0, 500)}...`);
 
