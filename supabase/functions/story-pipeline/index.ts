@@ -320,7 +320,7 @@ async function aiRelevanceCheck(sb: SB, runId: string, imageUrl: string, story: 
           ] as any,
         },
       ],
-      model: MODELS.TEXT_CHEAP,
+      model: "gemini-2.5-flash-lite",
       endpoint: "story_image_relevance",
       noRetryOn503: true,
     });
