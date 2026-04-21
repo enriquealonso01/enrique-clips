@@ -438,6 +438,7 @@ Deno.serve(async (req) => {
     } else {
       await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured)");
     }
+    } // end if (!resumeFromEndCard)
 
     // ══════════════════════════════════════════════════════
     // STAGE 15-17: End Card
