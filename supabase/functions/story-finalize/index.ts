@@ -380,7 +380,7 @@ Deno.serve(async (req) => {
 
           if (proj.status === "completed" && proj.downloadUrl) {
             captionedVideoUrl = proj.downloadUrl;
-            await log("info", `Submagic captioned video ready: ${captionedVideoUrl.substring(0, 80)}...`);
+            await log("info", `Submagic captioned video ready: ${(captionedVideoUrl || "").substring(0, 80)}...`);
             break;
           }
           if (proj.status === "failed") {
