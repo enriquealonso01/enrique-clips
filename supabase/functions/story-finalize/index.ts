@@ -147,6 +147,27 @@ Deno.serve(async (req) => {
     // STAGE 12-13: Assemble story video with Rendi
     // ══════════════════════════════════════════════════════
 
+    let storyPath: string;
+    let captionedPath: string;
+    let storyVideoDurationSec: number;
+
+    // Compute clip durations (needed for end-card xfade offset even on resume)
+    const timedBeats = meta.timed_beats || [];
+    const dissolveDuration = 0.3;
+    const clipDurations = completedClips.map((clip: any, i: number) => {
+      const m = (clip.metadata as any) || {};
+      const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
+      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
+      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
+      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
+    });
+    storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum: number, duration: number) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
+
+    if (resumeFromEndCard) {
+      captionedPath = existingCaptioned!.supabase_path;
+      storyPath = captionedPath;
+      await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
+    } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
 
