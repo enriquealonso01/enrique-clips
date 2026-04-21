@@ -1945,9 +1945,10 @@ Deno.serve(async (req) => {
                 const aTeaseLabels: string[] = [];
                 for (let si = 0; si < resolvedTeaserSegs.length; si++) {
                   const seg = resolvedTeaserSegs[si];
+                  const inIdx = clipInputIdxes[seg.clipIdx];
                   const vLabel = `tv${si}`;
                   const aLabel = `ta${si}`;
-                  filterParts.push(`[${normalizedClipVideoLabels[seg.clipIdx]}]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS[${vLabel}]`);
+                  filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS,scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${vLabel}]`);
                   filterParts.push(`[${normalizedClipAudioLabels[seg.clipIdx]}]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
                   vTeaseLabels.push(vLabel);
                   aTeaseLabels.push(aLabel);
