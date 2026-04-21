@@ -515,12 +515,15 @@ async function stage6(sb: SB, runId: string, story: any, targetDuration: number 
 
   const minBeats = Math.max(4, Math.round(targetDuration / 12));
   const maxBeats = Math.max(6, Math.round(targetDuration / 5));
-  // Narration pace ~2.5 wps when spoken. With beat-based segmentation +
-  // gentle silence trimming (only extreme leading silences stripped), the
-  // raw-to-stitched ratio is now near 1:1, so a small inflation suffices.
-  const WORDS_PER_SEC_AFTER_TRIM = 2.8;
+  // Aggressive silenceremove strips leading + trailing silence per beat,
+  // typically removing 40-60% of raw audio. Inflate the word budget so the
+  // post-trim stitched narration matches target_duration. We also instruct
+  // the model to write MANY SHORT beats (rather than few long ones) — short
+  // beats produce tighter ElevenLabs output with less dramatic internal
+  // padding that gets stripped.
+  const WORDS_PER_SEC_AFTER_TRIM = 4.0;
   const targetWords = Math.round(targetDuration * WORDS_PER_SEC_AFTER_TRIM);
-  const minWords = Math.round(targetDuration * 2.5);
+  const minWords = Math.round(targetDuration * 3.6);
 
   const result = await callStructured({
     messages: [
