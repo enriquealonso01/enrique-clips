@@ -481,23 +481,40 @@ export default function StoryRunMonitor() {
                     {catKey === "audio" && (
                       <div className="space-y-2">
                         {items.map((a) => (
-                          <div key={a.id} className="flex items-center gap-3 border rounded-lg p-3">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="shrink-0 h-9 w-9"
-                              onClick={() => playAudio(a.supabase_path, a.id)}
-                            >
-                              {playingAssetId === a.id
-                                ? <Pause className="h-4 w-4" />
-                                : <Volume2 className="h-4 w-4" />}
-                            </Button>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium">{humanLabel(a.type)}</p>
-                              <p className="text-xs text-muted-foreground truncate">{a.supabase_path.split("/").pop()}</p>
+                          <div key={a.id} className="border rounded-lg p-3 space-y-2">
+                            <div className="flex items-center gap-3">
+                              <Volume2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium">{humanLabel(a.type)}</p>
+                                <p className="text-xs text-muted-foreground truncate">{a.supabase_path.split("/").pop()}</p>
+                              </div>
+                              {(a.metadata as any)?.duration_sec && (
+                                <Badge variant="secondary" className="shrink-0">
+                                  {formatDuration((a.metadata as any).duration_sec)}
+                                </Badge>
+                              )}
                             </div>
-                            {playingAssetId === a.id && (
-                              <Badge variant="default" className="shrink-0 animate-pulse">Playing</Badge>
+                            {audioUrls[a.id] ? (
+                              <audio
+                                src={audioUrls[a.id]}
+                                controls
+                                preload="metadata"
+                                className="w-full"
+                              />
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full"
+                                disabled={loadingAudioId === a.id}
+                                onClick={() => loadAudio(a.supabase_path, a.id)}
+                              >
+                                {loadingAudioId === a.id ? (
+                                  <><RefreshCw className="h-3 w-3 mr-1 animate-spin" /> Loading...</>
+                                ) : (
+                                  <><Play className="h-3 w-3 mr-1" /> Load Audio</>
+                                )}
+                              </Button>
                             )}
                           </div>
                         ))}
