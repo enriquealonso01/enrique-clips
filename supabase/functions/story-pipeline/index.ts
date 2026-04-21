@@ -307,6 +307,7 @@ async function aiRelevanceCheck(sb: SB, runId: string, imageUrl: string, story: 
       ],
       model: MODELS.TEXT_CHEAP,
       endpoint: "story_image_relevance",
+      noRetryOn503: true,
     });
     const text = typeof resp === "string" ? resp : resp?.content || resp?.text || JSON.stringify(resp);
     const jsonMatch = text.match(/\{[\s\S]*?"relevant"[\s\S]*?\}/);

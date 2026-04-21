@@ -325,6 +325,8 @@ export interface CallTextOptions {
   max_tokens?: number;
   premium?: boolean;
   endpoint?: string;
+  /** If true, 503/504 errors throw immediately instead of retrying with 60s waits. Use for non-critical / fail-soft calls. */
+  noRetryOn503?: boolean;
 }
 
 export interface CallTextResult {
@@ -448,6 +450,15 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
       const is503 = (err instanceof GeminiApiError && (err.status === 503 || err.status === 504)) ||
                      (err instanceof OpenAIApiError && (err.status === 503 || err.status === 504));
       if (is503) {
+        if (opts.noRetryOn503) {
+          console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). noRetryOn503=true, failing fast.`);
+          logUsage({
+            endpoint: `${endpoint}_503_failfast`, model, success: false,
+            latency_ms: Date.now() - start,
+            error: `503 failfast`,
+          });
+          throw err;
+        }
         console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 60s before retry...`);
         logUsage({
           endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false,
