@@ -220,9 +220,16 @@ async function braveImageSearch(query: string, count = 5): Promise<Array<{ url: 
   const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
   if (!key) return [];
   const params = new URLSearchParams({ q: query, count: String(count), safesearch: "off" });
-  const resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
-    headers: { Accept: "application/json", "X-Subscription-Token": key },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.search.brave.com/res/v1/images/search?${params}`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (e) {
+    console.error(`Brave image search fetch error: ${(e as Error).message}`);
+    return [];
+  }
   if (!resp.ok) {
     const body = await resp.text();
     console.error(`Brave image search failed: ${resp.status} — ${body.substring(0, 300)}`);
@@ -242,9 +249,16 @@ async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ u
   const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
   if (!key) return [];
   const params = new URLSearchParams({ q: query, count: String(count) });
-  const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
-    headers: { Accept: "application/json", "X-Subscription-Token": key },
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.search.brave.com/res/v1/web/search?${params}`, {
+      headers: { Accept: "application/json", "X-Subscription-Token": key },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (e) {
+    console.error(`Brave web search fetch error: ${(e as Error).message}`);
+    return [];
+  }
   if (!resp.ok) { await resp.text(); return []; }
   const data = await resp.json();
   const images: Array<{ url: string; title: string }> = [];
