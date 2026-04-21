@@ -271,7 +271,7 @@ async function braveWebSearchImages(query: string, count = 8): Promise<Array<{ u
 
 async function validateImageUrl(url: string): Promise<boolean> {
   try {
-    const headResp = await fetch(url, { method: "HEAD", redirect: "follow" });
+    const headResp = await fetch(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(8_000) });
     const headType = headResp.headers.get("content-type") || "";
     if (headResp.ok && headType.startsWith("image")) return true;
   } catch {
@@ -286,6 +286,7 @@ async function validateImageUrl(url: string): Promise<boolean> {
         Accept: "image/*,*/*;q=0.8",
         Range: "bytes=0-0",
       },
+      signal: AbortSignal.timeout(8_000),
     });
     const contentType = resp.headers.get("content-type") || "";
     return resp.ok && (
