@@ -292,7 +292,7 @@ Deno.serve(async (req) => {
             title: (meta.story?.title || "Story Video").substring(0, 100),
             language: "en",
             videoUrl: videoUrl,
-            templateId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
+            userThemeId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
           }),
         });
 
