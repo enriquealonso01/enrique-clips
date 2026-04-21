@@ -342,9 +342,16 @@ Deno.serve(async (req) => {
         const subProjectId = subProject.id;
         await log("info", `Submagic project created: ${subProjectId}`);
 
+        // Persist project ID immediately so chained invocations can resume polling without re-creating
+        const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+        const mergedMeta = { ...((curRunMeta?.generated_metadata as any) || {}), submagic_project_id: subProjectId, submagic_story_path: storyPath };
+        await sb.from("story_runs").update({ generated_metadata: mergedMeta }).eq("id", runId);
+
         // Step 2: Poll for transcription completion
         let transcribed = false;
-        for (let poll = 0; poll < 60; poll++) {
+        const t0 = Date.now();
+        // Cap polling at 70s per invocation to leave room for export+download+endcard or chaining
+        for (let poll = 0; poll < 60 && (Date.now() - t0) < 70000; poll++) {
           await sleep(5000);
           const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
             headers: { "x-api-key": SUBMAGIC_API_KEY },
@@ -365,7 +372,17 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (!transcribed) throw new Error("Submagic transcription timed out after 5 minutes");
+        if (!transcribed) {
+          // Chain to a fresh invocation to keep polling without hitting edge timeout
+          await log("info", "Submagic still transcribing — chaining to fresh invocation to continue polling");
+          const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+          fetch(chainUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, force_retry: true }),
+          }).catch(() => {});
+          return json({ status: "chained_submagic_transcribe", run_id: runId });
+        }
 
         // Step 3: Export project (render captioned video)
         const exportResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}/export`, {
