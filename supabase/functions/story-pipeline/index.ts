@@ -515,14 +515,12 @@ async function stage6(sb: SB, runId: string, story: any, targetDuration: number 
 
   const minBeats = Math.max(4, Math.round(targetDuration / 12));
   const maxBeats = Math.max(6, Math.round(targetDuration / 5));
-  // Narration pace ~2.5 wps when spoken, but ElevenLabs segments include
-  // significant leading + trailing silence (often 2-3s per segment) that the
-  // stitcher strips via silenceremove. Empirically, ~43% of raw audio is
-  // silence — so to hit the target stitched duration we must inflate the
-  // word budget aggressively. 4.4 wps ≈ 2.5 wps spoken / 0.57 retention ratio.
-  const WORDS_PER_SEC_AFTER_TRIM = 4.4;
+  // Narration pace ~2.5 wps when spoken. With beat-based segmentation +
+  // gentle silence trimming (only extreme leading silences stripped), the
+  // raw-to-stitched ratio is now near 1:1, so a small inflation suffices.
+  const WORDS_PER_SEC_AFTER_TRIM = 2.8;
   const targetWords = Math.round(targetDuration * WORDS_PER_SEC_AFTER_TRIM);
-  const minWords = Math.round(targetDuration * 4.0);
+  const minWords = Math.round(targetDuration * 2.5);
 
   const result = await callStructured({
     messages: [
@@ -536,7 +534,7 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
-- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total. CRITICAL: leading and trailing silences in each beat's audio are stripped during stitching (typically removing ~40% of the raw audio length), so you MUST write substantially more text than a naive words-per-second estimate would suggest. Err on the side of MORE words — under-writing produces a video where narration ends long before the visuals do.
+- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total at a natural ~2.5 words-per-second narrator pace. Keep beats roughly even in length (avoid one-word beats next to long paragraph beats).
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
