@@ -25,7 +25,12 @@ Deno.serve(async (req) => {
   const SUBMAGIC_API_KEY = Deno.env.get("SUBMAGIC_API_KEY");
 
   let runId: string;
-  try { const body = await req.json(); runId = body.run_id; } catch { return json({ error: "run_id required" }, 400); }
+  let forceRetry = false;
+  try {
+    const body = await req.json();
+    runId = body.run_id;
+    forceRetry = !!body.force_retry;
+  } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
   async function log(level: string, message: string, data?: unknown) {
@@ -44,7 +49,7 @@ Deno.serve(async (req) => {
 
   async function checkCancelled(): Promise<boolean> {
     const { data } = await sb.from("story_runs").select("status").eq("id", runId).single();
-    if (data && ["cancelled", "failed"].includes(data.status)) {
+    if (data && (data.status === "cancelled" || (data.status === "failed" && !forceRetry))) {
       await log("info", `Finalize aborted: run is ${data.status}`);
       return true;
     }
@@ -54,7 +59,7 @@ Deno.serve(async (req) => {
   try {
     // Check cancellation before starting
     const { data: statusCheck } = await sb.from("story_runs").select("status").eq("id", runId).single();
-    if (statusCheck && ["cancelled", "failed"].includes(statusCheck.status)) {
+    if (statusCheck && (statusCheck.status === "cancelled" || (statusCheck.status === "failed" && !forceRetry))) {
       await log("info", `Finalize aborted: run is ${statusCheck.status}`);
       return json({ status: "aborted", reason: statusCheck.status });
     }
@@ -67,11 +72,12 @@ Deno.serve(async (req) => {
     const config = project?.config_json || {};
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
+    const endCardDurationSec = endingConfig.target_duration_sec ?? DEFAULT_END_CARD_DURATION_SEC;
 
     // ── Check for already-completed finalization (idempotency) ──
     const { data: existingFinal } = await sb.from("story_assets")
       .select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
-    if (existingFinal && existingFinal.length > 0) {
+    if (!forceRetry && existingFinal && existingFinal.length > 0) {
       await log("info", "Final video already exists — skipping duplicate finalization");
       return json({ status: "already_finalized", run_id: runId });
     }
@@ -170,23 +176,32 @@ Deno.serve(async (req) => {
     // Build filter_complex with dissolves between clips
     const timedBeats = meta.timed_beats || [];
     const dissolveDuration = 0.3;
-    let filterParts: string[] = [];
-    let lastLabel = "[0:v]";
+    const clipDurations = completedClips.map((clip: any, i: number) => {
+      const m = (clip.metadata as any) || {};
+      const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
+      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
+      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
+      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
+    });
+    const storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum, duration) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
+    let filterParts: string[] = completedClips.map((_: any, i: number) =>
+      `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${clipDurations[i].toFixed(3)},setpts=PTS-STARTPTS[vclip${i}]`
+    );
+    let lastLabel = "[vclip0]";
     let cumulativeOffset = 0;
 
-    // Simple concat with xfade dissolves
+    // Trim each generated clip to its narration beat, then xfade the bounded clips.
     for (let i = 1; i < clipUrls.length; i++) {
       const outLabel = i < clipUrls.length - 1 ? `[v${i}]` : "[vout]";
-      // Calculate offset from cumulative clip durations, not just beat end times
-      const clipDuration = timedBeats[i - 1]?.duration || 4;
+      const clipDuration = clipDurations[i - 1];
       cumulativeOffset += clipDuration - dissolveDuration;
       const safeOffset = Math.max(0.1, cumulativeOffset);
-      filterParts.push(`${lastLabel}[${i}:v]xfade=transition=fade:duration=${dissolveDuration}:offset=${safeOffset.toFixed(2)}${outLabel}`);
+      filterParts.push(`${lastLabel}[vclip${i}]xfade=transition=fade:duration=${dissolveDuration}:offset=${safeOffset.toFixed(2)}${outLabel}`);
       lastLabel = outLabel;
     }
 
     if (clipUrls.length === 1) {
-      filterParts.push(`[0:v]copy[vout]`);
+      filterParts.push(`[vclip0]copy[vout]`);
     }
 
     // Audio mixing
@@ -194,17 +209,17 @@ Deno.serve(async (req) => {
     const bgmGain = audioMix.background_music_gain_db ?? -22;
 
     if (narrationIdx >= 0 && bgmIdx >= 0) {
-      audioFilter = `;[${bgmIdx}:a]volume=${bgmGain}dB[bgm_low];[${narrationIdx}:a][bgm_low]amix=inputs=2:duration=first:dropout_transition=2,apad[aout]`;
+      audioFilter = `;[${bgmIdx}:a]volume=${bgmGain}dB[bgm_low];[${narrationIdx}:a][bgm_low]amix=inputs=2:duration=first:dropout_transition=2,apad=whole_dur=${storyVideoDurationSec.toFixed(3)}[aout]`;
     } else if (narrationIdx >= 0) {
-      audioFilter = `;[${narrationIdx}:a]apad[aout]`;
+      audioFilter = `;[${narrationIdx}:a]apad=whole_dur=${storyVideoDurationSec.toFixed(3)}[aout]`;
     } else {
-      audioFilter = `;anullsrc=r=44100:cl=stereo[aout]`;
+      audioFilter = `;anullsrc=r=${DEFAULT_STORY_AUDIO_RATE}:cl=stereo:d=${storyVideoDurationSec.toFixed(3)}[aout]`;
     }
 
     const fullFilter = filterParts.join(";") + audioFilter;
-    // Use video duration as authoritative cap; audio is apadded to match (no -shortest, which would
-    // truncate to the narration length and create an audio/video desync at the end card concat).
-    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k -movflags +faststart {{out_1}}`;
+    // Use the narration-beat visual duration as the authoritative cap so Rendi cannot encode past
+    // the intended story body or let end-card audio start before the end-card visuals.
+    const storyCmd = `${inputArgs.join(" ")} -filter_complex "${fullFilter}" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${storyVideoDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
 
     await log("info", `Rendi story FFmpeg: ${storyCmd.substring(0, 500)}...`);
 
@@ -365,7 +380,7 @@ Deno.serve(async (req) => {
 
           if (proj.status === "completed" && proj.downloadUrl) {
             captionedVideoUrl = proj.downloadUrl;
-            await log("info", `Submagic captioned video ready: ${captionedVideoUrl.substring(0, 80)}...`);
+            await log("info", `Submagic captioned video ready: ${(captionedVideoUrl || "").substring(0, 80)}...`);
             break;
           }
           if (proj.status === "failed") {
@@ -529,12 +544,12 @@ Deno.serve(async (req) => {
       // Re-encode both inputs to matching specs. Use xfade dissolve for smooth transition.
       // Use ultrafast to stay within Rendi's 60s account limit.
       // Both are scaled to 1080x1920 and normalized to the same audio sample rate.
-      // xfade offset = story duration - dissolve duration (we probe via ffprobe-like approach;
-      // since we can't probe, we use the sum of beat durations as estimate)
-      const totalStoryDuration = (meta.timed_beats || []).reduce((sum: number, b: any) => sum + (b.duration || 4), 0);
+      // xfade offset = bounded story-body duration - dissolve duration.
+      const totalStoryDuration = storyVideoDurationSec;
       const dissolveSec = 0.5;
       const xfadeOffset = Math.max(0.5, totalStoryDuration - dissolveSec);
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)}[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -movflags +faststart {{out_1}}`;
+      const finalDurationSec = totalStoryDuration + endCardDurationSec - dissolveSec;
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)}[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${finalDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
