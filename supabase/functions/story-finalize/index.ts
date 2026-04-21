@@ -90,6 +90,16 @@ Deno.serve(async (req) => {
       await log("info", `Resume detected: captioned video already exists at ${existingCaptioned!.supabase_path}. Skipping to end card.`);
     }
 
+    // ── Resume shortcut #2: Submagic project already submitted but not yet downloaded ──
+    const { data: priorRun } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+    const priorMeta = (priorRun?.generated_metadata as any) || {};
+    const existingSubmagicId: string | null = !resumeFromEndCard && priorMeta.submagic_project_id ? priorMeta.submagic_project_id : null;
+    const existingSubmagicStoryPath: string | null = !resumeFromEndCard && priorMeta.submagic_story_path ? priorMeta.submagic_story_path : null;
+    const resumeFromSubmagic = !!existingSubmagicId && !!existingSubmagicStoryPath;
+    if (resumeFromSubmagic) {
+      await log("info", `Resume detected: Submagic project ${existingSubmagicId} already submitted. Skipping Rendi, polling Submagic.`);
+    }
+
     // ── Get all scene clips (completed) ──
     const { data: clipAssets } = await sb.from("story_assets")
       .select("*").eq("run_id", runId).eq("type", "scene_video_raw")
@@ -115,7 +125,7 @@ Deno.serve(async (req) => {
 
     // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    if (!resumeFromEndCard) {
+    if (!resumeFromEndCard && !resumeFromSubmagic) {
       for (const clip of completedClips) {
         const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
         if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
@@ -167,6 +177,10 @@ Deno.serve(async (req) => {
       captionedPath = existingCaptioned!.supabase_path;
       storyPath = captionedPath;
       await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
+    } else if (resumeFromSubmagic) {
+      storyPath = existingSubmagicStoryPath!;
+      captionedPath = storyPath; // will be overwritten by Submagic download below
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to Submagic poll.`);
     } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
@@ -299,11 +313,13 @@ Deno.serve(async (req) => {
 
     await updateRun({ progress_pct: 80 });
     if (await checkCancelled()) return json({ status: "cancelled" });
+    } // end Rendi else (skipped on resumeFromEndCard / resumeFromSubmagic)
 
     // ══════════════════════════════════════════════════════
     // STAGE 14: Subtitles via Submagic API
     // ══════════════════════════════════════════════════════
 
+    if (!resumeFromEndCard) {
     await updateRun({ current_stage: "subtitles_processing", progress_pct: 82 });
 
     captionedPath = storyPath; // fallback: use uncaptioned video
@@ -312,39 +328,45 @@ Deno.serve(async (req) => {
       await log("info", "Stage 14: Adding subtitles via Submagic API");
 
       try {
-        // Get a public signed URL for the story video (Submagic needs a public URL)
-        const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
-        const videoUrl = storySignedUrl?.signedUrl;
+        let subProjectId: string;
+        if (existingSubmagicId) {
+          subProjectId = existingSubmagicId;
+          await log("info", `Reusing existing Submagic project: ${subProjectId}`);
+        } else {
+          // Get a public signed URL for the story video (Submagic needs a public URL)
+          const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
+          const videoUrl = storySignedUrl?.signedUrl;
+          if (!videoUrl) throw new Error("Could not get signed URL for story video");
 
-        if (!videoUrl) throw new Error("Could not get signed URL for story video");
-
-        // Step 1: Create project in Submagic
-        const createResp = await fetch("https://api.submagic.co/v1/projects", {
-          method: "POST",
-          headers: {
-            "x-api-key": SUBMAGIC_API_KEY,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: (meta.story?.title || "Story Video").substring(0, 100),
-            language: "en",
-            videoUrl: videoUrl,
-            userThemeId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
-          }),
-        });
-
-        if (!createResp.ok) {
-          const errText = await createResp.text();
-          throw new Error(`Submagic create project failed: ${createResp.status} ${errText.substring(0, 200)}`);
+          const createResp = await fetch("https://api.submagic.co/v1/projects", {
+            method: "POST",
+            headers: { "x-api-key": SUBMAGIC_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: (meta.story?.title || "Story Video").substring(0, 100),
+              language: "en",
+              videoUrl: videoUrl,
+              userThemeId: "8ef61dce-7589-48ff-b269-8623a3a5179e",
+            }),
+          });
+          if (!createResp.ok) {
+            const errText = await createResp.text();
+            throw new Error(`Submagic create project failed: ${createResp.status} ${errText.substring(0, 200)}`);
+          }
+          const subProject = await createResp.json();
+          subProjectId = subProject.id;
+          await log("info", `Submagic project created: ${subProjectId}`);
         }
 
-        const subProject = await createResp.json();
-        const subProjectId = subProject.id;
-        await log("info", `Submagic project created: ${subProjectId}`);
+        // Persist project ID immediately so chained invocations can resume polling without re-creating
+        const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+        const mergedMeta = { ...((curRunMeta?.generated_metadata as any) || {}), submagic_project_id: subProjectId, submagic_story_path: storyPath };
+        await sb.from("story_runs").update({ generated_metadata: mergedMeta }).eq("id", runId);
 
         // Step 2: Poll for transcription completion
         let transcribed = false;
-        for (let poll = 0; poll < 60; poll++) {
+        const t0 = Date.now();
+        // Cap polling at 70s per invocation to leave room for export+download+endcard or chaining
+        for (let poll = 0; poll < 60 && (Date.now() - t0) < 70000; poll++) {
           await sleep(5000);
           const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
             headers: { "x-api-key": SUBMAGIC_API_KEY },
@@ -365,7 +387,17 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (!transcribed) throw new Error("Submagic transcription timed out after 5 minutes");
+        if (!transcribed) {
+          // Chain to a fresh invocation to keep polling without hitting edge timeout
+          await log("info", "Submagic still transcribing — chaining to fresh invocation to continue polling");
+          const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+          fetch(chainUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, force_retry: true }),
+          }).catch(() => {});
+          return json({ status: "chained_submagic_transcribe", run_id: runId });
+        }
 
         // Step 3: Export project (render captioned video)
         const exportResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}/export`, {
@@ -390,7 +422,8 @@ Deno.serve(async (req) => {
 
         // Step 4: Poll for export completion
         let captionedVideoUrl: string | null = null;
-        for (let poll = 0; poll < 120; poll++) {
+        const tExp = Date.now();
+        for (let poll = 0; poll < 120 && (Date.now() - tExp) < 60000; poll++) {
           await sleep(5000);
           const getResp = await fetch(`https://api.submagic.co/v1/projects/${subProjectId}`, {
             headers: { "x-api-key": SUBMAGIC_API_KEY },
@@ -411,7 +444,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (!captionedVideoUrl) throw new Error("Submagic export timed out after 10 minutes");
+        if (!captionedVideoUrl) {
+          await log("info", "Submagic still exporting — chaining to fresh invocation");
+          const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+          fetch(chainUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, force_retry: true }),
+          }).catch(() => {});
+          return json({ status: "chained_submagic_export", run_id: runId });
+        }
 
         // Step 5: Download captioned video and store
         const captDl = await fetch(captionedVideoUrl);
