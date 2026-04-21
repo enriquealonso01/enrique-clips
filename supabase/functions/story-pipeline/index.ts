@@ -458,7 +458,7 @@ async function stage4(sb: SB, runId: string, story: any) {
   const prompt = `Photorealistic photograph, editorial quality, natural lighting. Story: "${story.title}". ${story.summary || ""}. ${chars ? `People: ${chars}.` : ""} ${locations ? `Setting: ${locations}.` : ""} Capture the key emotional moment. Vertical 9:16, shallow depth of field, candid documentary style. NO text, words, letters, watermarks, or typography in the image.`;
 
   const imageResult = await callImage({
-    prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
+    prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "medium",
     endpoint: "story_real_image_fallback",
   });
 
@@ -495,7 +495,7 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
   const refData = realImage?.primary_url ? await fetchImageAsBase64(realImage.primary_url) : undefined;
 
   const imageResult = await callImage({
-    prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
+    prompt, model: MODELS.IMAGE_FINAL, size: "9:16", quality: "medium",
     endpoint: "story_cast_image", referenceImage: refData,
   });
 
@@ -944,7 +944,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
       const stylePrefix = "Warm, semi-realistic human character, soft facial features, expressive eyes, natural skin texture, slightly stylized proportions, cinematic lighting, shallow depth of field, 35mm lens, soft contrast, warm color grading, highly detailed but not hyper-realistic, consistent character design. ";
       const imgResult = await callImage({
         prompt: `${stylePrefix}${scene.prompt}\n\nIMPORTANT: Warm semi-realistic cinematic style — NOT cartoon, NOT anime, NOT 3D render, NOT hyper-realistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Cinematic warm lighting, shallow depth of field, 35mm lens look. NO text, words, letters, watermarks, or typography in the image.`,
-        model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
+        model: MODELS.IMAGE_FINAL, size: "9:16", quality: "medium",
         endpoint: `story_scene_image_${i}`,
         referenceImage: castRef,
       });
