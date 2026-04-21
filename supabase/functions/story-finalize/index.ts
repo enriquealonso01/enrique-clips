@@ -431,6 +431,16 @@ Deno.serve(async (req) => {
         });
 
         await log("info", `Captioned video stored: ${(captBytes.length / 1024 / 1024).toFixed(1)}MB`);
+
+        // ── Chain: re-invoke self to continue with end card stage (avoid 150s timeout) ──
+        await log("info", "Chaining: re-invoking story-finalize for end card stage");
+        const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+        fetch(chainUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ run_id: runId, force_retry: true }),
+        }).catch(() => {});
+        return json({ status: "chained_to_endcard", run_id: runId });
       } catch (subErr) {
         await log("warn", `Submagic subtitles failed: ${(subErr as Error).message}. Continuing without subtitles.`);
         captionedPath = storyPath; // fallback
