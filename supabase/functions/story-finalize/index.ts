@@ -179,7 +179,9 @@ Deno.serve(async (req) => {
     const clipDurations = completedClips.map((clip: any, i: number) => {
       const m = (clip.metadata as any) || {};
       const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
-      return Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
+      const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
+      const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
+      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
     });
     const storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum, duration) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
     let filterParts: string[] = completedClips.map((_: any, i: number) =>
