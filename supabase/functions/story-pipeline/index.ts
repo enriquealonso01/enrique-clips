@@ -698,16 +698,18 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   }
 
   // Build Rendi FFmpeg command:
-  // LAYER A: silenceremove on each segment to strip leading + trailing silence below -40dB.
+  // LAYER A: silenceremove on each segment to strip leading + final trailing silence below -40dB.
   //   start_periods=1 → strip leading silence completely
-  //   stop_periods=-1 stop_duration=0.05 → strip every trailing silence chunk ≥50ms (recursive at end)
+  //   stop_periods=1 stop_duration=0.6 → strip ONLY the final trailing silence longer than 600ms.
+  //   IMPORTANT: stop_periods=-1 would remove every mid-speech pause ≥ stop_duration, which silently
+  //   destroys whole sentences. We only want to clean the very end of each segment.
   // Then optionally pad each non-last segment with the configured inter-segment gap.
   const gapSeconds = Math.max(0, gapMs / 1000);
   const inputFiles: Record<string, string> = {};
   const outputFiles: Record<string, string> = { out_narration: "narration_stitched.mp3" };
   segUrls.forEach((url, i) => { inputFiles[`in_seg${i}`] = url; });
 
-  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0:start_threshold=-40dB:stop_periods=-1:stop_duration=0.05:stop_threshold=-40dB";
+  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0:start_threshold=-40dB:stop_periods=1:stop_duration=0.6:stop_threshold=-40dB:detection=peak";
 
   let filter = "";
   const labels: string[] = [];
