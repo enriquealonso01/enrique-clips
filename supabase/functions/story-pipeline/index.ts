@@ -633,38 +633,61 @@ async function callElevenLabsWithTimestamps(text: string, prev?: string, next?: 
 // spoken portion, so we use it directly: the stitched timeline equals the sum of
 // (last_char_end_time) per segment + inter-segment gaps. This keeps downstream beat
 // durations aligned with the trimmed audio that scene clips are planned around.
-function mergeAlignments(perSegment: { alignment: any; duration: number }[], gapSeconds: number) {
+function mergeAlignments(
+  perSegment: { alignment: any; duration: number }[],
+  gapSeconds: number,
+  actualStitchedDuration?: number,
+) {
   const characters: string[] = [];
   const starts: number[] = [];
   const ends: number[] = [];
+
+  // Per-segment "effective" (post-trim, pre-scale) durations.
+  const effectives: number[] = [];
+  const leadingSilences: number[] = [];
+  for (const seg of perSegment) {
+    const a = seg.alignment;
+    const spokenDur = (a?.character_end_times_seconds && a.character_end_times_seconds.length > 0)
+      ? a.character_end_times_seconds[a.character_end_times_seconds.length - 1]
+      : seg.duration;
+    const leadingSilence = (a?.character_start_times_seconds && a.character_start_times_seconds.length > 0)
+      ? a.character_start_times_seconds[0]
+      : 0;
+    effectives.push(Math.max(0, spokenDur - leadingSilence));
+    leadingSilences.push(leadingSilence);
+  }
+
+  // Compute proportional scale so the SUM of (scaled effective durations + inter-segment gaps)
+  // exactly equals the actual stitched MP3 duration. This matches what scene clips will be
+  // planned around (Vidu targets), guaranteeing total clip length == final narration length.
+  const totalEffective = effectives.reduce((a, b) => a + b, 0);
+  const totalGaps = Math.max(0, perSegment.length - 1) * gapSeconds;
+  let scale = 1;
+  if (actualStitchedDuration && totalEffective > 0) {
+    const targetForSegments = Math.max(0.001, actualStitchedDuration - totalGaps);
+    scale = targetForSegments / totalEffective;
+  }
+
   let offset = 0;
   for (let i = 0; i < perSegment.length; i++) {
     const seg = perSegment[i];
     const a = seg.alignment;
-    // Spoken duration = last char's end time (already excludes trailing silence in MP3).
-    const spokenDur = (a?.character_end_times_seconds && a.character_end_times_seconds.length > 0)
-      ? a.character_end_times_seconds[a.character_end_times_seconds.length - 1]
-      : seg.duration;
-    // Leading silence = first char's start time. silenceremove strips it, so shift chars left.
-    const leadingSilence = (a?.character_start_times_seconds && a.character_start_times_seconds.length > 0)
-      ? a.character_start_times_seconds[0]
-      : 0;
-    const effectiveDur = Math.max(0, spokenDur - leadingSilence);
+    const leadingSilence = leadingSilences[i];
+    const scaledEffective = effectives[i] * scale;
 
     if (a?.characters && a?.character_start_times_seconds && a?.character_end_times_seconds) {
       for (let j = 0; j < a.characters.length; j++) {
         characters.push(a.characters[j]);
-        starts.push(Math.max(0, a.character_start_times_seconds[j] - leadingSilence) + offset);
-        ends.push(Math.max(0, a.character_end_times_seconds[j] - leadingSilence) + offset);
+        starts.push(Math.max(0, (a.character_start_times_seconds[j] - leadingSilence) * scale) + offset);
+        ends.push(Math.max(0, (a.character_end_times_seconds[j] - leadingSilence) * scale) + offset);
       }
     }
-    // Insert a space char to represent the inter-segment gap (so beat-text matching still works)
     if (i < perSegment.length - 1) {
       characters.push(" ");
-      starts.push(offset + effectiveDur);
-      ends.push(offset + effectiveDur + gapSeconds);
+      starts.push(offset + scaledEffective);
+      ends.push(offset + scaledEffective + gapSeconds);
     }
-    offset += effectiveDur + (i < perSegment.length - 1 ? gapSeconds : 0);
+    offset += scaledEffective + (i < perSegment.length - 1 ? gapSeconds : 0);
   }
   return { characters, character_start_times_seconds: starts, character_end_times_seconds: ends };
 }
