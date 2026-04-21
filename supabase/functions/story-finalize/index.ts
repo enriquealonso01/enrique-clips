@@ -113,16 +113,17 @@ Deno.serve(async (req) => {
       narrationUrl = nUrl?.signedUrl || null;
     }
 
-    // ── Get clip URLs ──
+    // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    for (const clip of completedClips) {
-      const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
-      if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
-    }
-
-    if (clipUrls.length === 0) {
-      await failRun("No clip URLs available");
-      return json({ error: "No clip URLs" }, 500);
+    if (!resumeFromEndCard) {
+      for (const clip of completedClips) {
+        const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
+        if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
+      }
+      if (clipUrls.length === 0) {
+        await failRun("No clip URLs available");
+        return json({ error: "No clip URLs" }, 500);
+      }
     }
 
     // ── Get background music URL if uploaded ──
