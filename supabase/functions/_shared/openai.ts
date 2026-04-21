@@ -325,6 +325,8 @@ export interface CallTextOptions {
   max_tokens?: number;
   premium?: boolean;
   endpoint?: string;
+  /** If true, 503/504 errors throw immediately instead of retrying with 60s waits. Use for non-critical / fail-soft calls. */
+  noRetryOn503?: boolean;
 }
 
 export interface CallTextResult {
