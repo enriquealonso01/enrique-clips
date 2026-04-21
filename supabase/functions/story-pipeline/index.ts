@@ -944,7 +944,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
       const stylePrefix = "Warm, semi-realistic human character, soft facial features, expressive eyes, natural skin texture, slightly stylized proportions, cinematic lighting, shallow depth of field, 35mm lens, soft contrast, warm color grading, highly detailed but not hyper-realistic, consistent character design. ";
       const imgResult = await callImage({
         prompt: `${stylePrefix}${scene.prompt}\n\nIMPORTANT: Warm semi-realistic cinematic style — NOT cartoon, NOT anime, NOT 3D render, NOT hyper-realistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Cinematic warm lighting, shallow depth of field, 35mm lens look. NO text, words, letters, watermarks, or typography in the image.`,
-        model: MODELS.IMAGE_FINAL, size: "9:16", quality: "high",
+        model: MODELS.IMAGE_FINAL, size: "9:16", quality: "medium",
         endpoint: `story_scene_image_${i}`,
         referenceImage: castRef,
       });
