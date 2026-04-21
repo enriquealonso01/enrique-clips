@@ -173,8 +173,11 @@ async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuratio
     ? `\n\nPREVIOUSLY USED TITLES (DO NOT reuse):\n${lastTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}` : "";
 
   // Adapt beat count to target duration
-  const minBeats = Math.max(4, Math.round(targetDuration / 12));
-  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
+  // Encourage MANY SHORT beats: target ~1 beat per 4-6 seconds of video.
+  // Short beats keep ElevenLabs from inserting long dramatic silences that
+  // would later get stripped, so the post-trim length stays close to target.
+  const minBeats = Math.max(5, Math.round(targetDuration / 6));
+  const maxBeats = Math.max(8, Math.round(targetDuration / 3));
 
   const categoryInstruction = storySearchPrompt
     ? `\n- CATEGORY REQUIREMENT: The story MUST match this category/topic: "${storySearchPrompt}". Only pick stories that fit this requirement.`
