@@ -25,7 +25,12 @@ Deno.serve(async (req) => {
   const SUBMAGIC_API_KEY = Deno.env.get("SUBMAGIC_API_KEY");
 
   let runId: string;
-  try { const body = await req.json(); runId = body.run_id; } catch { return json({ error: "run_id required" }, 400); }
+  let forceRetry = false;
+  try {
+    const body = await req.json();
+    runId = body.run_id;
+    forceRetry = !!body.force_retry;
+  } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
   async function log(level: string, message: string, data?: unknown) {
@@ -44,7 +49,7 @@ Deno.serve(async (req) => {
 
   async function checkCancelled(): Promise<boolean> {
     const { data } = await sb.from("story_runs").select("status").eq("id", runId).single();
-    if (data && ["cancelled", "failed"].includes(data.status)) {
+    if (data && (data.status === "cancelled" || (data.status === "failed" && !forceRetry))) {
       await log("info", `Finalize aborted: run is ${data.status}`);
       return true;
     }
@@ -54,7 +59,7 @@ Deno.serve(async (req) => {
   try {
     // Check cancellation before starting
     const { data: statusCheck } = await sb.from("story_runs").select("status").eq("id", runId).single();
-    if (statusCheck && ["cancelled", "failed"].includes(statusCheck.status)) {
+    if (statusCheck && (statusCheck.status === "cancelled" || (statusCheck.status === "failed" && !forceRetry))) {
       await log("info", `Finalize aborted: run is ${statusCheck.status}`);
       return json({ status: "aborted", reason: statusCheck.status });
     }
@@ -67,6 +72,7 @@ Deno.serve(async (req) => {
     const config = project?.config_json || {};
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
+    const endCardDurationSec = endingConfig.target_duration_sec ?? DEFAULT_END_CARD_DURATION_SEC;
 
     // ── Check for already-completed finalization (idempotency) ──
     const { data: existingFinal } = await sb.from("story_assets")
