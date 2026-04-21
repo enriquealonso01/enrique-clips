@@ -515,14 +515,12 @@ async function stage6(sb: SB, runId: string, story: any, targetDuration: number 
 
   const minBeats = Math.max(4, Math.round(targetDuration / 12));
   const maxBeats = Math.max(6, Math.round(targetDuration / 5));
-  // Narration pace ~2.5 wps when spoken, but ElevenLabs segments include
-  // significant leading + trailing silence (often 2-3s per segment) that the
-  // stitcher strips via silenceremove. Empirically, ~43% of raw audio is
-  // silence — so to hit the target stitched duration we must inflate the
-  // word budget aggressively. 4.4 wps ≈ 2.5 wps spoken / 0.57 retention ratio.
-  const WORDS_PER_SEC_AFTER_TRIM = 4.4;
+  // Narration pace ~2.5 wps when spoken. With beat-based segmentation +
+  // gentle silence trimming (only extreme leading silences stripped), the
+  // raw-to-stitched ratio is now near 1:1, so a small inflation suffices.
+  const WORDS_PER_SEC_AFTER_TRIM = 2.8;
   const targetWords = Math.round(targetDuration * WORDS_PER_SEC_AFTER_TRIM);
-  const minWords = Math.round(targetDuration * 4.0);
+  const minWords = Math.round(targetDuration * 2.5);
 
   const result = await callStructured({
     messages: [
@@ -536,7 +534,7 @@ Reward: ${story.reward_moment}
 Draft beats: ${JSON.stringify(story.draft_beats)}
 
 Requirements:
-- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total. CRITICAL: leading and trailing silences in each beat's audio are stripped during stitching (typically removing ~40% of the raw audio length), so you MUST write substantially more text than a naive words-per-second estimate would suggest. Err on the side of MORE words — under-writing produces a video where narration ends long before the visuals do.
+- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total at a natural ~2.5 words-per-second narrator pace. Keep beats roughly even in length (avoid one-word beats next to long paragraph beats).
 - Strong opening seconds (hook immediately)
 - Clean emotional pacing
 - One spoken idea per beat
@@ -755,18 +753,19 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   }
 
   // Build Rendi FFmpeg command:
-  // LAYER A: silenceremove on each segment to strip leading + final trailing silence below -40dB.
-  //   start_periods=1 → strip leading silence completely
-  //   stop_periods=1 stop_duration=0.6 → strip ONLY the final trailing silence longer than 600ms.
-  //   IMPORTANT: stop_periods=-1 would remove every mid-speech pause ≥ stop_duration, which silently
-  //   destroys whole sentences. We only want to clean the very end of each segment.
-  // Then optionally pad each non-last segment with the configured inter-segment gap.
+  // LAYER A (gentle): trim only the leading silence that exceeds 300ms below -40dB.
+  //   Previously we stripped ALL leading silence + trailing silence >600ms, which
+  //   collapsed beat-based segments by ~70% (ElevenLabs pads dramatic pauses inside
+  //   long emotional beats). Now we keep natural pauses intact and only clip the
+  //   long dead air ElevenLabs prepends to each segment.
+  //   start_duration=0.3 → only strip leading silence longer than 300ms
+  //   no stop_periods → trailing silence is preserved (the apad gap controls spacing)
   const gapSeconds = Math.max(0, gapMs / 1000);
   const inputFiles: Record<string, string> = {};
   const outputFiles: Record<string, string> = { out_narration: "narration_stitched.mp3" };
   segUrls.forEach((url, i) => { inputFiles[`in_seg${i}`] = url; });
 
-  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0:start_threshold=-40dB:stop_periods=1:stop_duration=0.6:stop_threshold=-40dB:detection=peak";
+  const SILENCE_TRIM = "silenceremove=start_periods=1:start_duration=0.3:start_threshold=-40dB:detection=peak";
 
   let filter = "";
   const labels: string[] = [];
