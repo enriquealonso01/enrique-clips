@@ -484,8 +484,13 @@ Deno.serve(async (req) => {
         }).catch(() => {});
         return json({ status: "chained_to_endcard", run_id: runId });
       } catch (subErr) {
-        await log("warn", `Submagic subtitles failed: ${(subErr as Error).message}. Continuing without subtitles.`);
-        captionedPath = storyPath; // fallback
+        const errMsg = (subErr as Error).message;
+        await log("error", `Submagic subtitles failed: ${errMsg}. Pausing run for manual review.`);
+        await updateRun({
+          status: "paused",
+          error_message: `Submagic transcription failed: ${errMsg}`,
+        });
+        return json({ status: "paused", reason: "submagic_failed", run_id: runId });
       }
     } else {
       await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured)");
