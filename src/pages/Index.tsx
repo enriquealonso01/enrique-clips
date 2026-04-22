@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud } from "lucide-react";
+import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -28,6 +30,7 @@ import {
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [view, setView] = useState<"active" | "archived">("active");
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ["projects"],
@@ -121,8 +124,28 @@ export default function ProjectsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
   });
 
+  const toggleArchived = useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
+      const { error } = await supabase
+        .from("projects")
+        .update({ is_archived: archived, ...(archived ? { is_enabled: false } : {}) })
+        .eq("id", id);
+      if (error) throw error;
+      return archived;
+    },
+    onSuccess: (archived) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast({ title: archived ? "Project archived" : "Project unarchived" });
+    },
+    onError: () => toast({ title: "Error", description: "Failed to update project", variant: "destructive" }),
+  });
+
   const getLatestRun = (projectId: string) =>
     latestRuns?.find((r) => r.project_id === projectId);
+
+  const filteredProjects = projects?.filter((p) =>
+    view === "archived" ? p.is_archived : !p.is_archived
+  );
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading projects...</div>;
@@ -141,19 +164,34 @@ export default function ProjectsPage() {
         </Button>
       </div>
 
-      {projects?.length === 0 ? (
+      <Tabs value={view} onValueChange={(v) => setView(v as "active" | "archived")}>
+        <TabsList>
+          <TabsTrigger value="active">
+            Active ({projects?.filter((p) => !p.is_archived).length ?? 0})
+          </TabsTrigger>
+          <TabsTrigger value="archived">
+            Archived ({projects?.filter((p) => p.is_archived).length ?? 0})
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {filteredProjects?.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground mb-4">No projects yet. Create your first one!</p>
-            <Button onClick={() => createProject.mutate()}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Project
-            </Button>
+            <p className="text-muted-foreground mb-4">
+              {view === "archived" ? "No archived projects." : "No projects yet. Create your first one!"}
+            </p>
+            {view === "active" && (
+              <Button onClick={() => createProject.mutate()}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Project
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {projects?.map((project) => {
+          {filteredProjects?.map((project) => {
             const latestRun = getLatestRun(project.id);
             const canPause = latestRun?.status === "running";
             const canResume = latestRun?.status === "paused";
@@ -168,13 +206,46 @@ export default function ProjectsPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg truncate">{project.title}</CardTitle>
-                    <Switch
-                      checked={project.is_enabled}
-                      onCheckedChange={(checked) => {
-                        toggleEnabled.mutate({ id: project.id, enabled: checked });
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      {!project.is_archived && (
+                        <Switch
+                          checked={project.is_enabled}
+                          onCheckedChange={(checked) => {
+                            toggleEnabled.mutate({ id: project.id, enabled: checked });
+                          }}
+                        />
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                          {project.is_archived ? (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleArchived.mutate({ id: project.id, archived: false });
+                              }}
+                            >
+                              <ArchiveRestore className="mr-2 h-4 w-4" />
+                              Unarchive
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleArchived.mutate({ id: project.id, archived: true });
+                              }}
+                            >
+                              <Archive className="mr-2 h-4 w-4" />
+                              Archive
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
