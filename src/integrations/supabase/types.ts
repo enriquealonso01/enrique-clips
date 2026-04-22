@@ -248,6 +248,7 @@ export type Database = {
           facebook_image_post_enabled: boolean
           id: string
           initial_asset_id: string | null
+          is_archived: boolean
           is_enabled: boolean
           kling_mode: string
           kling_model_name: string
@@ -285,6 +286,7 @@ export type Database = {
           facebook_image_post_enabled?: boolean
           id?: string
           initial_asset_id?: string | null
+          is_archived?: boolean
           is_enabled?: boolean
           kling_mode?: string
           kling_model_name?: string
@@ -322,6 +324,7 @@ export type Database = {
           facebook_image_post_enabled?: boolean
           id?: string
           initial_asset_id?: string | null
+          is_archived?: boolean
           is_enabled?: boolean
           kling_mode?: string
           kling_model_name?: string
