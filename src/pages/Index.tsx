@@ -206,13 +206,46 @@ export default function ProjectsPage() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg truncate">{project.title}</CardTitle>
-                    <Switch
-                      checked={project.is_enabled}
-                      onCheckedChange={(checked) => {
-                        toggleEnabled.mutate({ id: project.id, enabled: checked });
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                      {!project.is_archived && (
+                        <Switch
+                          checked={project.is_enabled}
+                          onCheckedChange={(checked) => {
+                            toggleEnabled.mutate({ id: project.id, enabled: checked });
+                          }}
+                        />
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                          {project.is_archived ? (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleArchived.mutate({ id: project.id, archived: false });
+                              }}
+                            >
+                              <ArchiveRestore className="mr-2 h-4 w-4" />
+                              Unarchive
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleArchived.mutate({ id: project.id, archived: true });
+                              }}
+                            >
+                              <Archive className="mr-2 h-4 w-4" />
+                              Archive
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
