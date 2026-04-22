@@ -1,10 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud } from "lucide-react";
+import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -28,6 +30,7 @@ import {
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [view, setView] = useState<"active" | "archived">("active");
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ["projects"],
