@@ -165,12 +165,21 @@ Deno.serve(async (req) => {
     // Compute clip durations (needed for end-card xfade offset even on resume)
     const timedBeats = meta.timed_beats || [];
     const dissolveDuration = 0.3;
+    // Tail buffer added to the LAST clip so the end-card audio crossfade
+    // doesn't eat the final word of narration. Includes the end-card
+    // acrossfade duration (0.5s) plus a small safety margin.
+    const lastClipTailBufferSec = 0.8;
+    const lastClipIndex = completedClips.length - 1;
     const clipDurations = completedClips.map((clip: any, i: number) => {
       const m = (clip.metadata as any) || {};
       const beatIndex = typeof clip.scene_index === "number" ? clip.scene_index : i;
       const targetDuration = Math.max(0.5, Number(m.target_duration) || Number(timedBeats[beatIndex]?.duration) || Number(timedBeats[i]?.duration) || 4);
       const requestedDuration = Math.max(targetDuration, Number(m.request_duration) || Math.ceil(targetDuration));
-      return Math.min(requestedDuration, targetDuration + (i === 0 ? 0 : dissolveDuration));
+      const isLast = i === lastClipIndex;
+      // Non-first clips get +dissolveDuration of overlap material for the xfade.
+      // The last clip additionally gets a tail buffer to protect end-of-narration.
+      const desiredTail = (i === 0 ? 0 : dissolveDuration) + (isLast ? lastClipTailBufferSec : 0);
+      return Math.min(requestedDuration, targetDuration + desiredTail);
     });
     storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum: number, duration: number) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
 
@@ -218,10 +227,18 @@ Deno.serve(async (req) => {
       inputArgs.push(`-i {{in_bgm}}`);
     }
 
-    // Build filter_complex with dissolves between clips (durations already computed above)
-    let filterParts: string[] = completedClips.map((_: any, i: number) =>
-      `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${clipDurations[i].toFixed(3)},setpts=PTS-STARTPTS[vclip${i}]`
-    );
+    // Build filter_complex with dissolves between clips (durations already computed above).
+    // For the LAST clip we also tpad (clone last frame) up to its desired duration so that
+    // if Vidu returned fewer seconds than we need for the end-card crossfade tail, the
+    // timeline still extends — protecting the final word of narration from being clipped.
+    const lastIdx = completedClips.length - 1;
+    let filterParts: string[] = completedClips.map((_: any, i: number) => {
+      const dur = clipDurations[i].toFixed(3);
+      if (i === lastIdx) {
+        return `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},tpad=stop_mode=clone:stop_duration=${dur},trim=duration=${dur},setpts=PTS-STARTPTS[vclip${i}]`;
+      }
+      return `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${dur},setpts=PTS-STARTPTS[vclip${i}]`;
+    });
     let lastLabel = "[vclip0]";
     let cumulativeOffset = 0;
 

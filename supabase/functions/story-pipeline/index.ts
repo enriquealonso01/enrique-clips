@@ -1162,7 +1162,11 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     const asset = sceneAssetByIndex.get(i)!;
     const scene = scenes[i] || {};
     const targetDuration = scene.target_duration || 4;
-    const requestDuration = Math.ceil(targetDuration);
+    // For the LAST scene, request an extra second so story-finalize has
+    // enough real footage to cover the end-card audio crossfade tail
+    // (~0.8s) without the final narration word being clipped.
+    const isLastScene = i === scenes.length - 1;
+    const requestDuration = Math.ceil(targetDuration) + (isLastScene ? 1 : 0);
 
     const { data: signedData } = await sb.storage.from("project-assets")
       .createSignedUrl(asset.supabase_path, 3600);
