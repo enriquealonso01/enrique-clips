@@ -227,10 +227,18 @@ Deno.serve(async (req) => {
       inputArgs.push(`-i {{in_bgm}}`);
     }
 
-    // Build filter_complex with dissolves between clips (durations already computed above)
-    let filterParts: string[] = completedClips.map((_: any, i: number) =>
-      `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${clipDurations[i].toFixed(3)},setpts=PTS-STARTPTS[vclip${i}]`
-    );
+    // Build filter_complex with dissolves between clips (durations already computed above).
+    // For the LAST clip we also tpad (clone last frame) up to its desired duration so that
+    // if Vidu returned fewer seconds than we need for the end-card crossfade tail, the
+    // timeline still extends — protecting the final word of narration from being clipped.
+    const lastIdx = completedClips.length - 1;
+    let filterParts: string[] = completedClips.map((_: any, i: number) => {
+      const dur = clipDurations[i].toFixed(3);
+      if (i === lastIdx) {
+        return `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},tpad=stop_mode=clone:stop_duration=${dur},trim=duration=${dur},setpts=PTS-STARTPTS[vclip${i}]`;
+      }
+      return `[${i}:v]scale=1080:1920,setsar=1,fps=${DEFAULT_STORY_FPS},trim=duration=${dur},setpts=PTS-STARTPTS[vclip${i}]`;
+    });
     let lastLabel = "[vclip0]";
     let cumulativeOffset = 0;
 
