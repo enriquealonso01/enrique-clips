@@ -124,8 +124,28 @@ export default function ProjectsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
   });
 
+  const toggleArchived = useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
+      const { error } = await supabase
+        .from("projects")
+        .update({ is_archived: archived, ...(archived ? { is_enabled: false } : {}) })
+        .eq("id", id);
+      if (error) throw error;
+      return archived;
+    },
+    onSuccess: (archived) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast({ title: archived ? "Project archived" : "Project unarchived" });
+    },
+    onError: () => toast({ title: "Error", description: "Failed to update project", variant: "destructive" }),
+  });
+
   const getLatestRun = (projectId: string) =>
     latestRuns?.find((r) => r.project_id === projectId);
+
+  const filteredProjects = projects?.filter((p) =>
+    view === "archived" ? p.is_archived : !p.is_archived
+  );
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading projects...</div>;
