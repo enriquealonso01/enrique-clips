@@ -749,7 +749,128 @@ Deno.serve(async (req) => {
         if (eventDate && eventLocation) prefix = `${eventDate} — ${eventLocation}`;
         else if (eventDate) prefix = eventDate;
         else if (eventLocation) prefix = eventLocation;
-        const storySummary = prefix ? `${prefix}\n\n${baseSummary}` : baseSummary;
+        const fallbackDescription = prefix ? `${prefix}\n\n${baseSummary}` : baseSummary;
+
+        // ── AI per-platform metadata generation (mirrors finalize-video pattern) ──
+        const story = meta.story || {};
+        const beats = Array.isArray(meta.timed_beats) ? meta.timed_beats : (Array.isArray(meta.script?.beats) ? meta.script.beats : []);
+        const beatsSummary = beats.slice(0, 12).map((b: any, i: number) => `${i + 1}. ${b.text || b.narration || ""}`).filter((s: string) => s.trim().length > 3).join("\n");
+
+        const platformGuidelines: Record<string, string> = {
+          instagram: `INSTAGRAM REELS metadata rules:
+- "title" IS the first line of the caption (the hook). Max 125 chars. Curiosity-driven, story-led.
+- Good hook structures for stories: emotional reveal ("She had no idea who was at the door…"), stakes ("They had 24 hours to save him"), mystery ("Nobody believed her until…").
+- "description" is the caption body. 2-3 short paragraphs. Tease the emotional payoff. End with a CTA like "Follow for more true stories" or "Save this".
+- Hashtags: 3-8. Mix niche (storytelling, truestory, emotional) + broader. NO #fyp #viral.`,
+          tiktok: `TIKTOK metadata rules:
+- "title" IS the first line of the caption — must hook in 3 seconds. Use story-curiosity formula.
+- "description" stays under 150 chars total. Conversational, like you're telling a friend.
+- Hashtags: 3-5. Mix: 1 niche (storytime/truestory), 1 broad (fyp ok IF natural), 1 emotional (heartwarming, shocking). Avoid spammy stacks.`,
+          youtube: `YOUTUBE SHORTS metadata rules:
+- "title" is a real title field. 40-70 chars. Curiosity-driven, searchable. Avoid clickbait caps.
+- Good formats: "The True Story of…", "What She Did Next Shocked Everyone", "He Didn't Know Until It Was Too Late".
+- "description" 1-3 sentences. Restate the hook + tease the resolution. Include the main keyword.
+- Hashtags: 3-5. Always include #shorts. Add #truestory when relevant.`,
+          facebook: `FACEBOOK REELS metadata rules:
+- "title" is the first line. Clear, descriptive, emotional. Facebook audiences skew older — be direct, not cryptic.
+- Example: "A small-town nurse made one phone call that changed everything."
+- "description" 1-2 sentences explaining the story without spoiling the ending.
+- Hashtags: 3-5.`,
+        };
+
+        const UNIVERSAL_RULES = `
+CRITICAL RULES FOR ALL PLATFORMS:
+- NEVER hint that the video is AI-generated. No mentions of AI, prompts, models, or generated content.
+- Write as a human storyteller sharing a true story.
+- The description MUST begin with the date+place prefix (provided below) on its own line, followed by a blank line, then the actual caption body. This is mandatory for every platform.
+- First line of caption = hook. Shorter is better.
+- Each platform's metadata must feel native — NOT copy-pasted across platforms.
+- Do NOT spoil the ending; tease the emotional payoff.`;
+
+        const platformsToGenerate = enabledPlatforms.length > 0 ? enabledPlatforms : ["instagram", "tiktok", "youtube", "facebook"];
+        const platformProperties: Record<string, any> = {};
+        for (const p of platformsToGenerate) {
+          platformProperties[p] = {
+            type: "object",
+            properties: {
+              title: { type: "string", description: `Platform-optimized title/hook for ${p}` },
+              description: { type: "string", description: `Platform-optimized caption body for ${p}. MUST start with the provided date+place prefix on its own line if a prefix is provided.` },
+              hashtags: { type: "array", items: { type: "string" }, description: `Hashtags without # prefix for ${p}` },
+            },
+            required: ["title", "description", "hashtags"],
+          };
+        }
+
+        let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
+        try {
+          const perPlatformGuidelines = platformsToGenerate.map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`).join("\n\n");
+          const prefixInstruction = prefix
+            ? `MANDATORY DESCRIPTION PREFIX (must appear as the first line of every platform's description, followed by a blank line):\n"${prefix}"`
+            : `No date/place prefix is available — write descriptions normally.`;
+
+          const messages = [
+            { role: "system", content: `You are an elite social media strategist specializing in true-story short-form video. You write platform-native metadata as a human creator. Captions feel authentic, emotional, and tuned to each platform.${UNIVERSAL_RULES}` },
+            { role: "user", content: `Generate platform-specific metadata for this true-story video.
+
+STORY TITLE: ${storyTitle}
+EVENT DATE: ${eventDate || "(unknown)"}
+EVENT LOCATION: ${eventLocation || "(unknown)"}
+HOOK: ${story.hook || ""}
+REWARD MOMENT: ${story.reward_moment || ""}
+SUMMARY: ${story.summary || baseSummary}
+
+SCRIPT BEATS:
+${beatsSummary || "(no beats available)"}
+
+${prefixInstruction}
+
+=== PLATFORM-SPECIFIC GUIDELINES ===
+${perPlatformGuidelines}
+
+Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
+          ];
+
+          const result: any = await callStructured({
+            messages: messages as any,
+            model: MODELS.TEXT_CHEAP,
+            tools: [{
+              type: "function",
+              function: {
+                name: "generate_platform_metadata",
+                description: "Generate per-platform video post metadata for a true-story short video",
+                parameters: { type: "object", properties: platformProperties, required: platformsToGenerate, additionalProperties: false },
+              },
+            }],
+            tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
+            endpoint: "story_platform_metadata",
+          });
+          if (result && typeof result === "object") {
+            platformMetadata = result;
+            await log("info", "Per-platform story metadata generated", { platforms: Object.keys(platformMetadata) });
+          }
+        } catch (metaErr) {
+          await log("warn", `Per-platform metadata generation failed: ${(metaErr as Error).message}. Using fallback title/description.`);
+        }
+
+        // Persist generated metadata onto the run for visibility
+        try {
+          const { data: curMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+          await sb.from("story_runs").update({
+            generated_metadata: { ...((curMeta?.generated_metadata as any) || {}), platform_metadata: platformMetadata, metadata_prefix: prefix },
+          }).eq("id", runId);
+        } catch {}
+
+        const buildPlatformPayload = (platform: string): { title: string; description: string } => {
+          const pm = platformMetadata[platform];
+          if (pm && pm.title && pm.description) {
+            const hashtags = (pm.hashtags || []).map((h: string) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
+            // Safety net: ensure prefix is at the top of the description if available and missing
+            let desc = pm.description;
+            if (prefix && !desc.includes(prefix)) desc = `${prefix}\n\n${desc}`;
+            return { title: pm.title, description: desc + (hashtags ? `\n\n${hashtags}` : "") };
+          }
+          return { title: storyTitle, description: fallbackDescription };
+        };
 
         // One request per platform — mirrors the project pipeline so each platform
         // gets its own scheduled_date + platform-specific defaults without collisions.
@@ -758,10 +879,11 @@ Deno.serve(async (req) => {
         }
         let anySuccess = false;
         for (const platform of enabledPlatforms) {
+          const { title: pTitle, description: pDescription } = buildPlatformPayload(platform);
           const formData = new FormData();
           formData.append("video", videoUrl);
-          formData.append("title", storyTitle);
-          formData.append("description", storySummary);
+          formData.append("title", pTitle);
+          formData.append("description", pDescription);
           formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
           if (meta.publish_scheduled_date) {
