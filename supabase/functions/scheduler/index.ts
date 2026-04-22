@@ -68,11 +68,15 @@ Deno.serve(async (req) => {
             const pickedMin = (startMin + randomOffset) % 1440;
             postTimeStr = `${String(Math.floor(pickedMin / 60)).padStart(2, "0")}:${String(pickedMin % 60).padStart(2, "0")}:00`;
           }
+          // Compare minute-of-day in the project timezone to decide whether the
+          // chosen post time is still in the future today, or needs to roll to tomorrow.
+          // Avoid double-parsing date strings (which mis-interprets local time as UTC).
+          const [pickH, pickM] = postTimeStr.split(":").map(Number);
+          const pickedMinOfDay = pickH * 60 + pickM;
+          const nowMinOfDay = localDate.getHours() * 60 + localDate.getMinutes();
           const localDateStr = now.toLocaleDateString("en-CA", { timeZone: tz });
-          const publishLocalStr = `${localDateStr}T${postTimeStr}`;
-          const scheduledLocal = new Date(new Date(publishLocalStr).toLocaleString("en-US", { timeZone: tz }));
-          let publishDate = publishLocalStr;
-          if (scheduledLocal <= localDate) {
+          let publishDate = `${localDateStr}T${postTimeStr}`;
+          if (pickedMinOfDay <= nowMinOfDay) {
             const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
             publishDate = `${tomorrow.toLocaleDateString("en-CA", { timeZone: tz })}T${postTimeStr}`;
           }
@@ -153,11 +157,14 @@ Deno.serve(async (req) => {
               const pickedMin = (startMin + randomOffset) % 1440;
               postTimeStr = `${String(Math.floor(pickedMin / 60)).padStart(2, "0")}:${String(pickedMin % 60).padStart(2, "0")}:00`;
             }
+            // Compare minute-of-day in the project timezone to decide whether the
+            // chosen post time is still in the future today, or needs to roll to tomorrow.
+            const [pickH, pickM] = postTimeStr.split(":").map(Number);
+            const pickedMinOfDay = pickH * 60 + pickM;
+            const nowMinOfDay = localDate.getHours() * 60 + localDate.getMinutes();
             const localDateStr = now.toLocaleDateString("en-CA", { timeZone: tz });
-            const publishLocalStr = `${localDateStr}T${postTimeStr}`;
-            const scheduledLocal = new Date(new Date(publishLocalStr).toLocaleString("en-US", { timeZone: tz }));
-            let publishDate = publishLocalStr;
-            if (scheduledLocal <= localDate) {
+            let publishDate = `${localDateStr}T${postTimeStr}`;
+            if (pickedMinOfDay <= nowMinOfDay) {
               const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
               publishDate = `${tomorrow.toLocaleDateString("en-CA", { timeZone: tz })}T${postTimeStr}`;
             }
