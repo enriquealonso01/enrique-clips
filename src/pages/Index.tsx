@@ -164,19 +164,34 @@ export default function ProjectsPage() {
         </Button>
       </div>
 
-      {projects?.length === 0 ? (
+      <Tabs value={view} onValueChange={(v) => setView(v as "active" | "archived")}>
+        <TabsList>
+          <TabsTrigger value="active">
+            Active ({projects?.filter((p) => !p.is_archived).length ?? 0})
+          </TabsTrigger>
+          <TabsTrigger value="archived">
+            Archived ({projects?.filter((p) => p.is_archived).length ?? 0})
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {filteredProjects?.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground mb-4">No projects yet. Create your first one!</p>
-            <Button onClick={() => createProject.mutate()}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Project
-            </Button>
+            <p className="text-muted-foreground mb-4">
+              {view === "archived" ? "No archived projects." : "No projects yet. Create your first one!"}
+            </p>
+            {view === "active" && (
+              <Button onClick={() => createProject.mutate()}>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Project
+              </Button>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {projects?.map((project) => {
+          {filteredProjects?.map((project) => {
             const latestRun = getLatestRun(project.id);
             const canPause = latestRun?.status === "running";
             const canResume = latestRun?.status === "paused";
