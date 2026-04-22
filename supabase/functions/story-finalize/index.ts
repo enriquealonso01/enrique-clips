@@ -750,22 +750,23 @@ Deno.serve(async (req) => {
         else if (eventLocation) prefix = eventLocation;
         const storySummary = prefix ? `${prefix}\n\n${baseSummary}` : baseSummary;
 
-        const formData = new FormData();
-        formData.append("video", videoUrl);
-        formData.append("title", storyTitle);
-        formData.append("description", storySummary);
-        formData.append("async_upload", "true");
-
-        if (uploadpostUsername) formData.append("user", uploadpostUsername);
-
-        // Add scheduled_date if set in run metadata
+        // One request per platform — mirrors the project pipeline so each platform
+        // gets its own scheduled_date + platform-specific defaults without collisions.
         if (meta.publish_scheduled_date) {
-          formData.append("scheduled_date", meta.publish_scheduled_date);
-          if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
         }
-
+        let anySuccess = false;
         for (const platform of enabledPlatforms) {
+          const formData = new FormData();
+          formData.append("video", videoUrl);
+          formData.append("title", storyTitle);
+          formData.append("description", storySummary);
+          formData.append("async_upload", "true");
+          if (uploadpostUsername) formData.append("user", uploadpostUsername);
+          if (meta.publish_scheduled_date) {
+            formData.append("scheduled_date", meta.publish_scheduled_date);
+            if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
+          }
           formData.append("platform[]", platform);
           const defaults = projPublishDefaults[platform] || {};
           for (const [key, value] of Object.entries(defaults)) {
@@ -773,22 +774,22 @@ Deno.serve(async (req) => {
               formData.append(key, String(value));
             }
           }
+
+          const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
+            method: "POST",
+            headers: { Authorization: `Apikey ${uploadpostApiKey}` },
+            body: formData,
+          });
+          const uploadResult = await uploadResp.json().catch(() => ({}));
+          await log("info", `Upload-Post response [${platform}]`, uploadResult);
+          if (uploadResp.ok && uploadResult.request_id) {
+            anySuccess = true;
+            await log("info", `Upload-Post submitted [${platform}]: ${uploadResult.request_id}`);
+          } else {
+            await log("error", `Upload-Post failed [${platform}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
+          }
         }
-
-        const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
-          method: "POST",
-          headers: { Authorization: `Apikey ${uploadpostApiKey}` },
-          body: formData,
-        });
-
-        const uploadResult = await uploadResp.json();
-        await log("info", `Upload-Post response`, uploadResult);
-
-        if (uploadResp.ok && uploadResult.request_id) {
-          await log("info", `Upload-Post submitted: ${uploadResult.request_id}`);
-        } else {
-          await log("error", `Upload-Post failed: ${JSON.stringify(uploadResult).substring(0, 300)}`);
-        }
+        if (!anySuccess) await log("error", "All Upload-Post submissions failed.");
       } catch (pubErr) {
         await log("error", `Publishing failed: ${(pubErr as Error).message}`);
       }
