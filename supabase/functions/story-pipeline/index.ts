@@ -1189,6 +1189,31 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
       throw new Error(message);
     }
 
+    // Build a narration-driven motion prompt so what happens on screen
+    // matches what is being SAID in this beat (not just generic "snappy" motion).
+    const narration = (scene.beat_text || "").toString().trim();
+    const visualIntent = (scene.visual_intent || "").toString().trim();
+    const motionPrompt = (scene.motion_prompt || "").toString().trim();
+    const sceneDesc = (scene.prompt || "").toString().trim();
+
+    const parts: string[] = [];
+    if (motionPrompt) {
+      parts.push(`ACTION (must literally depict the narration): ${motionPrompt}`);
+    }
+    if (narration) {
+      parts.push(`NARRATION SPOKEN OVER THIS CLIP: "${narration}"`);
+    }
+    if (visualIntent) {
+      parts.push(`VISUAL INTENT: ${visualIntent}`);
+    }
+    if (sceneDesc) {
+      parts.push(`SCENE CONTEXT: ${sceneDesc.substring(0, 220)}`);
+    }
+    parts.push(
+      "Animate the starting image so the on-screen action visually illustrates the narration line above. Subject and action must match the words being spoken. Use cinematic but purposeful motion — character gestures, facial reactions, environmental changes, or camera moves (push-in, pan, tilt, rack-focus) that REINFORCE the meaning of the narration. Avoid generic random motion, avoid contradicting the narration, no morphing, no extra characters appearing."
+    );
+    const viduPrompt = parts.join(" ").substring(0, 1500);
+
     try {
       const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
         method: "POST",
@@ -1199,7 +1224,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
         body: JSON.stringify({
           model: "viduq3-turbo",
           images: [imageUrl],
-          prompt: `Snappy, dynamic cinematic animation of scene: ${scene.prompt?.substring(0, 200) || "energetic motion"}. Sudden, decisive action — quick character gestures, fast head turns, expressive reactions. Punchy camera moves: rapid push-ins, snap pans, whip-tilts, quick rack-focus. High energy pacing with clear motion beats. Avoid slow drifts or static holds.`,
+          prompt: viduPrompt,
           duration: Math.min(requestDuration, 16),
           audio: false,
           resolution: "720p",
