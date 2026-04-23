@@ -966,23 +966,33 @@ Art style rules (apply to EVERY scene):
 - Highly detailed but NOT hyper-realistic; NOT cartoon, NOT anime, NOT 3D render, NOT stock photo
 - Maintain the SAME character design (face shape, hair, outfit colors, distinguishing features) in every scene
 
+You are also a motion director. For each beat you must produce a SECOND prompt ("motion_prompt") that tells an image-to-video model exactly what should HAPPEN on-screen during the few seconds the narration line is spoken — the literal action, gesture, expression, object movement, or environmental change that visually depicts the words being narrated. The motion must match the meaning of the narration line, not just generic "cinematic energy".
+
 Return ONLY valid JSON.` },
-      { role: "user", content: `Generate one visual scene prompt per beat for this story video. Every prompt MUST describe the scene in the consistent warm semi-realistic cinematic style defined above.
+      { role: "user", content: `Generate one visual scene prompt + one motion prompt per beat for this story video. Every image prompt MUST describe the scene in the consistent warm semi-realistic cinematic style defined above. Every motion_prompt MUST literally depict what the narration line of that beat is saying at that exact moment.
 
 Story: "${story.title}"
 Summary: ${story.summary}
 Characters: ${JSON.stringify(story.characters)}
 Locations: ${JSON.stringify(story.locations)}
 
-Beats:
-${timedBeats.map((b: any, i: number) => `Beat ${i}: "${b.text}" (${b.purpose}, ${b.duration?.toFixed(1)}s) — Visual: ${b.visual_intent}`).join("\n")}
+Beats (each becomes ONE clip — the motion must illustrate the narrated text within its duration):
+${timedBeats.map((b: any, i: number) => `Beat ${i} (${b.duration?.toFixed(1)}s, ${b.purpose}):
+  Narration: "${b.text}"
+  Visual intent: ${b.visual_intent}`).join("\n\n")}
 
-For each beat return a detailed image prompt. Start every prompt with "Warm semi-realistic cinematic style:" and include character appearance details (hair color, outfit, distinguishing features) to ensure consistency across scenes.
+For each beat return:
+1. "prompt" — detailed still-image description starting with "Warm semi-realistic cinematic style:" (used to generate the starting frame). Include character appearance (hair color, outfit, distinguishing features) for cross-scene consistency.
+2. "motion_prompt" — 1–2 short sentences describing the LITERAL action/motion that depicts the narration line. Name the subject, the action verb, and the camera move. Examples:
+   - Narration "She opened the letter with trembling hands" → motion_prompt: "Sarah's trembling hands tear open the envelope, paper unfolding; slow push-in on her face as her eyes widen."
+   - Narration "The crowd erupted in cheers" → motion_prompt: "Crowd throws arms up and cheers, mouths open mid-shout; quick pull-back reveals the full stadium."
+   - Narration "Years passed in silence" → motion_prompt: "Slow time-lapse drift across the empty room, dust motes floating, light shifting from day to dusk."
+   The motion MUST match what the narration says — never substitute a generic "snappy cinematic" motion.
 
 Return JSON:
 {
   "scenes": [
-    {"beat_index": 0, "prompt": "Warm semi-realistic cinematic style: [detailed scene]...", "characters_in_scene": ["names"], "location": "where", "target_duration": 3.65}
+    {"beat_index": 0, "prompt": "Warm semi-realistic cinematic style: [detailed scene]...", "motion_prompt": "[literal depiction of what is narrated, with subject + action + camera move]", "characters_in_scene": ["names"], "location": "where", "target_duration": 3.65}
   ]
 }` },
     ],
@@ -990,11 +1000,13 @@ Return JSON:
   });
 
   const scenes = result.scenes || [];
-  // Merge durations from timed beats
+  // Merge durations + narration context from timed beats
   return scenes.map((s: any, i: number) => ({
     ...s,
     target_duration: timedBeats[i]?.duration || s.target_duration || 4,
     beat_text: timedBeats[i]?.text,
+    visual_intent: timedBeats[i]?.visual_intent,
+    purpose: timedBeats[i]?.purpose,
   }));
 }
 
