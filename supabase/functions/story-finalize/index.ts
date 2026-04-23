@@ -777,6 +777,9 @@ Deno.serve(async (req) => {
       await log("info", "No platforms enabled — skipping publish.");
     } else {
       try {
+        if (!finalPath) {
+          throw new Error("Final video path missing before publish");
+        }
         const { data: urlData } = sb.storage.from("project-assets").getPublicUrl(finalPath);
         const videoUrl = urlData.publicUrl;
 
@@ -843,6 +846,7 @@ CRITICAL RULES FOR ALL PLATFORMS:
         }
 
         let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
+        if (!skipMetadataGeneration && !publishOnly) {
         try {
           const perPlatformGuidelines = platformsToGenerate.map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`).join("\n\n");
           const prefixInstruction = prefix
@@ -891,6 +895,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           }
         } catch (metaErr) {
           await log("warn", `Per-platform metadata generation failed: ${(metaErr as Error).message}. Using fallback title/description.`);
+        }
+        } else {
+          await log("info", "Skipping AI metadata generation for publish retry; using fallback platform text.");
         }
 
         // Persist generated metadata onto the run for visibility
@@ -966,7 +973,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
       finished_at: new Date().toISOString(),
       generated_metadata: {
         ...meta,
-        final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl },
+        final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl ?? null },
         has_end_card: finalIncludesEndCard,
         has_subtitles: captionedPath !== storyPath,
         completed_at: new Date().toISOString(),
