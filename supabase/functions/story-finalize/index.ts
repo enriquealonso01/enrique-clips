@@ -638,21 +638,16 @@ Deno.serve(async (req) => {
       // Get captioned story video URL
       const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
 
-      // Re-encode both inputs to matching specs. Use xfade dissolve for smooth transition.
-      // Use ultrafast to stay within Rendi's 60s account limit.
-      // Both are scaled to 1080x1920 and normalized to the same audio sample rate.
-      // xfade offset = bounded story-body duration - dissolve duration.
+      // Reliability-first final assembly: normalize both inputs, then hard-concatenate.
+      // Captioned videos from Submagic can arrive with odd timebases, which makes xfade brittle.
+      // A strict concat after normalization is far more stable and publishing must only happen
+      // when that true final-with-end-card file exists.
       const totalStoryDuration = storyVideoDurationSec;
-      const dissolveSec = 0.5;
-      const xfadeOffset = Math.max(0.5, totalStoryDuration - dissolveSec);
-      const finalDurationSec = totalStoryDuration + endCardDurationSec - dissolveSec;
-      // CRITICAL: xfade requires identical timebases on both inputs. Submagic-captioned
-      // videos can carry a non-standard timebase (e.g. 1/15360) which mismatches the
-      // end card's 1/24, producing "First input link main timebase ..." errors.
-      // Force both streams to AVTB + constant 24fps + identical SAR before xfade.
-      const normVideo = `scale=1080:1920,setsar=1,format=yuv420p,fps=${DEFAULT_STORY_FPS},settb=AVTB`;
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]${normVideo}[v0];[1:v]${normVideo}[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)},format=yuv420p[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${finalDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
-      await log("info", `Final concat FFmpeg: ${concatCmd.substring(0, 400)}`);
+      const finalDurationSec = totalStoryDuration + endCardDurationSec;
+      const normVideo = `scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${DEFAULT_STORY_FPS},settb=AVTB,format=yuv420p`;
+      const normAudio = `aresample=${DEFAULT_STORY_AUDIO_RATE}:async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=${DEFAULT_STORY_AUDIO_RATE}:channel_layouts=stereo`;
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]${normVideo}[v0];[1:v]${normVideo}[v1];[0:a]${normAudio}[a0];[1:a]${normAudio}[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[vf][af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${finalDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
+      await log("info", `Final assembly FFmpeg: ${concatCmd.substring(0, 400)}`);
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
@@ -727,7 +722,7 @@ Deno.serve(async (req) => {
       type: "final_video",
       supabase_path: finalPath,
       signed_url_last: finalSignedUrl?.signedUrl || null,
-      metadata: { size_bytes: finalVideoBytes.length, has_end_card: !!endCardUrl, has_subtitles: captionedPath !== storyPath },
+       metadata: { size_bytes: finalVideoBytes.length, has_end_card: finalIncludesEndCard, has_subtitles: captionedPath !== storyPath },
     });
 
     await log("info", `Final video stored: ${(finalVideoBytes.length / 1024 / 1024).toFixed(1)}MB`);
