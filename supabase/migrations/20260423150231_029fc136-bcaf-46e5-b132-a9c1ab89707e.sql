@@ -1,0 +1,1 @@
+UPDATE public.runs SET status='running', current_step='publish', finished_at=NULL, generated_metadata = (generated_metadata - 'publish_scheduled_date' - 'publish_timezone') WHERE id='d4c8d3e0-e00b-4c9f-aee6-8f04bcbe7678';
