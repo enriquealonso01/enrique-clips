@@ -926,8 +926,11 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
 
         // One request per platform — mirrors the project pipeline so each platform
         // gets its own scheduled_date + platform-specific defaults without collisions.
-        if (meta.publish_scheduled_date) {
+        const shouldUseScheduledDate = !!meta.publish_scheduled_date && !publishOnly;
+        if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
+        } else if (meta.publish_scheduled_date && publishOnly) {
+          await log("info", "Publish-only retry: ignoring expired scheduled publish time and posting immediately.");
         }
         let anySuccess = false;
         for (const platform of enabledPlatforms) {
@@ -938,7 +941,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           formData.append("description", pDescription);
           formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
-          if (meta.publish_scheduled_date) {
+          if (shouldUseScheduledDate) {
             formData.append("scheduled_date", meta.publish_scheduled_date);
             if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
           }
