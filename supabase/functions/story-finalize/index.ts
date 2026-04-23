@@ -27,10 +27,14 @@ Deno.serve(async (req) => {
 
   let runId: string;
   let forceRetry = false;
+  let publishOnly = false;
+  let skipMetadataGeneration = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceRetry = !!body.force_retry;
+    publishOnly = !!body.publish_only;
+    skipMetadataGeneration = !!body.skip_metadata_generation;
   } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
@@ -77,8 +81,13 @@ Deno.serve(async (req) => {
 
     // ── Check for already-completed finalization (idempotency) ──
     const { data: existingFinal } = await sb.from("story_assets")
-      .select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
-    if (!forceRetry && existingFinal && existingFinal.length > 0) {
+      .select("supabase_path, metadata")
+      .eq("run_id", runId)
+      .eq("type", "final_video")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!publishOnly && !forceRetry && existingFinal?.supabase_path) {
       await log("info", "Final video already exists — skipping duplicate finalization");
       return json({ status: "already_finalized", run_id: runId });
     }
