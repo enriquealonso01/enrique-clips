@@ -27,10 +27,14 @@ Deno.serve(async (req) => {
 
   let runId: string;
   let forceRetry = false;
+  let publishOnly = false;
+  let skipMetadataGeneration = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceRetry = !!body.force_retry;
+    publishOnly = !!body.publish_only;
+    skipMetadataGeneration = !!body.skip_metadata_generation;
   } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
@@ -77,8 +81,13 @@ Deno.serve(async (req) => {
 
     // ── Check for already-completed finalization (idempotency) ──
     const { data: existingFinal } = await sb.from("story_assets")
-      .select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
-    if (!forceRetry && existingFinal && existingFinal.length > 0) {
+      .select("supabase_path, metadata")
+      .eq("run_id", runId)
+      .eq("type", "final_video")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!publishOnly && !forceRetry && existingFinal?.supabase_path) {
       await log("info", "Final video already exists — skipping duplicate finalization");
       return json({ status: "already_finalized", run_id: runId });
     }
@@ -158,9 +167,12 @@ Deno.serve(async (req) => {
     // STAGE 12-13: Assemble story video with Rendi
     // ══════════════════════════════════════════════════════
 
-    let storyPath: string;
-    let captionedPath: string;
+    let storyPath = existingCaptioned?.supabase_path || existingFinal?.supabase_path || "";
+    let captionedPath = existingCaptioned?.supabase_path || existingFinal?.supabase_path || "";
     let storyVideoDurationSec: number;
+    let finalPath: string | null = publishOnly ? existingFinal?.supabase_path ?? null : null;
+    let finalSignedUrl: { signedUrl?: string } | null = null;
+    let storyBytes: Uint8Array | null = null;
 
     // Compute clip durations (needed for end-card xfade offset even on resume)
     const timedBeats = meta.timed_beats || [];
@@ -183,7 +195,15 @@ Deno.serve(async (req) => {
     });
     storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum: number, duration: number) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
 
-    if (resumeFromEndCard) {
+    if (publishOnly) {
+      if (!finalPath) {
+        await failRun("Publish-only retry requested but no final video exists");
+        return json({ error: "No final video to publish" }, 400);
+      }
+      captionedPath = existingCaptioned?.supabase_path || finalPath;
+      storyPath = captionedPath;
+      await log("info", `Publish-only retry: reusing final video at ${finalPath}`);
+    } else if (resumeFromEndCard) {
       captionedPath = existingCaptioned!.supabase_path;
       storyPath = captionedPath;
       await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
@@ -325,7 +345,7 @@ Deno.serve(async (req) => {
 
     // Download and store story video
     const storyDl = await fetch(storyVideoUrl);
-    const storyBytes = new Uint8Array(await storyDl.arrayBuffer());
+        storyBytes = new Uint8Array(await storyDl.arrayBuffer());
     storyPath = `story-runs/${runId}/story_video.mp4`;
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
@@ -519,14 +539,19 @@ Deno.serve(async (req) => {
     // STAGE 15-17: End Card
     // ══════════════════════════════════════════════════════
 
-    if (await checkCancelled()) return json({ status: "cancelled" });
-    await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
-    await log("info", "Stage 15-17: Building 5-second grayscale end card");
+    if (publishOnly) {
+      await updateRun({ current_stage: "publishing", progress_pct: 94, error_message: null });
+      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath!, 60 * 60 * 24 * 7)).data || null;
+    } else if (await checkCancelled()) return json({ status: "cancelled" });
+    if (!publishOnly) {
+      await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
+      await log("info", "Stage 15-17: Building 5-second grayscale end card");
+    }
 
     let endCardUrl: string | null = null;
     let endCardUsedEmoji = false;
 
-    if (realImageUrl) {
+    if (!publishOnly && realImageUrl) {
       // Build end card with Rendi: grayscale real image, slow zoom, emoji overlay, 5 seconds
       const endCardInputs: Record<string, string> = { in_real_img: realImageUrl };
       let endCardAudioInput = "";
@@ -626,13 +651,15 @@ Deno.serve(async (req) => {
     // STAGE 18: Final Assembly
     // ══════════════════════════════════════════════════════
 
-    if (await checkCancelled()) return json({ status: "cancelled" });
-    await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
+    if (!publishOnly && await checkCancelled()) return json({ status: "cancelled" });
+    if (!publishOnly) await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
 
-    let finalVideoBytes: Uint8Array;
-    let finalIncludesEndCard = false;
+    let finalVideoBytes: Uint8Array | null = null;
+    let finalIncludesEndCard = publishOnly ? !!existingFinal?.metadata?.has_end_card : false;
 
-    if (endCardUrl) {
+    if (publishOnly) {
+      await log("info", "Publish-only retry: skipping final assembly and reusing stored final video");
+    } else if (endCardUrl) {
       await log("info", "Stage 18: Concatenating captioned story video + end card");
 
       // Get captioned story video URL
@@ -707,25 +734,30 @@ Deno.serve(async (req) => {
         const dl = await fetch(captSignedUrl.signedUrl);
         finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
       } else {
+        if (!storyBytes) {
+          throw new Error("Captioned video unavailable and story video bytes missing");
+        }
         finalVideoBytes = storyBytes;
       }
     }
 
     // Upload final video
-    const ts = Date.now();
-    const finalPath = `story-runs/${runId}/final_video_${ts}.mp4`;
-    await sb.storage.from("project-assets").upload(finalPath, finalVideoBytes, { contentType: "video/mp4", upsert: true });
-    const { data: finalSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60 * 24 * 7);
+    if (!publishOnly) {
+      const ts = Date.now();
+      finalPath = `story-runs/${runId}/final_video_${ts}.mp4`;
+      await sb.storage.from("project-assets").upload(finalPath, finalVideoBytes!, { contentType: "video/mp4", upsert: true });
+      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60 * 24 * 7)).data || null;
 
-    await sb.from("story_assets").insert({
-      run_id: runId,
-      type: "final_video",
-      supabase_path: finalPath,
-      signed_url_last: finalSignedUrl?.signedUrl || null,
-       metadata: { size_bytes: finalVideoBytes.length, has_end_card: finalIncludesEndCard, has_subtitles: captionedPath !== storyPath },
-    });
+      await sb.from("story_assets").insert({
+        run_id: runId,
+        type: "final_video",
+        supabase_path: finalPath,
+        signed_url_last: finalSignedUrl?.signedUrl || null,
+         metadata: { size_bytes: finalVideoBytes!.length, has_end_card: finalIncludesEndCard, has_subtitles: captionedPath !== storyPath },
+      });
 
-    await log("info", `Final video stored: ${(finalVideoBytes.length / 1024 / 1024).toFixed(1)}MB`);
+      await log("info", `Final video stored: ${(finalVideoBytes!.length / 1024 / 1024).toFixed(1)}MB`);
+    }
 
     // ══════════════════════════════════════════════════════
     // STAGE 19: Publish via Upload-Post (if configured)
@@ -749,6 +781,9 @@ Deno.serve(async (req) => {
       await log("info", "No platforms enabled — skipping publish.");
     } else {
       try {
+        if (!finalPath) {
+          throw new Error("Final video path missing before publish");
+        }
         const { data: urlData } = sb.storage.from("project-assets").getPublicUrl(finalPath);
         const videoUrl = urlData.publicUrl;
 
@@ -815,6 +850,7 @@ CRITICAL RULES FOR ALL PLATFORMS:
         }
 
         let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
+        if (!skipMetadataGeneration && !publishOnly) {
         try {
           const perPlatformGuidelines = platformsToGenerate.map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`).join("\n\n");
           const prefixInstruction = prefix
@@ -864,6 +900,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         } catch (metaErr) {
           await log("warn", `Per-platform metadata generation failed: ${(metaErr as Error).message}. Using fallback title/description.`);
         }
+        } else {
+          await log("info", "Skipping AI metadata generation for publish retry; using fallback platform text.");
+        }
 
         // Persist generated metadata onto the run for visibility
         try {
@@ -887,8 +926,11 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
 
         // One request per platform — mirrors the project pipeline so each platform
         // gets its own scheduled_date + platform-specific defaults without collisions.
-        if (meta.publish_scheduled_date) {
+        const shouldUseScheduledDate = !!meta.publish_scheduled_date && !publishOnly;
+        if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
+        } else if (meta.publish_scheduled_date && publishOnly) {
+          await log("info", "Publish-only retry: ignoring expired scheduled publish time and posting immediately.");
         }
         let anySuccess = false;
         for (const platform of enabledPlatforms) {
@@ -899,7 +941,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           formData.append("description", pDescription);
           formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
-          if (meta.publish_scheduled_date) {
+          if (shouldUseScheduledDate) {
             formData.append("scheduled_date", meta.publish_scheduled_date);
             if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
           }
@@ -938,7 +980,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
       finished_at: new Date().toISOString(),
       generated_metadata: {
         ...meta,
-        final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl },
+        final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl ?? null },
         has_end_card: finalIncludesEndCard,
         has_subtitles: captionedPath !== storyPath,
         completed_at: new Date().toISOString(),
