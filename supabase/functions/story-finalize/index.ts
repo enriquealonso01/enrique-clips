@@ -170,6 +170,8 @@ Deno.serve(async (req) => {
     let storyPath: string;
     let captionedPath: string;
     let storyVideoDurationSec: number;
+    let finalPath: string | null = publishOnly ? existingFinal?.supabase_path ?? null : null;
+    let finalSignedUrl: { signedUrl?: string } | null = null;
 
     // Compute clip durations (needed for end-card xfade offset even on resume)
     const timedBeats = meta.timed_beats || [];
@@ -192,7 +194,15 @@ Deno.serve(async (req) => {
     });
     storyVideoDurationSec = Math.max(0.5, clipDurations.reduce((sum: number, duration: number) => sum + duration, 0) - (clipDurations.length - 1) * dissolveDuration);
 
-    if (resumeFromEndCard) {
+    if (publishOnly) {
+      if (!finalPath) {
+        await failRun("Publish-only retry requested but no final video exists");
+        return json({ error: "No final video to publish" }, 400);
+      }
+      captionedPath = existingCaptioned?.supabase_path || finalPath;
+      storyPath = captionedPath;
+      await log("info", `Publish-only retry: reusing final video at ${finalPath}`);
+    } else if (resumeFromEndCard) {
       captionedPath = existingCaptioned!.supabase_path;
       storyPath = captionedPath;
       await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
@@ -528,14 +538,19 @@ Deno.serve(async (req) => {
     // STAGE 15-17: End Card
     // ══════════════════════════════════════════════════════
 
-    if (await checkCancelled()) return json({ status: "cancelled" });
-    await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
-    await log("info", "Stage 15-17: Building 5-second grayscale end card");
+    if (publishOnly) {
+      await updateRun({ current_stage: "publishing", progress_pct: 94, error_message: null });
+      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath!, 60 * 60 * 24 * 7)).data || null;
+    } else if (await checkCancelled()) return json({ status: "cancelled" });
+    if (!publishOnly) {
+      await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
+      await log("info", "Stage 15-17: Building 5-second grayscale end card");
+    }
 
     let endCardUrl: string | null = null;
     let endCardUsedEmoji = false;
 
-    if (realImageUrl) {
+    if (!publishOnly && realImageUrl) {
       // Build end card with Rendi: grayscale real image, slow zoom, emoji overlay, 5 seconds
       const endCardInputs: Record<string, string> = { in_real_img: realImageUrl };
       let endCardAudioInput = "";
@@ -635,13 +650,15 @@ Deno.serve(async (req) => {
     // STAGE 18: Final Assembly
     // ══════════════════════════════════════════════════════
 
-    if (await checkCancelled()) return json({ status: "cancelled" });
-    await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
+    if (!publishOnly && await checkCancelled()) return json({ status: "cancelled" });
+    if (!publishOnly) await updateRun({ current_stage: "final_assembly", progress_pct: 90 });
 
-    let finalVideoBytes: Uint8Array;
-    let finalIncludesEndCard = false;
+    let finalVideoBytes: Uint8Array | null = null;
+    let finalIncludesEndCard = publishOnly ? !!existingFinal?.metadata?.has_end_card : false;
 
-    if (endCardUrl) {
+    if (publishOnly) {
+      await log("info", "Publish-only retry: skipping final assembly and reusing stored final video");
+    } else if (endCardUrl) {
       await log("info", "Stage 18: Concatenating captioned story video + end card");
 
       // Get captioned story video URL
@@ -721,20 +738,22 @@ Deno.serve(async (req) => {
     }
 
     // Upload final video
-    const ts = Date.now();
-    const finalPath = `story-runs/${runId}/final_video_${ts}.mp4`;
-    await sb.storage.from("project-assets").upload(finalPath, finalVideoBytes, { contentType: "video/mp4", upsert: true });
-    const { data: finalSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60 * 24 * 7);
+    if (!publishOnly) {
+      const ts = Date.now();
+      finalPath = `story-runs/${runId}/final_video_${ts}.mp4`;
+      await sb.storage.from("project-assets").upload(finalPath, finalVideoBytes!, { contentType: "video/mp4", upsert: true });
+      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60 * 24 * 7)).data || null;
 
-    await sb.from("story_assets").insert({
-      run_id: runId,
-      type: "final_video",
-      supabase_path: finalPath,
-      signed_url_last: finalSignedUrl?.signedUrl || null,
-       metadata: { size_bytes: finalVideoBytes.length, has_end_card: finalIncludesEndCard, has_subtitles: captionedPath !== storyPath },
-    });
+      await sb.from("story_assets").insert({
+        run_id: runId,
+        type: "final_video",
+        supabase_path: finalPath,
+        signed_url_last: finalSignedUrl?.signedUrl || null,
+         metadata: { size_bytes: finalVideoBytes!.length, has_end_card: finalIncludesEndCard, has_subtitles: captionedPath !== storyPath },
+      });
 
-    await log("info", `Final video stored: ${(finalVideoBytes.length / 1024 / 1024).toFixed(1)}MB`);
+      await log("info", `Final video stored: ${(finalVideoBytes!.length / 1024 / 1024).toFixed(1)}MB`);
+    }
 
     // ══════════════════════════════════════════════════════
     // STAGE 19: Publish via Upload-Post (if configured)
