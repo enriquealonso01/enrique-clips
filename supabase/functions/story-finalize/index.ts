@@ -690,24 +690,19 @@ Deno.serve(async (req) => {
           finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
           finalIncludesEndCard = true;
         } else {
-          await log("warn", "Final concat timed out — using captioned video without end card");
-          const { data: fallbackUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
-          if (fallbackUrl?.signedUrl) {
-            const fallbackDl = await fetch(fallbackUrl.signedUrl);
-            finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
-          } else {
-            finalVideoBytes = storyBytes;
-          }
+          // HARD FAIL: never publish without the end card. Run can be retried;
+          // captioned video is preserved so retry skips straight back here.
+          const msg = "Final concat failed/timed out — refusing to publish without end card. Re-trigger the run to retry concat only.";
+          await log("error", msg);
+          await updateRun({ status: "failed", current_stage: "final_assembly", error_message: msg, finished_at: new Date().toISOString() });
+          return json({ status: "failed", error: msg }, 500);
         }
       } else {
-        await log("warn", "Final concat submit failed — using captioned video");
-        const { data: fallbackUrl2 } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
-        if (fallbackUrl2?.signedUrl) {
-          const fallbackDl = await fetch(fallbackUrl2.signedUrl);
-          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
-        } else {
-          finalVideoBytes = storyBytes;
-        }
+        const submitErr = await concatResp.text().catch(() => "");
+        const msg = `Final concat submit failed (${concatResp.status}) — refusing to publish without end card.`;
+        await log("error", msg, { body: submitErr.substring(0, 400) });
+        await updateRun({ status: "failed", current_stage: "final_assembly", error_message: msg, finished_at: new Date().toISOString() });
+        return json({ status: "failed", error: msg }, 500);
       }
     } else {
       await log("info", "No end card — using captioned video as final");
