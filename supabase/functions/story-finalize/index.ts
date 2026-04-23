@@ -646,7 +646,13 @@ Deno.serve(async (req) => {
       const dissolveSec = 0.5;
       const xfadeOffset = Math.max(0.5, totalStoryDuration - dissolveSec);
       const finalDurationSec = totalStoryDuration + endCardDurationSec - dissolveSec;
-      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]scale=1080:1920,setsar=1,format=yuv420p[v0];[1:v]scale=1080:1920,setsar=1,format=yuv420p[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)}[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${finalDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
+      // CRITICAL: xfade requires identical timebases on both inputs. Submagic-captioned
+      // videos can carry a non-standard timebase (e.g. 1/15360) which mismatches the
+      // end card's 1/24, producing "First input link main timebase ..." errors.
+      // Force both streams to AVTB + constant 24fps + identical SAR before xfade.
+      const normVideo = `scale=1080:1920,setsar=1,format=yuv420p,fps=${DEFAULT_STORY_FPS},settb=AVTB`;
+      const concatCmd = `-i {{in_story}} -i {{in_endcard}} -filter_complex "[0:v]${normVideo}[v0];[1:v]${normVideo}[v1];[v0][v1]xfade=transition=fade:duration=${dissolveSec}:offset=${xfadeOffset.toFixed(2)},format=yuv420p[vf];[0:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a0];[1:a]aresample=${DEFAULT_STORY_AUDIO_RATE},aformat=channel_layouts=stereo[a1];[a0][a1]acrossfade=d=${dissolveSec}[af]" -map "[vf]" -map "[af]" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -r ${DEFAULT_STORY_FPS} -c:a aac -ar ${DEFAULT_STORY_AUDIO_RATE} -ac 2 -b:a 128k -t ${finalDurationSec.toFixed(3)} -movflags +faststart {{out_1}}`;
+      await log("info", `Final concat FFmpeg: ${concatCmd.substring(0, 400)}`);
 
       const concatResp = await fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
         method: "POST",
@@ -684,24 +690,19 @@ Deno.serve(async (req) => {
           finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
           finalIncludesEndCard = true;
         } else {
-          await log("warn", "Final concat timed out — using captioned video without end card");
-          const { data: fallbackUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
-          if (fallbackUrl?.signedUrl) {
-            const fallbackDl = await fetch(fallbackUrl.signedUrl);
-            finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
-          } else {
-            finalVideoBytes = storyBytes;
-          }
+          // HARD FAIL: never publish without the end card. Run can be retried;
+          // captioned video is preserved so retry skips straight back here.
+          const msg = "Final concat failed/timed out — refusing to publish without end card. Re-trigger the run to retry concat only.";
+          await log("error", msg);
+          await updateRun({ status: "failed", current_stage: "final_assembly", error_message: msg, finished_at: new Date().toISOString() });
+          return json({ status: "failed", error: msg }, 500);
         }
       } else {
-        await log("warn", "Final concat submit failed — using captioned video");
-        const { data: fallbackUrl2 } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
-        if (fallbackUrl2?.signedUrl) {
-          const fallbackDl = await fetch(fallbackUrl2.signedUrl);
-          finalVideoBytes = new Uint8Array(await fallbackDl.arrayBuffer());
-        } else {
-          finalVideoBytes = storyBytes;
-        }
+        const submitErr = await concatResp.text().catch(() => "");
+        const msg = `Final concat submit failed (${concatResp.status}) — refusing to publish without end card.`;
+        await log("error", msg, { body: submitErr.substring(0, 400) });
+        await updateRun({ status: "failed", current_stage: "final_assembly", error_message: msg, finished_at: new Date().toISOString() });
+        return json({ status: "failed", error: msg }, 500);
       }
     } else {
       await log("info", "No end card — using captioned video as final");
