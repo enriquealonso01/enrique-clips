@@ -1,0 +1,2 @@
+UPDATE public.scenes SET status = 'pending' WHERE id = '95c58e89-1fee-4a51-8c2c-d0e45369813c';
+UPDATE public.runs SET status = 'running', current_step = 'keyframes', error_message = NULL, finished_at = NULL WHERE id = 'd4c8d3e0-e00b-4c9f-aee6-8f04bcbe7678';
