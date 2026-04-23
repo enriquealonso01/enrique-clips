@@ -167,11 +167,12 @@ Deno.serve(async (req) => {
     // STAGE 12-13: Assemble story video with Rendi
     // ══════════════════════════════════════════════════════
 
-    let storyPath: string;
-    let captionedPath: string;
+    let storyPath = existingCaptioned?.supabase_path || existingFinal?.supabase_path || "";
+    let captionedPath = existingCaptioned?.supabase_path || existingFinal?.supabase_path || "";
     let storyVideoDurationSec: number;
     let finalPath: string | null = publishOnly ? existingFinal?.supabase_path ?? null : null;
     let finalSignedUrl: { signedUrl?: string } | null = null;
+    let storyBytes: Uint8Array | null = null;
 
     // Compute clip durations (needed for end-card xfade offset even on resume)
     const timedBeats = meta.timed_beats || [];
@@ -344,7 +345,7 @@ Deno.serve(async (req) => {
 
     // Download and store story video
     const storyDl = await fetch(storyVideoUrl);
-    const storyBytes = new Uint8Array(await storyDl.arrayBuffer());
+        storyBytes = new Uint8Array(await storyDl.arrayBuffer());
     storyPath = `story-runs/${runId}/story_video.mp4`;
     await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
 
@@ -733,6 +734,9 @@ Deno.serve(async (req) => {
         const dl = await fetch(captSignedUrl.signedUrl);
         finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
       } else {
+        if (!storyBytes) {
+          throw new Error("Captioned video unavailable and story video bytes missing");
+        }
         finalVideoBytes = storyBytes;
       }
     }
