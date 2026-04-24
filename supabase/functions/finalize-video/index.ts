@@ -2394,6 +2394,37 @@ Deno.serve(async (req) => {
 
     // ===== STEP 5: THUMBNAIL & METADATA =====
     if (run.current_step === "metadata" || run.current_step === "stitch") {
+      // Atomic CAS lock for the metadata step. Prevents the watchdog (or any
+      // duplicate invoker) from running thumbnail+AI metadata in parallel with
+      // an already-active execution. We move progress_pct from 75 → 76 only
+      // if it is currently exactly 75 AND step is "metadata". The first caller
+      // wins; everyone else exits cleanly. (Stitch path bypasses this lock
+      // because it falls through within the same execution.)
+      if (run.current_step === "metadata") {
+        const { data: metaLockRows } = await supabase
+          .from("runs")
+          .update({ progress_pct: 76 })
+          .eq("id", runId)
+          .eq("current_step", "metadata")
+          .eq("progress_pct", 75)
+          .select("id");
+        if (!metaLockRows || metaLockRows.length === 0) {
+          await log("info", "Metadata step already claimed by another execution — skipping.");
+          return json({ status: "metadata_already_processing" });
+        }
+      }
+
+      // Heartbeat: write a log line so the scheduler watchdog (which checks
+      // for log activity in the last 5 min) treats this run as alive while
+      // long-running AI calls (metadata, etc.) are in progress.
+      const heartbeat = setInterval(() => {
+        supabase
+          .from("run_logs")
+          .insert({ run_id: runId, level: "debug" as any, message: "💓 metadata step heartbeat" })
+          .then(() => {});
+      }, 90 * 1000);
+
+      try {
       await log("info", "Step 5/7: Generating thumbnail & metadata...");
 
       // Thumbnail from first keyframe
@@ -2601,6 +2632,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
       }
 
       await updateRun({ current_step: "publish", progress_pct: 90 });
+      } finally {
+        clearInterval(heartbeat);
+      }
     }
 
     // ===== STEP 6: PUBLISH =====
