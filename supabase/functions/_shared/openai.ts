@@ -687,10 +687,10 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
 
     const isTimeout = (err as any)?.name === "AbortError" || 
                       (err instanceof Error && err.message.includes("timed out"));
-    const is503 = err instanceof GeminiApiError && (err.status === 503 || err.status === 504);
+    const is5xx = err instanceof GeminiApiError && (err.status === 500 || err.status === 502 || err.status === 503 || err.status === 504);
 
-    if (is503 || isTimeout) {
-      const reason = isTimeout ? "timeout" : "503";
+    if (is5xx || isTimeout) {
+      const reason = isTimeout ? "timeout" : String((err as GeminiApiError).status);
       console.warn(`[AI] Image ${reason} after ${(latency / 1000).toFixed(1)}s. Waiting ${IMAGE_RETRY_DELAY_MS / 1000}s before re-chain...`);
       logUsage({
         endpoint: `${endpoint}_${reason}`, model, success: false, latency_ms: latency,
