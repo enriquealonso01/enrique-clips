@@ -2646,29 +2646,6 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     if (skipPublish) {
       // skip publish entirely
     } else {
-    // Atomic CAS lock for the publish step. Prevents duplicate Upload-Post
-    // submissions when the watchdog re-triggers a still-running publish.
-    const { data: pubLockRows } = await supabase
-      .from("runs")
-      .update({ progress_pct: 91 })
-      .eq("id", runId)
-      .eq("current_step", "publish")
-      .eq("progress_pct", 90)
-      .select("id");
-    if (!pubLockRows || pubLockRows.length === 0) {
-      // Either we just came from the metadata block in the same execution
-      // (progress_pct already > 90) or another execution claimed it.
-      const { data: freshRun2 } = await supabase
-        .from("runs")
-        .select("progress_pct")
-        .eq("id", runId)
-        .single();
-      // If progress_pct is not exactly 91 (our value), someone else owns it.
-      if (!freshRun2 || freshRun2.progress_pct !== 91) {
-        await log("info", "Publish step already claimed by another execution — skipping.");
-        return json({ status: "publish_already_processing" });
-      }
-    }
     // Idempotency: skip if a publish job is already submitted/polling/completed
     const { data: existingJobs } = await supabase
       .from("publish_jobs")
