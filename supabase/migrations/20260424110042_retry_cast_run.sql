@@ -1,0 +1,3 @@
+UPDATE public.story_runs 
+SET status='cast_generated', current_stage='cast_generated', error_message=NULL, finished_at=NULL 
+WHERE id='a2f5cfe2-a6a3-4f83-864f-580e91797739';
