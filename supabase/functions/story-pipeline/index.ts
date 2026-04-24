@@ -550,6 +550,13 @@ Requirements:
 - ${minBeats}-${maxBeats} beats total
 - ${targetDuration <= 60 ? "Keep it tight and punchy — every word counts" : targetDuration <= 120 ? "Standard pacing with room for emotional beats" : "Allow deeper storytelling with more descriptive beats"}
 
+CRITICAL — FINAL BEAT (the closer):
+- The LAST beat MUST be a complete, declarative sentence that resolves the story. Its purpose MUST be "resolve".
+- It MUST end with a period "." or exclamation "!". NEVER end with a comma, semicolon, colon, dash, ellipsis, or question mark.
+- It MUST NOT begin with or trail off into continuation words like "and", "but", "so", "because", "while", "until", "then" used as a hanging clause.
+- It must SOUND finished when read aloud — falling intonation, no cliffhanger, no setup for "more coming". Think of it as the final sentence of a published article.
+- Avoid trailing prepositional phrases that imply something more is coming (e.g. "...waiting for"). Rewrite as a complete thought.
+
 Return JSON:
 {
   "full_script": "the complete narration text as one block",
@@ -739,7 +746,11 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
     const isLast = i === segments.length - 1;
     const ttsText = isLast ? segments[i] : stripTrailingPunct(segments[i]);
     const prev = i > 0 ? segments[i - 1] : undefined;
-    const next = i < segments.length - 1 ? segments[i + 1] : undefined;
+    // For the final segment, pass an explicit terminal cue as next_text so ElevenLabs
+    // applies a falling, finished intonation instead of an upward "more coming" lift.
+    const next = i < segments.length - 1
+      ? segments[i + 1]
+      : "[End of narration. Silence follows.]";
     const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, prev, next);
     const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
     const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
