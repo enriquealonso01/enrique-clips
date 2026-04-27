@@ -964,17 +964,31 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
 
           // Per-platform try/catch + 30s timeout so one slow/hung platform
           // cannot kill the entire edge function and leave the run stuck in `publishing`.
+          // Retry up to 2 attempts per platform with a 90s timeout each.
+          let uploadResp: Response | null = null;
+          let uploadResult: any = {};
+          let lastErr: string | null = null;
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              const ctrl = new AbortController();
+              const tid = setTimeout(() => ctrl.abort(), 90_000);
+              uploadResp = await fetch("https://api.upload-post.com/api/upload", {
+                method: "POST",
+                headers: { Authorization: `Apikey ${uploadpostApiKey}` },
+                body: formData,
+                signal: ctrl.signal,
+              });
+              clearTimeout(tid);
+              uploadResult = await uploadResp.json().catch(() => ({}));
+              break;
+            } catch (e) {
+              lastErr = (e as Error).message;
+              await log("warn", `Upload-Post attempt ${attempt} failed for [${platform}]: ${lastErr}`);
+              if (attempt < 2) await sleep(2000);
+            }
+          }
           try {
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), 30_000);
-            const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
-              method: "POST",
-              headers: { Authorization: `Apikey ${uploadpostApiKey}` },
-              body: formData,
-              signal: ctrl.signal,
-            });
-            clearTimeout(tid);
-            const uploadResult = await uploadResp.json().catch(() => ({}));
+            if (!uploadResp) throw new Error(lastErr || "no response");
             await log("info", `Upload-Post response [${platform}]`, uploadResult);
             if (uploadResp.ok && uploadResult.request_id) {
               anySuccess = true;
