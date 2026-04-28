@@ -793,21 +793,29 @@ Deno.serve(async (req) => {
     } else if (enabledPlatforms.length === 0) {
       await log("info", "No platforms enabled — skipping publish.");
     } else {
+      // ── HARD IDEMPOTENCY GUARD ──
+      // If any non-failed publish_jobs row already exists for this run, the
+      // video has already been submitted. Never re-submit. This is THE check
+      // that prevents duplicate posts.
+      const { data: existingJobs } = await sb.from("publish_jobs")
+        .select("id, status, uploadpost_request_id")
+        .eq("run_id", runId)
+        .in("status", ["submitted", "polling", "completed"] as any);
+      if (existingJobs && existingJobs.length > 0) {
+        await log("info", `Publish job already exists (${existingJobs[0].status}) — skipping duplicate publish.`, { existing_job_id: existingJobs[0].id });
+      } else {
       try {
         if (!finalPath) {
           throw new Error("Final video path missing before publish");
         }
-        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60);
+        // Async URL upload: Upload-Post fetches the video itself. No Blob, no
+        // client-side timeout, no chaining. Mirrors the Projects pipeline.
+        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 6 * 60 * 60);
         if (!finalDownloadUrl?.signedUrl) {
           throw new Error("Could not create signed URL for final story video");
         }
-        const videoResp = await fetch(finalDownloadUrl.signedUrl);
-        if (!videoResp.ok) {
-          throw new Error(`Could not download final story video for publish (${videoResp.status})`);
-        }
-        const videoBlob = await videoResp.blob();
-        const videoFilename = finalPath.split("/").pop() || "story-final-video.mp4";
-        await log("info", `Prepared direct Upload-Post video payload (${(videoBlob.size / 1024 / 1024).toFixed(1)}MB)`);
+        const videoUrl = finalDownloadUrl.signedUrl;
+        await log("info", "Prepared async Upload-Post submission (URL fetch by Upload-Post).");
 
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
