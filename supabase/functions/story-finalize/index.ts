@@ -935,12 +935,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         // One request per platform — mirrors the project pipeline so each platform
         // gets its own scheduled_date + platform-specific defaults without collisions.
         // Detect past-scheduled times and post immediately to avoid Upload-Post errors.
-        let scheduledDateIsFuture = false;
-        if (meta.publish_scheduled_date) {
-          const schedMs = Date.parse(meta.publish_scheduled_date as string);
-          // If we cannot parse, treat as not-future to be safe.
-          scheduledDateIsFuture = Number.isFinite(schedMs) && schedMs > Date.now() + 60_000;
-        }
+        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
         const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
@@ -970,16 +965,27 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             }
           }
 
-          // Per-platform try/catch + 30s timeout so one slow/hung platform
+          await updateRun({
+            status: "publishing" as any,
+            current_stage: "publishing",
+            progress_pct: 94,
+            generated_metadata: {
+              ...meta,
+              publish_heartbeat_at: new Date().toISOString(),
+              publish_current_platform: platform,
+            },
+          });
+
+          // Per-platform try/catch + short timeout so one slow/hung platform
           // cannot kill the entire edge function and leave the run stuck in `publishing`.
-          // Retry up to 2 attempts per platform with a 90s timeout each.
+          // Keep the total budget below the edge function limit; the watchdog resumes publish-only if needed.
           let uploadResp: Response | null = null;
           let uploadResult: any = {};
           let lastErr: string | null = null;
-          for (let attempt = 1; attempt <= 2; attempt++) {
+          for (let attempt = 1; attempt <= UPLOADPOST_MAX_ATTEMPTS; attempt++) {
             try {
               const ctrl = new AbortController();
-              const tid = setTimeout(() => ctrl.abort(), 90_000);
+              const tid = setTimeout(() => ctrl.abort(), UPLOADPOST_TIMEOUT_MS);
               uploadResp = await fetch("https://api.upload-post.com/api/upload", {
                 method: "POST",
                 headers: { Authorization: `Apikey ${uploadpostApiKey}` },
@@ -992,7 +998,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             } catch (e) {
               lastErr = (e as Error).message;
               await log("warn", `Upload-Post attempt ${attempt} failed for [${platform}]: ${lastErr}`);
-              if (attempt < 2) await sleep(2000);
+              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(2000);
             }
           }
           try {
