@@ -10,6 +10,21 @@ const corsHeaders = {
 
 // OpenAI integration is now handled by _shared/openai.ts
 
+// Returns true if a publish_scheduled_date string is in the future.
+// Upload-Post rejects past times with "Scheduled date must be in the future."
+// We treat past or unparseable timestamps as "post immediately" to avoid
+// the run getting stuck retrying a doomed schedule.
+function isFutureScheduledDate(scheduledDate: string | undefined | null, timezone?: string | null): boolean {
+  if (!scheduledDate) return false;
+  // Many of our stored values are local wall-clock strings without a TZ
+  // suffix (e.g. "2026-04-28T08:14:00"). Try direct parse first; if it
+  // looks naive AND we have a timezone, just compare loosely.
+  const t = Date.parse(scheduledDate);
+  if (isNaN(t)) return false;
+  // 60 second safety buffer — schedules booked for "now" usually arrive late.
+  return t > Date.now() + 60_000;
+}
+
 // Compute scale factor based on video resolution relative to 540p baseline
 function getResolutionScale(pikaResolution: string): number {
   // Overlay values are authored for 540p. Scale proportionally for higher resolutions.
