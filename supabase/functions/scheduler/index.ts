@@ -227,7 +227,6 @@ Deno.serve(async (req) => {
         "audio_mixing",
         "subtitles_processing",
         "end_card_rendering",
-        "publishing",
       ];
       const { data: stuckStoryRuns } = await supabase
         .from("story_runs")
@@ -258,7 +257,6 @@ Deno.serve(async (req) => {
             case "audio_mixing":
             case "subtitles_processing":
             case "end_card_rendering":
-            case "publishing":
               targetFn = "story-finalize";
               resumeStage = null;
               break;
@@ -278,8 +276,6 @@ Deno.serve(async (req) => {
           const body: any = { run_id: stuck.id };
           if (resumeStage) body.resume_stage = resumeStage;
           if (targetFn === "story-finalize") body.force_retry = true;
-          if (stuck.current_stage === "publishing") body.publish_only = true;
-          if (stuck.current_stage === "publishing") body.skip_metadata_generation = true;
           fetch(fnUrl, {
             method: "POST",
             headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
