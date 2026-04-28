@@ -875,7 +875,8 @@ CRITICAL RULES FOR ALL PLATFORMS:
           };
         }
 
-        let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
+        let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> =
+          (meta.platform_metadata && typeof meta.platform_metadata === "object") ? meta.platform_metadata : {};
         // When the user clicks "Post Now" with force_metadata, regenerate fresh metadata
         // even on a publish-only retry. Otherwise honor skip flags as before.
         if (forceMetadata || (!skipMetadataGeneration && !publishOnly)) {
@@ -929,14 +930,16 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           await log("warn", `Per-platform metadata generation failed: ${(metaErr as Error).message}. Using fallback title/description.`);
         }
         } else {
-          await log("info", "Skipping AI metadata generation for publish retry; using fallback platform text.");
+          await log("info", Object.keys(platformMetadata).length > 0
+            ? "Skipping AI metadata generation for publish retry; reusing stored platform metadata."
+            : "Skipping AI metadata generation for publish retry; using fallback platform text.");
         }
 
         // Persist generated metadata onto the run for visibility
         try {
           const { data: curMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
           await sb.from("story_runs").update({
-            generated_metadata: { ...((curMeta?.generated_metadata as any) || {}), platform_metadata: platformMetadata, metadata_prefix: prefix },
+            generated_metadata: { ...((curMeta?.generated_metadata as any) || {}), ...(Object.keys(platformMetadata).length > 0 ? { platform_metadata: platformMetadata } : {}), metadata_prefix: prefix },
           }).eq("id", runId);
         } catch {}
 
