@@ -1,0 +1,1 @@
+UPDATE public.runs SET progress_pct = 75 WHERE id = 'f77af2a2-613e-4c7b-bfdd-1f91e0b223e7' AND current_step = 'metadata';
