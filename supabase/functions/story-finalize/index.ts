@@ -978,12 +978,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         if (alreadySubmitted.size > 0) {
           await log("info", `Skipping already submitted platforms: ${[...alreadySubmitted].join(", ")}`);
         }
-        if (publishGroups.size === 0) {
-          await log("info", "All enabled platforms already have Upload-Post submissions recorded.");
-          anySuccess = true;
-        }
-
-        let anySuccess = publishGroups.size === 0;
+        if (publishGroups.size === 0) await log("info", "All enabled platforms already have Upload-Post submissions recorded.");
         const publishStartedAt = Date.now();
         for (const group of publishGroups.values()) {
           if (Date.now() - publishStartedAt > PUBLISH_CHAIN_AFTER_MS) {
@@ -1056,7 +1051,6 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             if (!uploadResp) throw new Error(lastErr || "no response");
             await log("info", `Upload-Post response [${group.platforms.join(",")}]`, uploadResult);
             if (uploadResp.ok && uploadResult.request_id) {
-              anySuccess = true;
               group.platforms.forEach((platform) => alreadySubmitted.add(platform));
               const { data: latestRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
               meta = {
@@ -1085,9 +1079,10 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             await log("error", `Upload-Post threw for [${group.platforms.join(",")}]: ${(platErr as Error).message}`);
           }
         }
-        if (!anySuccess) {
+        const missingPlatforms = enabledPlatforms.filter((platform) => !alreadySubmitted.has(platform));
+        if (missingPlatforms.length > 0) {
           publishStatus = "failed";
-          await log("error", "All Upload-Post submissions failed — marking run as failed so it can be retried.");
+          await log("error", `Upload-Post incomplete; remaining platforms: ${missingPlatforms.join(", ")}. Retry will skip submitted platforms.`);
         }
       } catch (pubErr) {
         publishStatus = "failed";
