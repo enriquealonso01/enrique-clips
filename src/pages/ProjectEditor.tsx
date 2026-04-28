@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2, Bot, Loader2, History, Clock, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2, Bot, Loader2, History, Clock, CheckCircle2, XCircle, Send } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
 import { MemorySourceProjects } from "@/components/MemorySourceProjects";
@@ -79,6 +79,71 @@ export default function ProjectEditor() {
     },
     enabled: !!projectId,
   });
+
+  // Determine which runs have a final_video asset (drives "Post Now" button visibility)
+  const runIds = useMemo(() => (runs || []).map((r) => r.id), [runs]);
+  const { data: finalVideoRunIds } = useQuery({
+    queryKey: ["project-runs-final-videos", projectId, runIds.join(",")],
+    queryFn: async () => {
+      if (runIds.length === 0) return new Set<string>();
+      const { data, error } = await supabase
+        .from("assets")
+        .select("run_id")
+        .in("run_id", runIds)
+        .eq("type", "final_video");
+      if (error) throw error;
+      return new Set<string>((data || []).map((a) => a.run_id as string));
+    },
+    enabled: !!projectId && runIds.length > 0,
+  });
+
+  const [postingRunId, setPostingRunId] = useState<string | null>(null);
+  const postRunNow = async (run: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPostingRunId(run.id);
+    try {
+      // 1. Mark existing publish_jobs as failed to clear idempotency guard.
+      const { data: existingJobs } = await supabase
+        .from("publish_jobs")
+        .select("id")
+        .eq("run_id", run.id);
+      if (existingJobs && existingJobs.length > 0) {
+        await supabase
+          .from("publish_jobs")
+          .update({ status: "failed" as const, platform_results: { manual_post_now_reset: true } })
+          .in("id", existingJobs.map((j) => j.id));
+      }
+      // 2. Clear scheduling/skip flags so publishing fires immediately.
+      const meta = { ...((run.generated_metadata as any) || {}) };
+      delete meta.publish_scheduled_date;
+      delete meta.publish_timezone;
+      delete meta.skip_publish;
+      // 3. Reset run to publish step.
+      await supabase
+        .from("runs")
+        .update({
+          status: "running",
+          current_step: "publish",
+          progress_pct: 90,
+          error_message: null,
+          finished_at: null,
+          generated_metadata: meta,
+        })
+        .eq("id", run.id);
+      // 4. Trigger finalize-video — it will skip stitching (final exists),
+      //    regenerate metadata if missing, and publish to enabled platforms.
+      const { error } = await supabase.functions.invoke("finalize-video", {
+        body: { run_id: run.id, force_retry: true },
+      });
+      if (error) throw error;
+      toast({ title: "Post Now triggered", description: "Publishing to enabled platforms with metadata." });
+      queryClient.invalidateQueries({ queryKey: ["project-runs", projectId] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Failed to trigger Post Now", variant: "destructive" });
+    } finally {
+      setPostingRunId(null);
+    }
+  };
 
   // Fetch AI fix history
   const { data: fixHistory, refetch: refetchFixHistory } = useQuery({
