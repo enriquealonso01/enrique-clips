@@ -17,7 +17,7 @@ const DEFAULT_END_CARD_DURATION_SEC = 5;
 const UPLOADPOST_TIMEOUT_MS = 75_000;
 const UPLOADPOST_MAX_ATTEMPTS = 1;
 const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
-const PUBLISH_CHAIN_AFTER_MS = 105_000;
+const PUBLISH_CHAIN_AFTER_MS = 65_000;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
