@@ -11,7 +11,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Play, Pause, Square } from "lucide-react";
+import { ArrowLeft, Play, Pause, Square, Send } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 
@@ -22,6 +22,7 @@ export default function RunMonitor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [logFilter, setLogFilter] = useState<string>("all");
+  const [posting, setPosting] = useState(false);
   const finalizeInvokedRef = useRef<string | null>(null);
 
   const { data: run } = useQuery({
@@ -171,6 +172,24 @@ export default function RunMonitor() {
     refetchInterval: 5000,
   });
 
+  // Final video asset (used to enable "Post Now")
+  const { data: finalAsset } = useQuery({
+    queryKey: ["final-asset", runId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("assets")
+        .select("supabase_path")
+        .eq("run_id", runId!)
+        .eq("type", "final_video")
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!runId,
+    refetchInterval: 10000,
+  });
+
   // Realtime subscriptions
   useEffect(() => {
     if (!runId) return;
@@ -206,12 +225,68 @@ export default function RunMonitor() {
     }
   };
 
+  const postNow = async () => {
+    if (!runId) return;
+    setPosting(true);
+    try {
+      // 1. Clear stale publish_jobs so the idempotency guard in finalize-video
+      //    lets the new publish through (otherwise it skips as "already exists").
+      const { data: existingJobs } = await supabase
+        .from("publish_jobs")
+        .select("id")
+        .eq("run_id", runId);
+      if (existingJobs && existingJobs.length > 0) {
+        await supabase
+          .from("publish_jobs")
+          .update({ status: "failed" as const, platform_results: { manual_post_now_reset: true } })
+          .in("id", existingJobs.map((j) => j.id));
+      }
+
+      // 2. Clear any past scheduled date so Upload-Post doesn't reject it,
+      //    and remove skip_publish if previously set.
+      const meta = { ...((run?.generated_metadata as any) || {}) };
+      delete meta.publish_scheduled_date;
+      delete meta.publish_timezone;
+      delete meta.skip_publish;
+
+      // 3. Reset run to publish step so finalize-video proceeds to the publish block.
+      await supabase
+        .from("runs")
+        .update({
+          status: "running",
+          current_step: "publish",
+          progress_pct: 90,
+          error_message: null,
+          finished_at: null,
+          generated_metadata: meta,
+        })
+        .eq("id", runId);
+
+      // 4. Invoke finalize-video. It will skip stitch (final video exists) and
+      //    optionally regenerate metadata, then run the publish block.
+      const { error } = await supabase.functions.invoke("finalize-video", {
+        body: { run_id: runId, force_retry: true },
+      });
+      if (error) throw error;
+
+      toast({ title: "Post Now triggered", description: "Publishing immediately to enabled platforms." });
+      queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      queryClient.invalidateQueries({ queryKey: ["publish-jobs", runId] });
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Failed to trigger Post Now", variant: "destructive" });
+    } finally {
+      setPosting(false);
+    }
+  };
+
   if (!run) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading run...</div>;
 
   const currentStepIndex = STEPS.indexOf(run.current_step);
   const canPause = run.status === "running";
   const canResume = run.status === "paused";
   const canStop = ["running", "paused", "queued"].includes(run.status);
+  const canPostNow = !!finalAsset?.supabase_path
+    && ["done", "failed", "stopped", "running", "paused"].includes(run.status);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -227,6 +302,11 @@ export default function RunMonitor() {
           </div>
         </div>
         <div className="flex gap-1 md:gap-2 shrink-0">
+          {canPostNow && (
+            <Button size="sm" disabled={posting} onClick={postNow}>
+              <Send className="h-3 w-3 mr-1" /> Post Now
+            </Button>
+          )}
           <Button size="sm" variant="outline" disabled={!canResume} onClick={() => updateStatus("running")}>
             <Play className="h-3 w-3" />
           </Button>
