@@ -11,12 +11,13 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-// Upload-Post fetches the video URL server-side, so large files can take 60-120s.
-// Use a generous per-attempt timeout and multiple retries so transient
-// "signal aborted" / network blips don't fail the publish step.
-const UPLOADPOST_TIMEOUT_MS = 120_000;
-const UPLOADPOST_MAX_ATTEMPTS = 3;
+// Upload-Post can stall while fetching large public URLs. We upload the video
+// binary directly and keep each platform attempt bounded so the function can
+// persist progress and resume instead of getting stuck in `publishing`.
+const UPLOADPOST_TIMEOUT_MS = 75_000;
+const UPLOADPOST_MAX_ATTEMPTS = 1;
 const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
+const PUBLISH_CHAIN_AFTER_MS = 65_000;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -89,7 +90,7 @@ Deno.serve(async (req) => {
     if (!run) return json({ error: "Run not found" }, 404);
 
     const project = run.story_projects as any;
-    const meta = (run.generated_metadata as any) || {};
+    let meta = (run.generated_metadata as any) || {};
     const config = project?.config_json || {};
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
@@ -800,8 +801,17 @@ Deno.serve(async (req) => {
         if (!finalPath) {
           throw new Error("Final video path missing before publish");
         }
-        const { data: urlData } = sb.storage.from("project-assets").getPublicUrl(finalPath);
-        const videoUrl = urlData.publicUrl;
+        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60);
+        if (!finalDownloadUrl?.signedUrl) {
+          throw new Error("Could not create signed URL for final story video");
+        }
+        const videoResp = await fetch(finalDownloadUrl.signedUrl);
+        if (!videoResp.ok) {
+          throw new Error(`Could not download final story video for publish (${videoResp.status})`);
+        }
+        const videoBlob = await videoResp.blob();
+        const videoFilename = finalPath.split("/").pop() || "story-final-video.mp4";
+        await log("info", `Prepared direct Upload-Post video payload (${(videoBlob.size / 1024 / 1024).toFixed(1)}MB)`);
 
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
@@ -865,7 +875,8 @@ CRITICAL RULES FOR ALL PLATFORMS:
           };
         }
 
-        let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
+        let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> =
+          (meta.platform_metadata && typeof meta.platform_metadata === "object") ? meta.platform_metadata : {};
         // When the user clicks "Post Now" with force_metadata, regenerate fresh metadata
         // even on a publish-only retry. Otherwise honor skip flags as before.
         if (forceMetadata || (!skipMetadataGeneration && !publishOnly)) {
@@ -919,15 +930,16 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           await log("warn", `Per-platform metadata generation failed: ${(metaErr as Error).message}. Using fallback title/description.`);
         }
         } else {
-          await log("info", "Skipping AI metadata generation for publish retry; using fallback platform text.");
+          await log("info", Object.keys(platformMetadata).length > 0
+            ? "Skipping AI metadata generation for publish retry; reusing stored platform metadata."
+            : "Skipping AI metadata generation for publish retry; using fallback platform text.");
         }
 
         // Persist generated metadata onto the run for visibility
         try {
           const { data: curMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
-          await sb.from("story_runs").update({
-            generated_metadata: { ...((curMeta?.generated_metadata as any) || {}), platform_metadata: platformMetadata, metadata_prefix: prefix },
-          }).eq("id", runId);
+          meta = { ...((curMeta?.generated_metadata as any) || meta), ...(Object.keys(platformMetadata).length > 0 ? { platform_metadata: platformMetadata } : {}), metadata_prefix: prefix };
+          await sb.from("story_runs").update({ generated_metadata: meta }).eq("id", runId);
         } catch {}
 
         const buildPlatformPayload = (platform: string): { title: string; description: string } => {
@@ -955,19 +967,34 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         } else if (meta.publish_scheduled_date && !scheduledDateIsFuture) {
           await log("warn", `Scheduled publish time ${meta.publish_scheduled_date} is in the past — posting immediately to avoid Upload-Post error.`);
         }
+        const alreadySubmitted = new Set<string>(Array.isArray(meta.publish_submitted_platforms) ? meta.publish_submitted_platforms : []);
         const publishGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
         for (const platform of enabledPlatforms) {
+          if (alreadySubmitted.has(platform)) continue;
           const payload = buildPlatformPayload(platform);
           const key = `${payload.title}\n---\n${payload.description}`;
           const group = publishGroups.get(key);
           if (group) group.platforms.push(platform);
           else publishGroups.set(key, { ...payload, platforms: [platform] });
         }
-
-        let anySuccess = false;
+        if (alreadySubmitted.size > 0) {
+          await log("info", `Skipping already submitted platforms: ${[...alreadySubmitted].join(", ")}`);
+        }
+        if (publishGroups.size === 0) await log("info", "All enabled platforms already have Upload-Post submissions recorded.");
+        const publishStartedAt = Date.now();
         for (const group of publishGroups.values()) {
+          if (Date.now() - publishStartedAt > PUBLISH_CHAIN_AFTER_MS) {
+            await log("warn", "Publish budget nearly exhausted — chaining remaining platforms.", { remaining: group.platforms });
+            const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+            await fetch(chainUrl, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: runId, force_retry: true, publish_only: true, post_now: true, force_metadata: false, skip_metadata_generation: true }),
+            }).catch((e) => console.error("Publish chain error", e));
+            return json({ status: "chained", run_id: runId });
+          }
           const formData = new FormData();
-          formData.append("video", videoUrl);
+          formData.append("video", videoBlob, videoFilename);
           formData.append("title", group.title);
           formData.append("description", group.description);
           formData.append("async_upload", "true");
@@ -1026,7 +1053,16 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             if (!uploadResp) throw new Error(lastErr || "no response");
             await log("info", `Upload-Post response [${group.platforms.join(",")}]`, uploadResult);
             if (uploadResp.ok && uploadResult.request_id) {
-              anySuccess = true;
+              group.platforms.forEach((platform) => alreadySubmitted.add(platform));
+              const { data: latestRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+              meta = {
+                ...((latestRunMeta?.generated_metadata as any) || meta),
+                publish_submitted_platforms: [...alreadySubmitted],
+                publish_last_request_id: uploadResult.request_id,
+                publish_retry_required: false,
+                publish_heartbeat_at: new Date().toISOString(),
+              };
+              await sb.from("story_runs").update({ generated_metadata: meta }).eq("id", runId);
               await log("info", `Upload-Post submitted [${group.platforms.join(",")}]: ${uploadResult.request_id}`);
               // Record a publish_jobs row for traceability / idempotency on retries.
               try {
@@ -1045,9 +1081,10 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             await log("error", `Upload-Post threw for [${group.platforms.join(",")}]: ${(platErr as Error).message}`);
           }
         }
-        if (!anySuccess) {
+        const missingPlatforms = enabledPlatforms.filter((platform) => !alreadySubmitted.has(platform));
+        if (missingPlatforms.length > 0) {
           publishStatus = "failed";
-          await log("error", "All Upload-Post submissions failed — marking run as failed so it can be retried.");
+          await log("error", `Upload-Post incomplete; remaining platforms: ${missingPlatforms.join(", ")}. Retry will skip submitted platforms.`);
         }
       } catch (pubErr) {
         publishStatus = "failed";
