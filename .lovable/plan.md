@@ -1,62 +1,60 @@
 ## Problem
 
-The Stories publish step (Stage 19 in `story-finalize`) has been re-engineered repeatedly and is now a tangle of: direct binary uploads, per-attempt retries with 120s timeouts, in-flight chaining mid-publish, `publish_submitted_platforms` tracked in `story_runs.generated_metadata`, and a watchdog (`scheduler`) that re-triggers `publish_only`/`post_now` retries.
+The Stories publish step (Stage 19 in `supabase/functions/story-finalize/index.ts`) has been re-engineered repeatedly and is now a tangle: direct binary uploads, per-attempt timeouts, in-flight chaining mid-publish, `publish_submitted_platforms` tracked inside `story_runs.generated_metadata`, and a watchdog (`scheduler`) that re-triggers `publish_only` retries.
 
-Side effects observed:
+Observed effects:
 - The same final video was posted up to 10 times to the same platform.
-- Runs deadlock in `publishing` then get re-triggered, each retry creating a new `publish_jobs` row (e.g. run `f77af2a2…` has 3 rows; nothing prevents 10).
-- Past-due `scheduled_date` causes Upload-Post errors that mark attempts as failed even when the post actually went through.
-- The intra-invocation `alreadySubmitted` set is rebuilt from `generated_metadata.publish_submitted_platforms`, but each re-trigger goes back through "Stage 19" and re-submits all platforms because that flag is unreliable when timeouts abort before the metadata write.
+- Runs deadlock in `publishing`, get re-triggered by the watchdog, and each retry inserts a new `publish_jobs` row (e.g. run `f77af2a2…` has 3; nothing prevents 10).
+- Past-due `scheduled_date` makes Upload-Post reject submissions even after the post went through.
+- The intra-invocation `alreadySubmitted` set is unreliable across re-triggers because its persistence is racy with timeouts.
 
-The Projects pipeline (`finalize-video`) does NOT have this problem. It uses a single, much simpler model that we should mirror.
+The Projects pipeline (`finalize-video`, lines ~2743-2941) does NOT have these problems. It uses a single, much simpler model. We will replace Stories Stage 19 with that exact pattern.
 
-## Solution: copy the Projects publish model verbatim
+## Changes
 
-Rip out the entire Stage 19 block in `supabase/functions/story-finalize/index.ts` and replace it with the exact pattern used in `supabase/functions/finalize-video/index.ts` (lines ~2743-2941).
+### 1. `supabase/functions/story-finalize/index.ts` — replace Stage 19
 
-### The Projects pattern (what we will copy)
+Delete:
+- Constants `UPLOADPOST_TIMEOUT_MS`, `UPLOADPOST_MAX_ATTEMPTS`, `UPLOADPOST_RETRY_BACKOFF_MS`, `PUBLISH_CHAIN_AFTER_MS`.
+- The video Blob download path (`fetch(signedUrl) → blob()`).
+- The per-attempt `AbortController` retry loop.
+- The mid-publish chaining branch (`fetch(chainUrl, … publish_only: true)`).
+- All reads/writes of `publish_submitted_platforms`, `publish_last_request_id`, `publish_retry_required`, `publish_heartbeat_at`, `publish_current_platform`.
 
-1. **Hard idempotency check first.** Query `publish_jobs` for the run with status in (`submitted`, `polling`, `completed`). If any row exists → log "Publish job already exists — skipping duplicate publish" and return. This single check is what prevents repeat posts.
-2. **One `publish_jobs` row per run.** Insert one row with status `submitted` before any Upload-Post call. Never insert another for the same run.
-3. **Async URL upload.** Use `formData.append("video", videoUrl)` + `async_upload=true` and let Upload-Post fetch the public URL itself. No `Blob` download, no 120s client timeouts, no in-flight chaining.
-4. **Group platforms by identical title+description**, send one Upload-Post request per group, fire-and-forget (single attempt, no per-platform retry loop).
-5. **Schedule handling**: only attach `scheduled_date` when `isFutureScheduledDate(...)` is true; otherwise post immediately. Same helper already used in `finalize-video`.
-6. **Final job state**: on any successful submission, update the publish_jobs row to `polling` with `uploadpost_request_id`/`uploadpost_job_id`. On total failure, mark `failed`. The existing `uploadpost-webhook` and the polling logic continue from there — no changes needed.
+Keep the AI metadata generation block (it's good and platform-specific).
 
-### What we delete from `story-finalize`
+Replace the publish loop with the Projects pattern:
 
-- The direct binary download / `Blob` upload path.
-- `UPLOADPOST_TIMEOUT_MS`, `UPLOADPOST_MAX_ATTEMPTS`, `UPLOADPOST_RETRY_BACKOFF_MS`, the per-attempt `AbortController`, and the retry/backoff loop.
-- `PUBLISH_CHAIN_AFTER_MS` and the mid-publish chaining branch (`fetch(chainUrl, … publish_only: true)`).
-- `publish_submitted_platforms`, `publish_last_request_id`, `publish_retry_required`, `publish_heartbeat_at`, `publish_current_platform` reads/writes inside Stage 19.
-- The `force_metadata` / `post_now` / `publish_only` re-entry logic specific to publish (the "Post Now" UI button keeps working, see below).
+1. **Hard idempotency first.** Query `publish_jobs` for this run with status in (`submitted`, `polling`, `completed`). If any row exists → log "Publish job already exists — skipping duplicate publish" and skip publish entirely. This single check is what stops duplicate posts.
+2. **One `publish_jobs` row per run.** Insert one row with status `submitted` before the first Upload-Post call. Never insert a second.
+3. **Async URL upload.** `formData.append("video", publicUrl)` + `async_upload=true`. Let Upload-Post fetch the URL itself. No Blob, no client-side timeout, no chaining.
+4. **Group platforms by identical title+description**, send one Upload-Post request per group, single attempt (no retry loop).
+5. **Schedule handling**: only attach `scheduled_date` when `isFutureScheduledDate(...)` is true; otherwise post immediately.
+6. **Final job state**: on any successful submission, update the publish_jobs row to `polling` with `uploadpost_request_id` / `uploadpost_job_id`. On total failure, mark `failed`. The existing `uploadpost-webhook` keeps working.
 
-### Watchdog change (`supabase/functions/scheduler/index.ts`)
+### 2. `supabase/functions/scheduler/index.ts` — stop watchdog from re-triggering publish
 
-Remove `publishing` from `ACTIVE_STAGES` for stories so the watchdog stops re-triggering publish-only retries. With hard idempotency in place this would be safe anyway, but removing it eliminates the source of the duplicate-row attempts entirely. A run that genuinely fails publish will be marked `failed` by `story-finalize` and surfaced in the UI; the user can use the "Post Now" button.
+- Remove `"publishing"` from the stories `ACTIVE_STAGES` array.
+- Remove the `case "publishing":` branch in the resume-stage switch and its associated `publish_only` / `skip_metadata_generation` body flags.
 
-### "Post Now" button (`src/pages/StoryRunMonitor.tsx`)
+With hard idempotency this would already be safe, but eliminating the re-trigger removes the source of duplicate attempts entirely. A genuinely failed publish is marked `failed` by `story-finalize` and surfaced in the UI; the user retries via "Post Now".
 
-Keep the button, but change its behavior to match the Projects flow:
-1. Delete (or mark `failed`) any existing `publish_jobs` rows for the run so the idempotency check lets the next attempt through.
-2. Clear `publish_scheduled_date` in `generated_metadata`.
-3. Invoke `story-finalize` with `{ publish_only: true, force_metadata: true }`.
+### 3. `src/pages/StoryRunMonitor.tsx` — make "Post Now" safe
 
-This is the only sanctioned path to re-publish, and because we wipe the prior publish_jobs row first, it can never produce duplicates by accident.
+Update the existing `postNow` handler to mirror the Projects model:
+1. Mark all existing `publish_jobs` rows for the run as `failed` so the idempotency check lets the next attempt through.
+2. Clear `publish_scheduled_date` / `publish_timezone` from `generated_metadata` (so the new attempt posts immediately).
+3. Invoke `story-finalize` with `{ publish_only: true, force_metadata: true, force_retry: true }`.
 
-### Database cleanup
+This is the only sanctioned re-publish path; because we always wipe prior publish_jobs first, it can never produce duplicates.
 
-For the currently-stuck run `f77af2a2-613e-4c7b-bfdd-1f91e0b223e7`, after deploying the new code:
-- Mark its 3 existing publish_jobs rows as `failed`.
+### 4. Database fix for the currently stuck run
+
+For `f77af2a2-613e-4c7b-bfdd-1f91e0b223e7`:
+- Mark its 3 existing `publish_jobs` rows as `failed`.
 - Clear `publish_scheduled_date` / `publish_timezone` / `publish_submitted_platforms` from `generated_metadata`.
-- Reset `status='ready_to_publish'` (or equivalent) and use the "Post Now" button to publish once with the new code path.
-
-## Files to edit
-
-- `supabase/functions/story-finalize/index.ts` — replace Stage 19 block (~lines 780-1100) with the Projects-style publish block.
-- `supabase/functions/scheduler/index.ts` — remove `publishing` from stories `ACTIVE_STAGES`.
-- `src/pages/StoryRunMonitor.tsx` — "Post Now" handler clears prior publish_jobs + scheduled date before invoking.
-- One data migration / SQL update to fix the stuck run.
+- Reset `status='ready_to_publish'` (or equivalent).
+- Trigger publish once via the new Post Now flow.
 
 ## Acceptance criteria
 
@@ -64,3 +62,10 @@ For the currently-stuck run `f77af2a2-613e-4c7b-bfdd-1f91e0b223e7`, after deploy
 - A second invocation of `story-finalize` for the same run logs "Publish job already exists — skipping duplicate publish" and exits.
 - No platform receives the same video more than once unless the user explicitly clicks "Post Now" (which resets the publish_jobs row first).
 - Run `f77af2a2…` is published exactly once after the fix.
+
+## Files touched
+
+- `supabase/functions/story-finalize/index.ts` — replace the ~330-line Stage 19 block with the Projects-style ~80-line block.
+- `supabase/functions/scheduler/index.ts` — remove `publishing` from stories watchdog.
+- `src/pages/StoryRunMonitor.tsx` — `postNow` clears prior `publish_jobs` first.
+- One Supabase update for the stuck run.
