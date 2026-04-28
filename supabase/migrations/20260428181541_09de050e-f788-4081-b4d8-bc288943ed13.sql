@@ -1,0 +1,2 @@
+UPDATE publish_jobs SET status='failed' WHERE run_id='f77af2a2-613e-4c7b-bfdd-1f91e0b223e7' AND status IN ('submitted','polling','completed');
+UPDATE story_runs SET status='failed', error_message='Stuck publish reset — click Post Now to retry', generated_metadata = (COALESCE(generated_metadata,'{}'::jsonb) - 'publish_scheduled_date' - 'publish_timezone' - 'publish_submitted_platforms' - 'publish_retry_required') WHERE id='f77af2a2-613e-4c7b-bfdd-1f91e0b223e7';

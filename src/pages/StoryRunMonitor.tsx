@@ -186,11 +186,28 @@ export default function StoryRunMonitor() {
     if (!runId) return;
     setActing(true);
     try {
+      // 1. Wipe prior publish_jobs so the idempotency guard in story-finalize
+      //    lets the new submission through. Without this, the run will short-
+      //    circuit and nothing will be posted.
+      await supabase.from("publish_jobs")
+        .update({ status: "failed" as any })
+        .eq("run_id", runId)
+        .in("status", ["submitted", "polling", "completed"] as any);
+
+      // 2. Clear any stale scheduled-date metadata so we post immediately.
+      const currentMeta = (run?.generated_metadata as any) || {};
+      const cleanedMeta = { ...currentMeta };
+      delete cleanedMeta.publish_scheduled_date;
+      delete cleanedMeta.publish_timezone;
+      delete cleanedMeta.publish_submitted_platforms;
+      delete cleanedMeta.publish_retry_required;
+
       await supabase.from("story_runs").update({
         status: "publishing",
         current_stage: "publishing",
         error_message: null,
         finished_at: null,
+        generated_metadata: cleanedMeta,
       }).eq("id", runId);
       const { error } = await supabase.functions.invoke("story-finalize", {
         body: {

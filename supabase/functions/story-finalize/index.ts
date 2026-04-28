@@ -11,13 +11,9 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-// Upload-Post can stall while fetching large public URLs. We upload the video
-// binary directly and keep each platform attempt bounded so the function can
-// persist progress and resume instead of getting stuck in `publishing`.
-const UPLOADPOST_TIMEOUT_MS = 75_000;
-const UPLOADPOST_MAX_ATTEMPTS = 1;
-const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
-const PUBLISH_CHAIN_AFTER_MS = 65_000;
+// Publishing intentionally mirrors the Projects pipeline (finalize-video):
+// async URL upload + hard idempotency on publish_jobs. No retry loop, no
+// chaining, no per-attempt timeouts. One publish_jobs row per run, ever.
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -797,21 +793,29 @@ Deno.serve(async (req) => {
     } else if (enabledPlatforms.length === 0) {
       await log("info", "No platforms enabled — skipping publish.");
     } else {
+      // ── HARD IDEMPOTENCY GUARD ──
+      // If any non-failed publish_jobs row already exists for this run, the
+      // video has already been submitted. Never re-submit. This is THE check
+      // that prevents duplicate posts.
+      const { data: existingJobs } = await sb.from("publish_jobs")
+        .select("id, status, uploadpost_request_id")
+        .eq("run_id", runId)
+        .in("status", ["submitted", "polling", "completed"] as any);
+      if (existingJobs && existingJobs.length > 0) {
+        await log("info", `Publish job already exists (${existingJobs[0].status}) — skipping duplicate publish.`, { existing_job_id: existingJobs[0].id });
+      } else {
       try {
         if (!finalPath) {
           throw new Error("Final video path missing before publish");
         }
-        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60);
+        // Async URL upload: Upload-Post fetches the video itself. No Blob, no
+        // client-side timeout, no chaining. Mirrors the Projects pipeline.
+        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 6 * 60 * 60);
         if (!finalDownloadUrl?.signedUrl) {
           throw new Error("Could not create signed URL for final story video");
         }
-        const videoResp = await fetch(finalDownloadUrl.signedUrl);
-        if (!videoResp.ok) {
-          throw new Error(`Could not download final story video for publish (${videoResp.status})`);
-        }
-        const videoBlob = await videoResp.blob();
-        const videoFilename = finalPath.split("/").pop() || "story-final-video.mp4";
-        await log("info", `Prepared direct Upload-Post video payload (${(videoBlob.size / 1024 / 1024).toFixed(1)}MB)`);
+        const videoUrl = finalDownloadUrl.signedUrl;
+        await log("info", "Prepared async Upload-Post submission (URL fetch by Upload-Post).");
 
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
@@ -954,50 +958,49 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           return { title: storyTitle, description: fallbackDescription };
         };
 
-        // One request per platform — mirrors the project pipeline so each platform
-        // gets its own scheduled_date + platform-specific defaults without collisions.
-        // Detect past-scheduled times and post immediately to avoid Upload-Post errors.
+        // ── Insert ONE publish_jobs row up-front (Projects pattern) ──
+        // The hard idempotency guard above guarantees this is the only row
+        // created for this run. If we crash before populating it, "Post Now"
+        // marks it failed and inserts a fresh one.
+        const { data: jobRow, error: jobInsertErr } = await sb.from("publish_jobs")
+          .insert({ run_id: runId, status: "submitted" as any, platform_results: {} })
+          .select("id")
+          .single();
+        if (jobInsertErr || !jobRow) {
+          throw new Error(`Could not create publish_jobs row: ${jobInsertErr?.message || "unknown"}`);
+        }
+        const publishJobId = jobRow.id;
+
+        // Group enabled platforms by identical title+description so we send
+        // one Upload-Post request per group (mirrors finalize-video).
         const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
-        // Post Now / publish-only retries always post immediately regardless of stored schedule.
         const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly && !postNow;
         if (shouldUseScheduledDate) {
-          await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
-        } else if (meta.publish_scheduled_date && publishOnly) {
-          await log("info", "Publish-only retry: ignoring scheduled publish time and posting immediately.");
+          await log("info", `Scheduling post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
         } else if (meta.publish_scheduled_date && !scheduledDateIsFuture) {
-          await log("warn", `Scheduled publish time ${meta.publish_scheduled_date} is in the past — posting immediately to avoid Upload-Post error.`);
+          await log("warn", `Scheduled time ${meta.publish_scheduled_date} is in the past — posting immediately.`);
         }
-        const alreadySubmitted = new Set<string>(Array.isArray(meta.publish_submitted_platforms) ? meta.publish_submitted_platforms : []);
+
         const publishGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
         for (const platform of enabledPlatforms) {
-          if (alreadySubmitted.has(platform)) continue;
           const payload = buildPlatformPayload(platform);
           const key = `${payload.title}\n---\n${payload.description}`;
           const group = publishGroups.get(key);
           if (group) group.platforms.push(platform);
           else publishGroups.set(key, { ...payload, platforms: [platform] });
         }
-        if (alreadySubmitted.size > 0) {
-          await log("info", `Skipping already submitted platforms: ${[...alreadySubmitted].join(", ")}`);
-        }
-        if (publishGroups.size === 0) await log("info", "All enabled platforms already have Upload-Post submissions recorded.");
-        const publishStartedAt = Date.now();
+
+        const submissionResults: any[] = [];
+        let anySuccess = false;
+        let lastRequestId: string | null = null;
+
         for (const group of publishGroups.values()) {
-          if (Date.now() - publishStartedAt > PUBLISH_CHAIN_AFTER_MS) {
-            await log("warn", "Publish budget nearly exhausted — chaining remaining platforms.", { remaining: group.platforms });
-            const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
-            await fetch(chainUrl, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ run_id: runId, force_retry: true, publish_only: true, post_now: true, force_metadata: false, skip_metadata_generation: true }),
-            }).catch((e) => console.error("Publish chain error", e));
-            return json({ status: "chained", run_id: runId });
-          }
           const formData = new FormData();
-          formData.append("video", videoBlob, videoFilename);
+          // Async URL upload — Upload-Post fetches the video itself.
+          formData.append("video", videoUrl);
+          formData.append("async_upload", "true");
           formData.append("title", group.title);
           formData.append("description", group.description);
-          formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
           if (shouldUseScheduledDate) {
             formData.append("scheduled_date", meta.publish_scheduled_date);
@@ -1013,83 +1016,48 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             }
           }
 
-          await updateRun({
-            status: "publishing" as any,
-            current_stage: "publishing",
-            progress_pct: 94,
-            generated_metadata: {
-              ...meta,
-              publish_heartbeat_at: new Date().toISOString(),
-              publish_current_platform: group.platforms.join(","),
-            },
-          });
-
-          // Per-platform try/catch + short timeout so one slow/hung platform
-          // cannot kill the entire edge function and leave the run stuck in `publishing`.
-          // Keep the total budget below the edge function limit; the watchdog resumes publish-only if needed.
-          let uploadResp: Response | null = null;
           let uploadResult: any = {};
-          let lastErr: string | null = null;
-          for (let attempt = 1; attempt <= UPLOADPOST_MAX_ATTEMPTS; attempt++) {
-            try {
-              const ctrl = new AbortController();
-              const tid = setTimeout(() => ctrl.abort(), UPLOADPOST_TIMEOUT_MS);
-              uploadResp = await fetch("https://api.upload-post.com/api/upload", {
-                method: "POST",
-                headers: { Authorization: `Apikey ${uploadpostApiKey}` },
-                body: formData,
-                signal: ctrl.signal,
-              });
-              clearTimeout(tid);
-              uploadResult = await uploadResp.json().catch(() => ({}));
-              break;
-            } catch (e) {
-              lastErr = (e as Error).message;
-              await log("warn", `Upload-Post attempt ${attempt}/${UPLOADPOST_MAX_ATTEMPTS} failed for [${group.platforms.join(",")}]: ${lastErr}`);
-              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(UPLOADPOST_RETRY_BACKOFF_MS * attempt);
-            }
-          }
+          let uploadOk = false;
           try {
-            if (!uploadResp) throw new Error(lastErr || "no response");
+            const uploadResp = await fetch("https://api.upload-post.com/api/upload", {
+              method: "POST",
+              headers: { Authorization: `Apikey ${uploadpostApiKey}` },
+              body: formData,
+            });
+            uploadResult = await uploadResp.json().catch(() => ({}));
+            uploadOk = uploadResp.ok && !!uploadResult.request_id;
             await log("info", `Upload-Post response [${group.platforms.join(",")}]`, uploadResult);
-            if (uploadResp.ok && uploadResult.request_id) {
-              group.platforms.forEach((platform) => alreadySubmitted.add(platform));
-              const { data: latestRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
-              meta = {
-                ...((latestRunMeta?.generated_metadata as any) || meta),
-                publish_submitted_platforms: [...alreadySubmitted],
-                publish_last_request_id: uploadResult.request_id,
-                publish_retry_required: false,
-                publish_heartbeat_at: new Date().toISOString(),
-              };
-              await sb.from("story_runs").update({ generated_metadata: meta }).eq("id", runId);
-              await log("info", `Upload-Post submitted [${group.platforms.join(",")}]: ${uploadResult.request_id}`);
-              // Record a publish_jobs row for traceability / idempotency on retries.
-              try {
-                await sb.from("publish_jobs").insert({
-                  run_id: runId,
-                  status: "submitted" as any,
-                  uploadpost_request_id: uploadResult.request_id,
-                  uploadpost_job_id: uploadResult.job_id || null,
-                  platform_results: { platforms: group.platforms, response: uploadResult },
-                });
-              } catch {}
-            } else {
-              await log("error", `Upload-Post failed [${group.platforms.join(",")}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
-            }
-          } catch (platErr) {
-            await log("error", `Upload-Post threw for [${group.platforms.join(",")}]: ${(platErr as Error).message}`);
+          } catch (e) {
+            uploadResult = { error: (e as Error).message };
+            await log("error", `Upload-Post threw [${group.platforms.join(",")}]: ${(e as Error).message}`);
+          }
+
+          submissionResults.push({ platforms: group.platforms, ok: uploadOk, response: uploadResult });
+          if (uploadOk) {
+            anySuccess = true;
+            lastRequestId = uploadResult.request_id || lastRequestId;
+            await log("info", `Upload-Post submitted [${group.platforms.join(",")}]: ${uploadResult.request_id}`);
+          } else {
+            await log("error", `Upload-Post failed [${group.platforms.join(",")}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
           }
         }
-        const missingPlatforms = enabledPlatforms.filter((platform) => !alreadySubmitted.has(platform));
-        if (missingPlatforms.length > 0) {
+
+        // Update the single publish_jobs row with the outcome.
+        await sb.from("publish_jobs").update({
+          status: (anySuccess ? "polling" : "failed") as any,
+          uploadpost_request_id: lastRequestId,
+          platform_results: { submissions: submissionResults },
+        }).eq("id", publishJobId);
+
+        if (!anySuccess) {
           publishStatus = "failed";
-          await log("error", `Upload-Post incomplete; remaining platforms: ${missingPlatforms.join(", ")}. Retry will skip submitted platforms.`);
+          await log("error", "All Upload-Post submissions failed.");
         }
       } catch (pubErr) {
         publishStatus = "failed";
         await log("error", `Publishing failed: ${(pubErr as Error).message}`);
       }
+      } // end idempotency-guard else
     }
 
     await updateRun({
