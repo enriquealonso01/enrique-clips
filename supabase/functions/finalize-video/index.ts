@@ -3038,9 +3038,11 @@ Rules:
 
           // Add scheduled_date if set in run metadata
           const fbRunMeta = (run.generated_metadata as any) || {};
-          if (fbRunMeta.publish_scheduled_date) {
+          if (isFutureScheduledDate(fbRunMeta.publish_scheduled_date, fbRunMeta.publish_timezone)) {
             formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
             if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+          } else if (fbRunMeta.publish_scheduled_date) {
+            await log("info", `FB image (step 6b): scheduled_date ${fbRunMeta.publish_scheduled_date} is in the past — posting immediately.`);
           }
 
           // Fetch image and append as file
