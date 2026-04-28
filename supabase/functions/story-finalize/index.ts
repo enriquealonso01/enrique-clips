@@ -944,24 +944,34 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         } else if (meta.publish_scheduled_date && !scheduledDateIsFuture) {
           await log("warn", `Scheduled publish time ${meta.publish_scheduled_date} is in the past — posting immediately to avoid Upload-Post error.`);
         }
-        let anySuccess = false;
+        const publishGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
         for (const platform of enabledPlatforms) {
-          const { title: pTitle, description: pDescription } = buildPlatformPayload(platform);
+          const payload = buildPlatformPayload(platform);
+          const key = `${payload.title}\n---\n${payload.description}`;
+          const group = publishGroups.get(key);
+          if (group) group.platforms.push(platform);
+          else publishGroups.set(key, { ...payload, platforms: [platform] });
+        }
+
+        let anySuccess = false;
+        for (const group of publishGroups.values()) {
           const formData = new FormData();
           formData.append("video", videoUrl);
-          formData.append("title", pTitle);
-          formData.append("description", pDescription);
+          formData.append("title", group.title);
+          formData.append("description", group.description);
           formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
           if (shouldUseScheduledDate) {
             formData.append("scheduled_date", meta.publish_scheduled_date);
             if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
           }
-          formData.append("platform[]", platform);
-          const defaults = projPublishDefaults[platform] || {};
-          for (const [key, value] of Object.entries(defaults)) {
-            if (value !== undefined && value !== null && value !== "") {
-              formData.append(key, String(value));
+          for (const platform of group.platforms) formData.append("platform[]", platform);
+          for (const platform of group.platforms) {
+            const defaults = projPublishDefaults[platform] || {};
+            for (const [key, value] of Object.entries(defaults)) {
+              if (value !== undefined && value !== null && value !== "") {
+                formData.append(key, String(value));
+              }
             }
           }
 
@@ -972,7 +982,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
             generated_metadata: {
               ...meta,
               publish_heartbeat_at: new Date().toISOString(),
-              publish_current_platform: platform,
+              publish_current_platform: group.platforms.join(","),
             },
           });
 
@@ -997,30 +1007,31 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
               break;
             } catch (e) {
               lastErr = (e as Error).message;
-              await log("warn", `Upload-Post attempt ${attempt} failed for [${platform}]: ${lastErr}`);
+              await log("warn", `Upload-Post attempt ${attempt} failed for [${group.platforms.join(",")}]: ${lastErr}`);
               if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(2000);
             }
           }
           try {
             if (!uploadResp) throw new Error(lastErr || "no response");
-            await log("info", `Upload-Post response [${platform}]`, uploadResult);
+            await log("info", `Upload-Post response [${group.platforms.join(",")}]`, uploadResult);
             if (uploadResp.ok && uploadResult.request_id) {
               anySuccess = true;
-              await log("info", `Upload-Post submitted [${platform}]: ${uploadResult.request_id}`);
+              await log("info", `Upload-Post submitted [${group.platforms.join(",")}]: ${uploadResult.request_id}`);
               // Record a publish_jobs row for traceability / idempotency on retries.
               try {
                 await sb.from("publish_jobs").insert({
                   run_id: runId,
                   status: "submitted" as any,
                   uploadpost_request_id: uploadResult.request_id,
-                  platform_results: { [platform]: uploadResult },
+                  uploadpost_job_id: uploadResult.job_id || null,
+                  platform_results: { platforms: group.platforms, response: uploadResult },
                 });
               } catch {}
             } else {
-              await log("error", `Upload-Post failed [${platform}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
+              await log("error", `Upload-Post failed [${group.platforms.join(",")}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
             }
           } catch (platErr) {
-            await log("error", `Upload-Post threw for [${platform}]: ${(platErr as Error).message}`);
+            await log("error", `Upload-Post threw for [${group.platforms.join(",")}]: ${(platErr as Error).message}`);
           }
         }
         if (!anySuccess) {
