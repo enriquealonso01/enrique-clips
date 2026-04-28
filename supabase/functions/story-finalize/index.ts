@@ -866,7 +866,9 @@ CRITICAL RULES FOR ALL PLATFORMS:
         }
 
         let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
-        if (!skipMetadataGeneration && !publishOnly) {
+        // When the user clicks "Post Now" with force_metadata, regenerate fresh metadata
+        // even on a publish-only retry. Otherwise honor skip flags as before.
+        if (forceMetadata || (!skipMetadataGeneration && !publishOnly)) {
         try {
           const perPlatformGuidelines = platformsToGenerate.map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`).join("\n\n");
           const prefixInstruction = prefix
@@ -944,7 +946,8 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         // gets its own scheduled_date + platform-specific defaults without collisions.
         // Detect past-scheduled times and post immediately to avoid Upload-Post errors.
         const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
-        const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly;
+        // Post Now / publish-only retries always post immediately regardless of stored schedule.
+        const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly && !postNow;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
         } else if (meta.publish_scheduled_date && publishOnly) {
