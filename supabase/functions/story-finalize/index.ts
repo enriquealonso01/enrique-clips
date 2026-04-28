@@ -1018,8 +1018,8 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
               break;
             } catch (e) {
               lastErr = (e as Error).message;
-              await log("warn", `Upload-Post attempt ${attempt} failed for [${group.platforms.join(",")}]: ${lastErr}`);
-              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(2000);
+              await log("warn", `Upload-Post attempt ${attempt}/${UPLOADPOST_MAX_ATTEMPTS} failed for [${group.platforms.join(",")}]: ${lastErr}`);
+              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(UPLOADPOST_RETRY_BACKOFF_MS * attempt);
             }
           }
           try {
