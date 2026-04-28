@@ -1241,10 +1241,25 @@ export default function ProjectEditor() {
                           📝 {(run as any).topic_summary}
                         </p>
                       )}
-                      <div className="flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
-                        <span>{run.progress_pct}%</span>
-                        <span>{new Date(run.created_at).toLocaleString()}</span>
-                      </div>
+                       <div className="flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
+                         <span>{run.progress_pct}%</span>
+                         <span>{new Date(run.created_at).toLocaleString()}</span>
+                         {finalVideoRunIds?.has(run.id) && (
+                           <Button
+                             size="sm"
+                             variant="outline"
+                             disabled={postingRunId === run.id}
+                             onClick={(e) => postRunNow(run, e)}
+                           >
+                             {postingRunId === run.id ? (
+                               <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                             ) : (
+                               <Send className="h-3 w-3 mr-1" />
+                             )}
+                             Post Now
+                           </Button>
+                         )}
+                       </div>
                     </div>
                   ))}
                 </div>
