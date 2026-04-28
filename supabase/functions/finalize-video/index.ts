@@ -2704,7 +2704,20 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         await log("warn", `Metadata generation failed: ${err.message}`);
       }
 
-      await updateRun({ current_step: "publish", progress_pct: 90 });
+      // Clear the lease before handing off to publish step.
+      try {
+        const { data: cur } = await supabase
+          .from("runs")
+          .select("generated_metadata")
+          .eq("id", runId)
+          .single();
+        const curMeta = (cur?.generated_metadata as any) || {};
+        delete curMeta.metadata_lease_until;
+        delete curMeta.metadata_lease_acquired_at;
+        await updateRun({ current_step: "publish", progress_pct: 90, generated_metadata: curMeta });
+      } catch {
+        await updateRun({ current_step: "publish", progress_pct: 90 });
+      }
       } finally {
         clearInterval(heartbeat);
       }
