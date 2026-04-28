@@ -11,12 +11,13 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-// Upload-Post fetches the video URL server-side, so large files can take 60-120s.
-// Use a generous per-attempt timeout and multiple retries so transient
-// "signal aborted" / network blips don't fail the publish step.
-const UPLOADPOST_TIMEOUT_MS = 120_000;
-const UPLOADPOST_MAX_ATTEMPTS = 3;
+// Upload-Post can stall while fetching large public URLs. We upload the video
+// binary directly and keep each platform attempt bounded so the function can
+// persist progress and resume instead of getting stuck in `publishing`.
+const UPLOADPOST_TIMEOUT_MS = 75_000;
+const UPLOADPOST_MAX_ATTEMPTS = 1;
 const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
+const PUBLISH_CHAIN_AFTER_MS = 105_000;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -89,7 +90,7 @@ Deno.serve(async (req) => {
     if (!run) return json({ error: "Run not found" }, 404);
 
     const project = run.story_projects as any;
-    const meta = (run.generated_metadata as any) || {};
+    let meta = (run.generated_metadata as any) || {};
     const config = project?.config_json || {};
     const audioMix = config.audio_mix || {};
     const endingConfig = config.ending_audio || {};
