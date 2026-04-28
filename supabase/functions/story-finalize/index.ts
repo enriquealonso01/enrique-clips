@@ -801,8 +801,17 @@ Deno.serve(async (req) => {
         if (!finalPath) {
           throw new Error("Final video path missing before publish");
         }
-        const { data: urlData } = sb.storage.from("project-assets").getPublicUrl(finalPath);
-        const videoUrl = urlData.publicUrl;
+        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60);
+        if (!finalDownloadUrl?.signedUrl) {
+          throw new Error("Could not create signed URL for final story video");
+        }
+        const videoResp = await fetch(finalDownloadUrl.signedUrl);
+        if (!videoResp.ok) {
+          throw new Error(`Could not download final story video for publish (${videoResp.status})`);
+        }
+        const videoBlob = await videoResp.blob();
+        const videoFilename = finalPath.split("/").pop() || "story-final-video.mp4";
+        await log("info", `Prepared direct Upload-Post video payload (${(videoBlob.size / 1024 / 1024).toFixed(1)}MB)`);
 
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
@@ -956,19 +965,35 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         } else if (meta.publish_scheduled_date && !scheduledDateIsFuture) {
           await log("warn", `Scheduled publish time ${meta.publish_scheduled_date} is in the past — posting immediately to avoid Upload-Post error.`);
         }
+        const alreadySubmitted = new Set<string>(Array.isArray(meta.publish_submitted_platforms) ? meta.publish_submitted_platforms : []);
         const publishGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
         for (const platform of enabledPlatforms) {
+          if (alreadySubmitted.has(platform)) continue;
           const payload = buildPlatformPayload(platform);
           const key = `${payload.title}\n---\n${payload.description}`;
           const group = publishGroups.get(key);
           if (group) group.platforms.push(platform);
           else publishGroups.set(key, { ...payload, platforms: [platform] });
         }
+        if (alreadySubmitted.size > 0) {
+          await log("info", `Skipping already submitted platforms: ${[...alreadySubmitted].join(", ")}`);
+        }
 
         let anySuccess = false;
+        const publishStartedAt = Date.now();
         for (const group of publishGroups.values()) {
+          if (Date.now() - publishStartedAt > PUBLISH_CHAIN_AFTER_MS) {
+            await log("warn", "Publish budget nearly exhausted — chaining remaining platforms.", { remaining: group.platforms });
+            const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+            await fetch(chainUrl, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: runId, force_retry: true, publish_only: true, post_now: true, force_metadata: false, skip_metadata_generation: true }),
+            }).catch((e) => console.error("Publish chain error", e));
+            return json({ status: "chained", run_id: runId });
+          }
           const formData = new FormData();
-          formData.append("video", videoUrl);
+          formData.append("video", videoBlob, videoFilename);
           formData.append("title", group.title);
           formData.append("description", group.description);
           formData.append("async_upload", "true");
