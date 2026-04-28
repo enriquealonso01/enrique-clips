@@ -1,0 +1,1 @@
+UPDATE public.runs SET progress_pct = 75, generated_metadata = COALESCE(generated_metadata, '{}'::jsonb) - 'metadata_lease_until' - 'metadata_lease_acquired_at' WHERE id = 'f77af2a2-613e-4c7b-bfdd-1f91e0b223e7';

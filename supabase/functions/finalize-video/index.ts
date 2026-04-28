@@ -10,6 +10,21 @@ const corsHeaders = {
 
 // OpenAI integration is now handled by _shared/openai.ts
 
+// Returns true if a publish_scheduled_date string is in the future.
+// Upload-Post rejects past times with "Scheduled date must be in the future."
+// We treat past or unparseable timestamps as "post immediately" to avoid
+// the run getting stuck retrying a doomed schedule.
+function isFutureScheduledDate(scheduledDate: string | undefined | null, timezone?: string | null): boolean {
+  if (!scheduledDate) return false;
+  // Many of our stored values are local wall-clock strings without a TZ
+  // suffix (e.g. "2026-04-28T08:14:00"). Try direct parse first; if it
+  // looks naive AND we have a timezone, just compare loosely.
+  const t = Date.parse(scheduledDate);
+  if (isNaN(t)) return false;
+  // 60 second safety buffer — schedules booked for "now" usually arrive late.
+  return t > Date.now() + 60_000;
+}
+
 // Compute scale factor based on video resolution relative to 540p baseline
 function getResolutionScale(pikaResolution: string): number {
   // Overlay values are authored for 540p. Scale proportionally for higher resolutions.
@@ -1532,9 +1547,11 @@ Deno.serve(async (req) => {
 
         // Add scheduled_date if set in run metadata
         const fbRunMeta = (run.generated_metadata as any) || {};
-        if (fbRunMeta.publish_scheduled_date) {
+        if (isFutureScheduledDate(fbRunMeta.publish_scheduled_date, fbRunMeta.publish_timezone)) {
           formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
           if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+        } else if (fbRunMeta.publish_scheduled_date) {
+          await log("info", `FB image: scheduled_date ${fbRunMeta.publish_scheduled_date} is in the past — posting immediately.`);
         }
         const imgResp = await fetch(kfPublicUrl);
         const imgBlob = await imgResp.blob();
@@ -2394,34 +2411,107 @@ Deno.serve(async (req) => {
 
     // ===== STEP 5: THUMBNAIL & METADATA =====
     if (run.current_step === "metadata" || run.current_step === "stitch") {
-      // Atomic CAS lock for the metadata step. Prevents the watchdog (or any
+      // Leased CAS lock for the metadata step. Prevents the watchdog (or any
       // duplicate invoker) from running thumbnail+AI metadata in parallel with
-      // an already-active execution. We move progress_pct from 75 → 76 only
-      // if it is currently exactly 75 AND step is "metadata". The first caller
-      // wins; everyone else exits cleanly. (Stitch path bypasses this lock
-      // because it falls through within the same execution.)
+      // an already-active execution — but, crucially, the lease auto-expires
+      // so a crashed/timed-out holder cannot deadlock the run forever.
+      //
+      // Lock state lives in two places:
+      //   - runs.progress_pct = 76 (the visual claim marker)
+      //   - runs.generated_metadata.metadata_lease_until = ISO timestamp
+      //
+      // Acquisition rules (atomic, single UPDATE...WHERE):
+      //   A. Fresh acquisition: progress_pct = 75 → take it.
+      //   B. Steal stale lease: progress_pct = 76 AND lease_until is in the
+      //      past (or missing). Watchdog runs every ~5min; we use 4min lease.
+      //
+      // (Stitch path bypasses this lock because it falls through within the
+      // same execution.)
+      const LEASE_MS = 4 * 60 * 1000; // 4 minutes
       if (run.current_step === "metadata") {
-        const { data: metaLockRows } = await supabase
+        const nowIso = new Date().toISOString();
+        const leaseUntilIso = new Date(Date.now() + LEASE_MS).toISOString();
+        const existingMeta = (run.generated_metadata as any) || {};
+        const existingLease = existingMeta.metadata_lease_until;
+        const leaseExpired = !existingLease || new Date(existingLease).getTime() <= Date.now();
+
+        // Try fresh acquisition (75 → 76)
+        const { data: freshLock } = await supabase
           .from("runs")
-          .update({ progress_pct: 76 })
+          .update({
+            progress_pct: 76,
+            generated_metadata: { ...existingMeta, metadata_lease_until: leaseUntilIso, metadata_lease_acquired_at: nowIso },
+          })
           .eq("id", runId)
           .eq("current_step", "metadata")
           .eq("progress_pct", 75)
           .select("id");
-        if (!metaLockRows || metaLockRows.length === 0) {
-          await log("info", "Metadata step already claimed by another execution — skipping.");
+
+        let acquired = freshLock && freshLock.length > 0;
+
+        // Try to steal a stale lease
+        if (!acquired && leaseExpired) {
+          // Re-read latest metadata to avoid clobbering a fresh lease
+          const { data: latest } = await supabase
+            .from("runs")
+            .select("generated_metadata, progress_pct, current_step")
+            .eq("id", runId)
+            .single();
+          const latestMeta = (latest?.generated_metadata as any) || {};
+          const latestLease = latestMeta.metadata_lease_until;
+          const stillExpired = !latestLease || new Date(latestLease).getTime() <= Date.now();
+          if (latest?.current_step === "metadata" && latest?.progress_pct === 76 && stillExpired) {
+            await log("warn", "Stealing stale metadata lease (previous holder appears dead).", {
+              previous_lease_until: latestLease,
+            });
+            const { data: stealLock } = await supabase
+              .from("runs")
+              .update({
+                generated_metadata: { ...latestMeta, metadata_lease_until: leaseUntilIso, metadata_lease_acquired_at: nowIso },
+              })
+              .eq("id", runId)
+              .eq("current_step", "metadata")
+              .eq("progress_pct", 76)
+              .select("id");
+            acquired = !!(stealLock && stealLock.length > 0);
+          }
+        }
+
+        if (!acquired) {
+          await log("info", "Metadata step already claimed by another execution — skipping.", {
+            existing_lease_until: existingLease,
+          });
           return json({ status: "metadata_already_processing" });
         }
       }
 
       // Heartbeat: write a log line so the scheduler watchdog (which checks
       // for log activity in the last 5 min) treats this run as alive while
-      // long-running AI calls (metadata, etc.) are in progress.
+      // long-running AI calls (metadata, etc.) are in progress. Also extends
+      // the lease so other invokers don't steal it from us mid-flight.
+      const LEASE_RENEW_MS = 4 * 60 * 1000;
       const heartbeat = setInterval(() => {
+        const renewedUntil = new Date(Date.now() + LEASE_RENEW_MS).toISOString();
         supabase
           .from("run_logs")
           .insert({ run_id: runId, level: "debug" as any, message: "💓 metadata step heartbeat" })
           .then(() => {});
+        // Renew lease (best-effort; ignore errors)
+        supabase.rpc as any; // no-op to keep TS happy
+        (async () => {
+          try {
+            const { data: cur } = await supabase
+              .from("runs")
+              .select("generated_metadata")
+              .eq("id", runId)
+              .single();
+            const curMeta = (cur?.generated_metadata as any) || {};
+            await supabase
+              .from("runs")
+              .update({ generated_metadata: { ...curMeta, metadata_lease_until: renewedUntil } })
+              .eq("id", runId);
+          } catch (_) { /* ignore */ }
+        })();
       }, 90 * 1000);
 
       try {
@@ -2631,7 +2721,20 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         await log("warn", `Metadata generation failed: ${err.message}`);
       }
 
-      await updateRun({ current_step: "publish", progress_pct: 90 });
+      // Clear the lease before handing off to publish step.
+      try {
+        const { data: cur } = await supabase
+          .from("runs")
+          .select("generated_metadata")
+          .eq("id", runId)
+          .single();
+        const curMeta = (cur?.generated_metadata as any) || {};
+        delete curMeta.metadata_lease_until;
+        delete curMeta.metadata_lease_acquired_at;
+        await updateRun({ current_step: "publish", progress_pct: 90, generated_metadata: curMeta });
+      } catch {
+        await updateRun({ current_step: "publish", progress_pct: 90 });
+      }
       } finally {
         clearInterval(heartbeat);
       }
@@ -2771,10 +2874,12 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
               // Add scheduled_date if set in run metadata
               const publishScheduledDate = metadata.publish_scheduled_date;
               const publishTimezone = metadata.publish_timezone;
-              if (publishScheduledDate) {
+              if (isFutureScheduledDate(publishScheduledDate, publishTimezone)) {
                 formData.append("scheduled_date", publishScheduledDate);
                 if (publishTimezone) formData.append("timezone", publishTimezone);
                 await log("info", `Scheduling video post for ${publishScheduledDate} (${publishTimezone || "UTC"})`);
+              } else if (publishScheduledDate) {
+                await log("info", `scheduled_date ${publishScheduledDate} is in the past — posting immediately.`);
               }
 
               for (const platform of group.platforms) {
@@ -2933,9 +3038,11 @@ Rules:
 
           // Add scheduled_date if set in run metadata
           const fbRunMeta = (run.generated_metadata as any) || {};
-          if (fbRunMeta.publish_scheduled_date) {
+          if (isFutureScheduledDate(fbRunMeta.publish_scheduled_date, fbRunMeta.publish_timezone)) {
             formData.append("scheduled_date", fbRunMeta.publish_scheduled_date);
             if (fbRunMeta.publish_timezone) formData.append("timezone", fbRunMeta.publish_timezone);
+          } else if (fbRunMeta.publish_scheduled_date) {
+            await log("info", `FB image (step 6b): scheduled_date ${fbRunMeta.publish_scheduled_date} is in the past — posting immediately.`);
           }
 
           // Fetch image and append as file
