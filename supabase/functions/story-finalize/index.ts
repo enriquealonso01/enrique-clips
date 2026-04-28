@@ -11,12 +11,20 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
+const UPLOADPOST_TIMEOUT_MS = 55_000;
+const UPLOADPOST_MAX_ATTEMPTS = 1;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+function isFutureScheduledDate(scheduledDate: unknown): boolean {
+  if (!scheduledDate || typeof scheduledDate !== "string") return false;
+  const schedMs = Date.parse(scheduledDate);
+  return Number.isFinite(schedMs) && schedMs > Date.now() + 60_000;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -927,12 +935,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         // One request per platform — mirrors the project pipeline so each platform
         // gets its own scheduled_date + platform-specific defaults without collisions.
         // Detect past-scheduled times and post immediately to avoid Upload-Post errors.
-        let scheduledDateIsFuture = false;
-        if (meta.publish_scheduled_date) {
-          const schedMs = Date.parse(meta.publish_scheduled_date as string);
-          // If we cannot parse, treat as not-future to be safe.
-          scheduledDateIsFuture = Number.isFinite(schedMs) && schedMs > Date.now() + 60_000;
-        }
+        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
         const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
@@ -941,37 +944,58 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         } else if (meta.publish_scheduled_date && !scheduledDateIsFuture) {
           await log("warn", `Scheduled publish time ${meta.publish_scheduled_date} is in the past — posting immediately to avoid Upload-Post error.`);
         }
-        let anySuccess = false;
+        const publishGroups = new Map<string, { title: string; description: string; platforms: string[] }>();
         for (const platform of enabledPlatforms) {
-          const { title: pTitle, description: pDescription } = buildPlatformPayload(platform);
+          const payload = buildPlatformPayload(platform);
+          const key = `${payload.title}\n---\n${payload.description}`;
+          const group = publishGroups.get(key);
+          if (group) group.platforms.push(platform);
+          else publishGroups.set(key, { ...payload, platforms: [platform] });
+        }
+
+        let anySuccess = false;
+        for (const group of publishGroups.values()) {
           const formData = new FormData();
           formData.append("video", videoUrl);
-          formData.append("title", pTitle);
-          formData.append("description", pDescription);
+          formData.append("title", group.title);
+          formData.append("description", group.description);
           formData.append("async_upload", "true");
           if (uploadpostUsername) formData.append("user", uploadpostUsername);
           if (shouldUseScheduledDate) {
             formData.append("scheduled_date", meta.publish_scheduled_date);
             if (meta.publish_timezone) formData.append("timezone", meta.publish_timezone);
           }
-          formData.append("platform[]", platform);
-          const defaults = projPublishDefaults[platform] || {};
-          for (const [key, value] of Object.entries(defaults)) {
-            if (value !== undefined && value !== null && value !== "") {
-              formData.append(key, String(value));
+          for (const platform of group.platforms) formData.append("platform[]", platform);
+          for (const platform of group.platforms) {
+            const defaults = projPublishDefaults[platform] || {};
+            for (const [key, value] of Object.entries(defaults)) {
+              if (value !== undefined && value !== null && value !== "") {
+                formData.append(key, String(value));
+              }
             }
           }
 
-          // Per-platform try/catch + 30s timeout so one slow/hung platform
+          await updateRun({
+            status: "publishing" as any,
+            current_stage: "publishing",
+            progress_pct: 94,
+            generated_metadata: {
+              ...meta,
+              publish_heartbeat_at: new Date().toISOString(),
+              publish_current_platform: group.platforms.join(","),
+            },
+          });
+
+          // Per-platform try/catch + short timeout so one slow/hung platform
           // cannot kill the entire edge function and leave the run stuck in `publishing`.
-          // Retry up to 2 attempts per platform with a 90s timeout each.
+          // Keep the total budget below the edge function limit; the watchdog resumes publish-only if needed.
           let uploadResp: Response | null = null;
           let uploadResult: any = {};
           let lastErr: string | null = null;
-          for (let attempt = 1; attempt <= 2; attempt++) {
+          for (let attempt = 1; attempt <= UPLOADPOST_MAX_ATTEMPTS; attempt++) {
             try {
               const ctrl = new AbortController();
-              const tid = setTimeout(() => ctrl.abort(), 90_000);
+              const tid = setTimeout(() => ctrl.abort(), UPLOADPOST_TIMEOUT_MS);
               uploadResp = await fetch("https://api.upload-post.com/api/upload", {
                 method: "POST",
                 headers: { Authorization: `Apikey ${uploadpostApiKey}` },
@@ -983,30 +1007,31 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
               break;
             } catch (e) {
               lastErr = (e as Error).message;
-              await log("warn", `Upload-Post attempt ${attempt} failed for [${platform}]: ${lastErr}`);
-              if (attempt < 2) await sleep(2000);
+              await log("warn", `Upload-Post attempt ${attempt} failed for [${group.platforms.join(",")}]: ${lastErr}`);
+              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(2000);
             }
           }
           try {
             if (!uploadResp) throw new Error(lastErr || "no response");
-            await log("info", `Upload-Post response [${platform}]`, uploadResult);
+            await log("info", `Upload-Post response [${group.platforms.join(",")}]`, uploadResult);
             if (uploadResp.ok && uploadResult.request_id) {
               anySuccess = true;
-              await log("info", `Upload-Post submitted [${platform}]: ${uploadResult.request_id}`);
+              await log("info", `Upload-Post submitted [${group.platforms.join(",")}]: ${uploadResult.request_id}`);
               // Record a publish_jobs row for traceability / idempotency on retries.
               try {
                 await sb.from("publish_jobs").insert({
                   run_id: runId,
                   status: "submitted" as any,
                   uploadpost_request_id: uploadResult.request_id,
-                  platform_results: { [platform]: uploadResult },
+                  uploadpost_job_id: uploadResult.job_id || null,
+                  platform_results: { platforms: group.platforms, response: uploadResult },
                 });
               } catch {}
             } else {
-              await log("error", `Upload-Post failed [${platform}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
+              await log("error", `Upload-Post failed [${group.platforms.join(",")}]: ${JSON.stringify(uploadResult).substring(0, 300)}`);
             }
           } catch (platErr) {
-            await log("error", `Upload-Post threw for [${platform}]: ${(platErr as Error).message}`);
+            await log("error", `Upload-Post threw for [${group.platforms.join(",")}]: ${(platErr as Error).message}`);
           }
         }
         if (!anySuccess) {
@@ -1030,6 +1055,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         final_video: { path: finalPath, signed_url: finalSignedUrl?.signedUrl ?? null },
         has_end_card: finalIncludesEndCard,
         has_subtitles: captionedPath !== storyPath,
+        publish_heartbeat_at: null,
+        publish_current_platform: null,
+        publish_retry_required: publishStatus === "failed",
         completed_at: new Date().toISOString(),
       },
     });
