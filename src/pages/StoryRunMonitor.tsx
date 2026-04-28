@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
   ArrowLeft, Pause, Square, Play, Volume2, Image, Film, Music,
-  FileText, Clock, Calendar, ExternalLink, RefreshCw
+  FileText, Clock, Calendar, ExternalLink, RefreshCw, Send
 } from "lucide-react";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { toast } from "sonner";
@@ -176,6 +176,40 @@ export default function StoryRunMonitor() {
   const isActive = run && !["failed", "cancelled", "published", "paused"].includes(run.status);
   const isPaused = run?.status === "paused";
   const isWaitingForOffPeak = isPaused && (run?.generated_metadata as any)?.waiting_for === "vidu_off_peak";
+  const finalVideoPath = (run?.generated_metadata as any)?.final_video?.path
+    || assets?.find((a) => a.type === "final_video")?.supabase_path;
+  const canPostNow = !!finalVideoPath
+    && run
+    && ["failed", "publishing", "published", "cancelled"].includes(run.status);
+
+  const postNow = async () => {
+    if (!runId) return;
+    setActing(true);
+    try {
+      await supabase.from("story_runs").update({
+        status: "publishing",
+        current_stage: "publishing",
+        error_message: null,
+        finished_at: null,
+      }).eq("id", runId);
+      const { error } = await supabase.functions.invoke("story-finalize", {
+        body: {
+          run_id: runId,
+          publish_only: true,
+          post_now: true,
+          force_metadata: true,
+          force_retry: true,
+        },
+      });
+      if (error) throw error;
+      toast.success("Post Now triggered — generating metadata and publishing");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to trigger Post Now");
+    } finally {
+      setActing(false);
+    }
+  };
 
   const updateStatus = async (status: string) => {
     if (!runId) return;
@@ -244,6 +278,11 @@ export default function StoryRunMonitor() {
                 <Square className="h-4 w-4 mr-1" /> Cancel
               </Button>
             </>
+          )}
+          {canPostNow && (
+            <Button size="sm" disabled={acting} onClick={postNow}>
+              <Send className="h-4 w-4 mr-1" /> Post Now
+            </Button>
           )}
         </div>
       </div>

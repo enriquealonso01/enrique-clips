@@ -11,8 +11,12 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-const UPLOADPOST_TIMEOUT_MS = 55_000;
-const UPLOADPOST_MAX_ATTEMPTS = 1;
+// Upload-Post fetches the video URL server-side, so large files can take 60-120s.
+// Use a generous per-attempt timeout and multiple retries so transient
+// "signal aborted" / network blips don't fail the publish step.
+const UPLOADPOST_TIMEOUT_MS = 120_000;
+const UPLOADPOST_MAX_ATTEMPTS = 3;
+const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -37,12 +41,16 @@ Deno.serve(async (req) => {
   let forceRetry = false;
   let publishOnly = false;
   let skipMetadataGeneration = false;
+  let forceMetadata = false;
+  let postNow = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceRetry = !!body.force_retry;
     publishOnly = !!body.publish_only;
     skipMetadataGeneration = !!body.skip_metadata_generation;
+    forceMetadata = !!body.force_metadata;
+    postNow = !!body.post_now;
   } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
@@ -858,7 +866,9 @@ CRITICAL RULES FOR ALL PLATFORMS:
         }
 
         let platformMetadata: Record<string, { title: string; description: string; hashtags: string[] }> = {};
-        if (!skipMetadataGeneration && !publishOnly) {
+        // When the user clicks "Post Now" with force_metadata, regenerate fresh metadata
+        // even on a publish-only retry. Otherwise honor skip flags as before.
+        if (forceMetadata || (!skipMetadataGeneration && !publishOnly)) {
         try {
           const perPlatformGuidelines = platformsToGenerate.map(p => platformGuidelines[p] || `${p.toUpperCase()}: Generate appropriate title, description, and hashtags.`).join("\n\n");
           const prefixInstruction = prefix
@@ -936,7 +946,8 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         // gets its own scheduled_date + platform-specific defaults without collisions.
         // Detect past-scheduled times and post immediately to avoid Upload-Post errors.
         const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
-        const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly;
+        // Post Now / publish-only retries always post immediately regardless of stored schedule.
+        const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly && !postNow;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling video post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
         } else if (meta.publish_scheduled_date && publishOnly) {
@@ -1007,8 +1018,8 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
               break;
             } catch (e) {
               lastErr = (e as Error).message;
-              await log("warn", `Upload-Post attempt ${attempt} failed for [${group.platforms.join(",")}]: ${lastErr}`);
-              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(2000);
+              await log("warn", `Upload-Post attempt ${attempt}/${UPLOADPOST_MAX_ATTEMPTS} failed for [${group.platforms.join(",")}]: ${lastErr}`);
+              if (attempt < UPLOADPOST_MAX_ATTEMPTS) await sleep(UPLOADPOST_RETRY_BACKOFF_MS * attempt);
             }
           }
           try {
