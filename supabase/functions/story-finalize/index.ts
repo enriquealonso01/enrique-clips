@@ -11,8 +11,8 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-const UPLOADPOST_TIMEOUT_MS = 25_000;
-const UPLOADPOST_MAX_ATTEMPTS = 2;
+const UPLOADPOST_TIMEOUT_MS = 12_000;
+const UPLOADPOST_MAX_ATTEMPTS = 1;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
