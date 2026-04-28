@@ -2874,10 +2874,12 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
               // Add scheduled_date if set in run metadata
               const publishScheduledDate = metadata.publish_scheduled_date;
               const publishTimezone = metadata.publish_timezone;
-              if (publishScheduledDate) {
+              if (isFutureScheduledDate(publishScheduledDate, publishTimezone)) {
                 formData.append("scheduled_date", publishScheduledDate);
                 if (publishTimezone) formData.append("timezone", publishTimezone);
                 await log("info", `Scheduling video post for ${publishScheduledDate} (${publishTimezone || "UTC"})`);
+              } else if (publishScheduledDate) {
+                await log("info", `scheduled_date ${publishScheduledDate} is in the past — posting immediately.`);
               }
 
               for (const platform of group.platforms) {
