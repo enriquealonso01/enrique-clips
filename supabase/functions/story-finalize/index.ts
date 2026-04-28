@@ -938,9 +938,8 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
         // Persist generated metadata onto the run for visibility
         try {
           const { data: curMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
-          await sb.from("story_runs").update({
-            generated_metadata: { ...((curMeta?.generated_metadata as any) || {}), ...(Object.keys(platformMetadata).length > 0 ? { platform_metadata: platformMetadata } : {}), metadata_prefix: prefix },
-          }).eq("id", runId);
+          meta = { ...((curMeta?.generated_metadata as any) || meta), ...(Object.keys(platformMetadata).length > 0 ? { platform_metadata: platformMetadata } : {}), metadata_prefix: prefix };
+          await sb.from("story_runs").update({ generated_metadata: meta }).eq("id", runId);
         } catch {}
 
         const buildPlatformPayload = (platform: string): { title: string; description: string } => {
