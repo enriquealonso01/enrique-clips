@@ -11,8 +11,12 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
-const UPLOADPOST_TIMEOUT_MS = 55_000;
-const UPLOADPOST_MAX_ATTEMPTS = 1;
+// Upload-Post fetches the video URL server-side, so large files can take 60-120s.
+// Use a generous per-attempt timeout and multiple retries so transient
+// "signal aborted" / network blips don't fail the publish step.
+const UPLOADPOST_TIMEOUT_MS = 120_000;
+const UPLOADPOST_MAX_ATTEMPTS = 3;
+const UPLOADPOST_RETRY_BACKOFF_MS = 4_000;
 
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -37,12 +41,16 @@ Deno.serve(async (req) => {
   let forceRetry = false;
   let publishOnly = false;
   let skipMetadataGeneration = false;
+  let forceMetadata = false;
+  let postNow = false;
   try {
     const body = await req.json();
     runId = body.run_id;
     forceRetry = !!body.force_retry;
     publishOnly = !!body.publish_only;
     skipMetadataGeneration = !!body.skip_metadata_generation;
+    forceMetadata = !!body.force_metadata;
+    postNow = !!body.post_now;
   } catch { return json({ error: "run_id required" }, 400); }
   if (!runId) return json({ error: "run_id required" }, 400);
 
