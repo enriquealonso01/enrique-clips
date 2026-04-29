@@ -2777,27 +2777,39 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         });
 
         const { callStructured } = await import("../_shared/openai.ts");
-        const platformMetadataResult = await callStructured({
-          messages: metadataPromptMessages as any,
-          model: MODELS.TEXT_CHEAP,
-          tools: [
-            {
-              type: "function",
-              function: {
-                name: "generate_platform_metadata",
-                description: "Generate per-platform video post metadata",
-                parameters: {
-                  type: "object",
-                  properties: platformProperties,
-                  required: platformsToGenerate,
-                  additionalProperties: false,
+        // Hard 45s ceiling + fail-fast on 503 so we never burn the 150s edge function
+        // budget on a flaky metadata model. On failure we fall back to project defaults.
+        const METADATA_TIMEOUT_MS = 45_000;
+        const platformMetadataResult: any = await Promise.race([
+          callStructured({
+            messages: metadataPromptMessages as any,
+            model: MODELS.TEXT_CHEAP,
+            tools: [
+              {
+                type: "function",
+                function: {
+                  name: "generate_platform_metadata",
+                  description: "Generate per-platform video post metadata",
+                  parameters: {
+                    type: "object",
+                    properties: platformProperties,
+                    required: platformsToGenerate,
+                    additionalProperties: false,
+                  },
                 },
               },
-            },
-          ],
-          tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
-          endpoint: "platform_metadata",
-        });
+            ],
+            tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
+            endpoint: "platform_metadata",
+            noRetryOn503: true,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error(`platform_metadata timed out after ${METADATA_TIMEOUT_MS}ms`)),
+              METADATA_TIMEOUT_MS,
+            ),
+          ),
+        ]);
 
         const metaToolCall = platformMetadataResult;
 

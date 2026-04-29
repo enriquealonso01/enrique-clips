@@ -990,6 +990,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
               }],
               tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
               endpoint: "story_platform_metadata",
+              noRetryOn503: true,
             }),
             new Promise((_, reject) =>
               setTimeout(() => reject(new Error(`AI metadata generation exceeded ${META_TIMEOUT_MS}ms`)), META_TIMEOUT_MS),
