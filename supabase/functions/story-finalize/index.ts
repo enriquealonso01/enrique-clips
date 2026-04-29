@@ -817,6 +817,20 @@ Deno.serve(async (req) => {
         const videoUrl = finalDownloadUrl.signedUrl;
         await log("info", "Prepared async Upload-Post submission (URL fetch by Upload-Post).");
 
+        // ── Insert ONE publish_jobs row UP-FRONT (before any slow work) ──
+        // If the function dies during AI metadata generation or any later
+        // step, this row keeps idempotency working and gives the UI / "Post
+        // Now" something to reset. Mirrors the Projects pipeline order.
+        const { data: jobRow, error: jobInsertErr } = await sb.from("publish_jobs")
+          .insert({ run_id: runId, status: "submitted" as any, platform_results: {} })
+          .select("id")
+          .single();
+        if (jobInsertErr || !jobRow) {
+          throw new Error(`Could not create publish_jobs row: ${jobInsertErr?.message || "unknown"}`);
+        }
+        const publishJobId = jobRow.id;
+        await log("info", `publish_jobs row created up-front: ${publishJobId}`);
+
         // Generate metadata for the story
         const storyTitle = meta.story?.title || "Story Video";
         const baseSummary = meta.story?.hook || meta.story?.summary || "";
@@ -912,20 +926,29 @@ ${perPlatformGuidelines}
 Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           ];
 
-          const result: any = await callStructured({
-            messages: messages as any,
-            model: MODELS.TEXT_CHEAP,
-            tools: [{
-              type: "function",
-              function: {
-                name: "generate_platform_metadata",
-                description: "Generate per-platform video post metadata for a true-story short video",
-                parameters: { type: "object", properties: platformProperties, required: platformsToGenerate, additionalProperties: false },
-              },
-            }],
-            tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
-            endpoint: "story_platform_metadata",
-          });
+          // Hard 30s ceiling so a slow/stuck AI call can never block the
+          // actual Upload-Post submission. If the timeout fires we fall back
+          // to the universal title/description and proceed to publish.
+          const META_TIMEOUT_MS = 30_000;
+          const result: any = await Promise.race([
+            callStructured({
+              messages: messages as any,
+              model: MODELS.TEXT_CHEAP,
+              tools: [{
+                type: "function",
+                function: {
+                  name: "generate_platform_metadata",
+                  description: "Generate per-platform video post metadata for a true-story short video",
+                  parameters: { type: "object", properties: platformProperties, required: platformsToGenerate, additionalProperties: false },
+                },
+              }],
+              tool_choice: { type: "function", function: { name: "generate_platform_metadata" } } as any,
+              endpoint: "story_platform_metadata",
+            }),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error(`AI metadata generation exceeded ${META_TIMEOUT_MS}ms`)), META_TIMEOUT_MS),
+            ),
+          ]);
           if (result && typeof result === "object") {
             platformMetadata = result;
             await log("info", "Per-platform story metadata generated", { platforms: Object.keys(platformMetadata) });
@@ -957,19 +980,6 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           }
           return { title: storyTitle, description: fallbackDescription };
         };
-
-        // ── Insert ONE publish_jobs row up-front (Projects pattern) ──
-        // The hard idempotency guard above guarantees this is the only row
-        // created for this run. If we crash before populating it, "Post Now"
-        // marks it failed and inserts a fresh one.
-        const { data: jobRow, error: jobInsertErr } = await sb.from("publish_jobs")
-          .insert({ run_id: runId, status: "submitted" as any, platform_results: {} })
-          .select("id")
-          .single();
-        if (jobInsertErr || !jobRow) {
-          throw new Error(`Could not create publish_jobs row: ${jobInsertErr?.message || "unknown"}`);
-        }
-        const publishJobId = jobRow.id;
 
         // Group enabled platforms by identical title+description so we send
         // one Upload-Post request per group (mirrors finalize-video).
