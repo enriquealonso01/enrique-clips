@@ -403,15 +403,7 @@ export type Database = {
           uploadpost_job_id?: string | null
           uploadpost_request_id?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "publish_jobs_run_id_fkey"
-            columns: ["run_id"]
-            isOneToOne: false
-            referencedRelation: "runs"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       run_logs: {
         Row: {

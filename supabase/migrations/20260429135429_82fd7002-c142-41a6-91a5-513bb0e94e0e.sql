@@ -1,0 +1,1 @@
+ALTER TABLE public.publish_jobs DROP CONSTRAINT IF EXISTS publish_jobs_run_id_fkey;
