@@ -1029,7 +1029,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
 
         // Group enabled platforms by identical title+description so we send
         // one Upload-Post request per group (mirrors finalize-video).
-        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
+        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date, meta.publish_timezone);
         const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly && !postNow;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
