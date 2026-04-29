@@ -141,17 +141,42 @@ Deno.serve(async (req) => {
             if (videoUrl) {
               const videoResp = await fetch(videoUrl);
               if (videoResp.ok) {
-                const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
+              const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
                 const storagePath = `${project.id}/clips/${runId}/vidu-${taskId}.mp4`;
-                await supabase.storage.from("project-assets").upload(storagePath, videoBytes, {
-                  contentType: "video/mp4",
-                  upsert: true,
-                });
+                const { error: uploadErr } = await supabase.storage
+                  .from("project-assets")
+                  .upload(storagePath, videoBytes, {
+                    contentType: "video/mp4",
+                    upsert: true,
+                  });
+                if (uploadErr) {
+                  await log(runId, "error", `Vidu Direct upload to storage FAILED for ${taskId}: ${uploadErr.message}. Will retry on next poll.`);
+                  allDone = false;
+                  continue;
+                }
+                // Verify the file is actually retrievable before marking the asset complete.
+                // Guards against silent storage failures (the underlying bug behind run ec2b7bc6 stitch failure).
+                let verified = false;
+                for (let v = 0; v < 3; v++) {
+                  const { data: head } = await supabase.storage
+                    .from("project-assets")
+                    .createSignedUrl(storagePath, 60);
+                  if (head?.signedUrl) {
+                    const headResp = await fetch(head.signedUrl, { method: "HEAD" });
+                    if (headResp.ok) { verified = true; break; }
+                  }
+                  await new Promise((r) => setTimeout(r, 1000));
+                }
+                if (!verified) {
+                  await log(runId, "error", `Vidu Direct upload verification FAILED for ${taskId} at ${storagePath}. Will retry on next poll.`);
+                  allDone = false;
+                  continue;
+                }
                 await supabase.from("assets").update({
                   supabase_path: storagePath,
                   metadata: { ...meta, status: "completed", generator: "vidu_direct" },
                 }).eq("id", asset.id);
-                await log(runId, "info", `Vidu Direct video downloaded and stored: ${taskId}`);
+                await log(runId, "info", `Vidu Direct video downloaded, stored, and verified: ${taskId}`);
                 completedCount++;
               }
             } else {
