@@ -2779,7 +2779,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         const { callStructured } = await import("../_shared/openai.ts");
         // Hard 45s ceiling + fail-fast on 503 so we never burn the 150s edge function
         // budget on a flaky metadata model. On failure we fall back to project defaults.
-        const METADATA_TIMEOUT_MS = 45_000;
+        const METADATA_TIMEOUT_MS = 75_000;
         const platformMetadataResult: any = await Promise.race([
           callStructured({
             messages: metadataPromptMessages as any,
