@@ -975,7 +975,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
           // Hard 30s ceiling so a slow/stuck AI call can never block the
           // actual Upload-Post submission. If the timeout fires we fall back
           // to the universal title/description and proceed to publish.
-          const META_TIMEOUT_MS = 30_000;
+          const META_TIMEOUT_MS = 75_000;
           const result: any = await Promise.race([
             callStructured({
               messages: messages as any,
