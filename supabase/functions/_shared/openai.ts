@@ -763,10 +763,10 @@ export async function callAI(
   const modelMap: Record<string, string> = {
     "google/gemini-2.5-pro": MODELS.TEXT_DEFAULT,
     "google/gemini-2.5-flash": MODELS.TEXT_CHEAP,
-    "openai/gpt-5-mini": MODELS.TEXT_DEFAULT,
+    "openai/gpt-5-mini": MODELS.TEXT_CHEAP,
     "openai/gpt-5": MODELS.TEXT_PREMIUM,
     "openai/gpt-5-nano": MODELS.TEXT_CHEAP,
-    "gpt-5-mini": MODELS.TEXT_DEFAULT,
+    "gpt-5-mini": MODELS.TEXT_CHEAP,
     "gpt-5-nano": MODELS.TEXT_CHEAP,
     "gpt-5": MODELS.TEXT_PREMIUM,
     "google/gemini-3-pro-image-preview": MODELS.IMAGE_DRAFT,
