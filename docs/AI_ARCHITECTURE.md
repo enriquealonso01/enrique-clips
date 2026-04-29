@@ -100,7 +100,7 @@ The main pipeline functions (`run-pipeline`, `finalize-video`) use the shared mo
 
 Every AI call is logged in-memory with:
 - Endpoint name
-- Model used (actual model, e.g. `gpt-5.3-chat-latest` or `gemini-2.5-flash`)
+- Model used (actual model, e.g. `gpt-5.3-chat-latest` or `gpt-5-mini`)
 - Success/failure
 - Latency (ms)
 - Token counts
