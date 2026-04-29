@@ -2242,74 +2242,120 @@ Deno.serve(async (req) => {
                   await log("debug", `Rendi FFmpeg command (end): ${ffmpegCmd.substring(1500)}`);
                 }
 
-                try {
-                  // Submit to Rendi
-                  const rendiResp = await withRetry(() =>
-                    fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        "X-API-KEY": RENDI_API_KEY,
-                      },
-                      body: JSON.stringify({
-                        ffmpeg_command: ffmpegCmd,
-                        input_files: inputFiles,
-                        output_files: { out_1: "output.mp4" },
-                        max_command_run_seconds: 60,
-                        vcpu_count: 8,
-                      }),
-                    })
-                  );
+                 // Pre-warm input URLs: HEAD-check each non-clip input (overlays, font, audio)
+                 // so we fail fast with a clear error if a file is genuinely missing,
+                 // and so Cloudflare/Supabase Storage caches the object before Rendi pulls it.
+                 try {
+                   const warmKeys = Object.keys(inputFiles).filter(
+                     (k) => !k.startsWith("in_clip"),
+                   );
+                   await Promise.all(
+                     warmKeys.map(async (k) => {
+                       const url = inputFiles[k];
+                       try {
+                         const r = await fetch(url, { method: "HEAD" });
+                         if (!r.ok) {
+                           await log(
+                             "warn",
+                             `Pre-warm ${k} returned HTTP ${r.status} for ${url}`,
+                           );
+                         }
+                       } catch (e) {
+                         await log(
+                           "warn",
+                           `Pre-warm ${k} failed: ${(e as Error).message}`,
+                         );
+                       }
+                     }),
+                   );
+                 } catch {
+                   // Non-fatal — Rendi will surface real failures
+                 }
 
-                  if (!rendiResp.ok) {
-                    const errText = await rendiResp.text();
-                    throw new Error(`Rendi submit failed (${rendiResp.status}): ${errText.substring(0, 300)}`);
-                  }
+                 // Run Rendi with up to 2 attempts, retrying once on transient
+                 // UNREACHABLE_INPUT_FILE errors (Supabase Storage / CDN hiccups).
+                 const runRendiOnce = async (): Promise<void> => {
+                   const rendiResp = await withRetry(() =>
+                     fetch("https://api.rendi.dev/v1/run-ffmpeg-command", {
+                       method: "POST",
+                       headers: {
+                         "Content-Type": "application/json",
+                         "X-API-KEY": RENDI_API_KEY,
+                       },
+                       body: JSON.stringify({
+                         ffmpeg_command: ffmpegCmd,
+                         input_files: inputFiles,
+                         output_files: { out_1: "output.mp4" },
+                         max_command_run_seconds: 60,
+                         vcpu_count: 8,
+                       }),
+                     })
+                   );
 
-                  const { command_id } = await rendiResp.json();
-                  await log("info", `Rendi command submitted: ${command_id}`);
+                   if (!rendiResp.ok) {
+                     const errText = await rendiResp.text();
+                     throw new Error(`Rendi submit failed (${rendiResp.status}): ${errText.substring(0, 300)}`);
+                   }
 
-                  // Poll for completion
-                  let rendiSuccess = false;
-                  for (let poll = 0; poll < 60; poll++) {
-                    await new Promise((r) => setTimeout(r, 3000));
-                    const pollResp = await fetch(`https://api.rendi.dev/v1/commands/${command_id}`, {
-                      headers: { "X-API-KEY": RENDI_API_KEY },
-                    });
-                    if (!pollResp.ok) {
-                      await log("warn", `Rendi poll failed: ${pollResp.status}`);
-                      continue;
-                    }
-                    const pollData = await pollResp.json();
+                   const { command_id } = await rendiResp.json();
+                   await log("info", `Rendi command submitted: ${command_id}`);
 
-                    if (pollData.status === "SUCCESS") {
-                      const outputUrl = pollData.output_files?.out_1?.storage_url;
-                      if (!outputUrl) {
-                        throw new Error("Rendi succeeded but no output URL found.");
-                      }
-                      const dlResp = await fetch(outputUrl);
-                      if (!dlResp.ok) throw new Error(`Rendi output download failed: ${dlResp.status}`);
-                      finalVideo = new Uint8Array(await dlResp.arrayBuffer());
-                      await log("info", `Rendi post-production succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
-                      rendiSuccess = true;
-                      break;
-                    }
+                   for (let poll = 0; poll < 60; poll++) {
+                     await new Promise((r) => setTimeout(r, 3000));
+                     const pollResp = await fetch(`https://api.rendi.dev/v1/commands/${command_id}`, {
+                       headers: { "X-API-KEY": RENDI_API_KEY },
+                     });
+                     if (!pollResp.ok) {
+                       await log("warn", `Rendi poll failed: ${pollResp.status}`);
+                       continue;
+                     }
+                     const pollData = await pollResp.json();
 
-                    if (pollData.status === "FAILED" || pollData.status === "ERROR") {
-                      throw new Error(`Rendi command failed: ${JSON.stringify(pollData).substring(0, 300)}`);
-                    }
+                     if (pollData.status === "SUCCESS") {
+                       const outputUrl = pollData.output_files?.out_1?.storage_url;
+                       if (!outputUrl) throw new Error("Rendi succeeded but no output URL found.");
+                       const dlResp = await fetch(outputUrl);
+                       if (!dlResp.ok) throw new Error(`Rendi output download failed: ${dlResp.status}`);
+                       finalVideo = new Uint8Array(await dlResp.arrayBuffer());
+                       await log("info", `Rendi post-production succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
+                       return;
+                     }
 
-                    // Still processing, continue polling
-                  }
+                     if (pollData.status === "FAILED" || pollData.status === "ERROR") {
+                       const errStatus = pollData.error_status || "";
+                       const errMsg = pollData.error_message || JSON.stringify(pollData).substring(0, 300);
+                       const isTransient = errStatus === "UNREACHABLE_INPUT_FILE";
+                       const tag = isTransient ? "TRANSIENT:" : "";
+                       throw new Error(`${tag}Rendi command failed [${errStatus}]: ${errMsg.substring(0, 300)}`);
+                     }
+                   }
 
-                  if (!rendiSuccess) {
-                    throw new Error("Rendi command timed out after 3 minutes.");
-                  }
-                } catch (rendiErr) {
-                  const rendiErrMsg = (rendiErr as Error).message;
-                  await log("error", `Rendi failed: ${rendiErrMsg} — stopping pipeline.`);
-                  throw new Error(`Rendi post-production failed: ${rendiErrMsg}`);
-                }
+                   throw new Error("Rendi command timed out after 3 minutes.");
+                 };
+
+                 try {
+                   try {
+                     await runRendiOnce();
+                   } catch (firstErr) {
+                     const msg = (firstErr as Error).message;
+                     if (msg.startsWith("TRANSIENT:")) {
+                       await log("warn", `Rendi transient failure — retrying once after 5s. (${msg})`);
+                       await new Promise((r) => setTimeout(r, 5000));
+                       // Re-warm inputs once more before retry
+                       const warmKeys = Object.keys(inputFiles).filter((k) => !k.startsWith("in_clip"));
+                       await Promise.all(
+                         warmKeys.map((k) => fetch(inputFiles[k], { method: "HEAD" }).catch(() => null)),
+                       );
+                       await runRendiOnce();
+                     } else {
+                       throw firstErr;
+                     }
+                   }
+                 } catch (rendiErr) {
+                   const rendiErrMsg = (rendiErr as Error).message.replace(/^TRANSIENT:/, "");
+                   await log("error", `Rendi failed: ${rendiErrMsg} — stopping pipeline.`);
+                   throw new Error(`Rendi post-production failed: ${rendiErrMsg}`);
+                 }
               } else if (clipUrls.length === 1) {
                 // Single clip, no post-production needed — download directly
                 await log("info", "Single clip, no post-production — downloading directly.");
