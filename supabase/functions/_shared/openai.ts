@@ -8,8 +8,8 @@
 export const MODELS = {
   /** Default text model — OpenAI gpt-5.3 */
   TEXT_DEFAULT: "gpt-5.3-chat-latest",
-  /** Cheap model for metadata, classification, tagging */
-  TEXT_CHEAP: "gemini-2.5-flash",
+  /** Fast/cheap text model for metadata, classification, tagging — direct OpenAI */
+  TEXT_CHEAP: "gpt-5-mini",
   /** Premium reasoning — same as default */
   TEXT_PREMIUM: "gpt-5.3-chat-latest",
   /** Draft image generation */
@@ -763,10 +763,10 @@ export async function callAI(
   const modelMap: Record<string, string> = {
     "google/gemini-2.5-pro": MODELS.TEXT_DEFAULT,
     "google/gemini-2.5-flash": MODELS.TEXT_CHEAP,
-    "openai/gpt-5-mini": MODELS.TEXT_DEFAULT,
+    "openai/gpt-5-mini": MODELS.TEXT_CHEAP,
     "openai/gpt-5": MODELS.TEXT_PREMIUM,
     "openai/gpt-5-nano": MODELS.TEXT_CHEAP,
-    "gpt-5-mini": MODELS.TEXT_DEFAULT,
+    "gpt-5-mini": MODELS.TEXT_CHEAP,
     "gpt-5-nano": MODELS.TEXT_CHEAP,
     "gpt-5": MODELS.TEXT_PREMIUM,
     "google/gemini-3-pro-image-preview": MODELS.IMAGE_DRAFT,
