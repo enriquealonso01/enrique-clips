@@ -8,8 +8,8 @@
 export const MODELS = {
   /** Default text model — OpenAI gpt-5.3 */
   TEXT_DEFAULT: "gpt-5.3-chat-latest",
-  /** Cheap model for metadata, classification, tagging */
-  TEXT_CHEAP: "gemini-2.5-flash",
+  /** Fast/cheap text model for metadata, classification, tagging — direct OpenAI */
+  TEXT_CHEAP: "gpt-5-mini",
   /** Premium reasoning — same as default */
   TEXT_PREMIUM: "gpt-5.3-chat-latest",
   /** Draft image generation */
