@@ -10,17 +10,75 @@ const corsHeaders = {
 
 // OpenAI integration is now handled by _shared/openai.ts
 
+// Resolve a (possibly naive) wall-clock timestamp string into an absolute
+// UTC ms epoch. If the string already includes a TZ suffix ("Z" or ±HH:MM)
+// we trust it. Otherwise we interpret the wall-clock time in the supplied
+// IANA timezone — never as UTC, never as the server's local time.
+function resolveScheduledDateMs(
+  scheduledDate: string,
+  timezone?: string | null,
+): number | null {
+  if (!scheduledDate) return null;
+
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(scheduledDate.trim());
+  if (hasTz) {
+    const t = Date.parse(scheduledDate);
+    return isNaN(t) ? null : t;
+  }
+
+  // Naive wall-clock: "YYYY-MM-DDTHH:MM[:SS]" with no offset.
+  const m = scheduledDate.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  if (!m) {
+    const t = Date.parse(scheduledDate);
+    return isNaN(t) ? null : t;
+  }
+  const [, y, mo, d, h, mi, s] = m;
+  const tz = timezone && timezone.trim() ? timezone.trim() : "UTC";
+
+  // Compute the UTC offset (in minutes) the named TZ has at that wall time.
+  // We do this by formatting a candidate UTC instant in the target TZ and
+  // measuring the delta from the desired wall-clock components.
+  const guessUtcMs = Date.UTC(+y, +mo - 1, +d, +h, +mi, s ? +s : 0);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    dtf.formatToParts(new Date(guessUtcMs))
+      .filter((p) => p.type !== "literal")
+      .map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  const asLocal = Date.UTC(
+    +parts.year,
+    +parts.month - 1,
+    +parts.day,
+    +parts.hour === 24 ? 0 : +parts.hour,
+    +parts.minute,
+    +parts.second,
+  );
+  const offsetMs = asLocal - guessUtcMs; // (TZ wall) − UTC
+  return guessUtcMs - offsetMs;
+}
+
 // Returns true if a publish_scheduled_date string is in the future.
 // Upload-Post rejects past times with "Scheduled date must be in the future."
 // We treat past or unparseable timestamps as "post immediately" to avoid
 // the run getting stuck retrying a doomed schedule.
-function isFutureScheduledDate(scheduledDate: string | undefined | null, timezone?: string | null): boolean {
+function isFutureScheduledDate(
+  scheduledDate: string | undefined | null,
+  timezone?: string | null,
+): boolean {
   if (!scheduledDate) return false;
-  // Many of our stored values are local wall-clock strings without a TZ
-  // suffix (e.g. "2026-04-28T08:14:00"). Try direct parse first; if it
-  // looks naive AND we have a timezone, just compare loosely.
-  const t = Date.parse(scheduledDate);
-  if (isNaN(t)) return false;
+  const t = resolveScheduledDateMs(scheduledDate, timezone);
+  if (t === null) return false;
   // 60 second safety buffer — schedules booked for "now" usually arrive late.
   return t > Date.now() + 60_000;
 }

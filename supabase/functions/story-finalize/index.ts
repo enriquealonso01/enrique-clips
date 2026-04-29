@@ -21,10 +21,56 @@ function json(data: unknown, status = 200) {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-function isFutureScheduledDate(scheduledDate: unknown): boolean {
+// Naive wall-clock strings ("2026-04-29T08:20:00") have no TZ suffix and
+// must be interpreted in the project's IANA timezone — NOT as UTC.
+// JavaScript's Date.parse treats such ISO date-times as UTC, which silently
+// shifts a US/Eastern 8:20 AM schedule into 4:20 AM ET and makes it look
+// "in the past". This helper resolves the wall-clock components inside the
+// supplied timezone using Intl.DateTimeFormat as the offset oracle.
+function resolveScheduledDateMs(
+  scheduledDate: string,
+  timezone?: string | null,
+): number | null {
+  if (!scheduledDate) return null;
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(scheduledDate.trim());
+  if (hasTz) {
+    const t = Date.parse(scheduledDate);
+    return isNaN(t) ? null : t;
+  }
+  const m = scheduledDate.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?$/,
+  );
+  if (!m) {
+    const t = Date.parse(scheduledDate);
+    return isNaN(t) ? null : t;
+  }
+  const [, y, mo, d, h, mi, s] = m;
+  const tz = timezone && timezone.trim() ? timezone.trim() : "UTC";
+  const guessUtcMs = Date.UTC(+y, +mo - 1, +d, +h, +mi, s ? +s : 0);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    dtf.formatToParts(new Date(guessUtcMs))
+      .filter((p) => p.type !== "literal")
+      .map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+  const asLocal = Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +parts.hour === 24 ? 0 : +parts.hour,
+    +parts.minute, +parts.second,
+  );
+  const offsetMs = asLocal - guessUtcMs;
+  return guessUtcMs - offsetMs;
+}
+
+function isFutureScheduledDate(scheduledDate: unknown, timezone?: string | null): boolean {
   if (!scheduledDate || typeof scheduledDate !== "string") return false;
-  const schedMs = Date.parse(scheduledDate);
-  return Number.isFinite(schedMs) && schedMs > Date.now() + 60_000;
+  const t = resolveScheduledDateMs(scheduledDate, timezone);
+  return t !== null && t > Date.now() + 60_000;
 }
 
 Deno.serve(async (req) => {
@@ -983,7 +1029,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
 
         // Group enabled platforms by identical title+description so we send
         // one Upload-Post request per group (mirrors finalize-video).
-        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date);
+        const scheduledDateIsFuture = isFutureScheduledDate(meta.publish_scheduled_date, meta.publish_timezone);
         const shouldUseScheduledDate = scheduledDateIsFuture && !publishOnly && !postNow;
         if (shouldUseScheduledDate) {
           await log("info", `Scheduling post for ${meta.publish_scheduled_date} (${meta.publish_timezone || "UTC"})`);
