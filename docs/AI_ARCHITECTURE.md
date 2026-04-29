@@ -30,7 +30,7 @@ All API calls are made **server-side only** through Supabase Edge Functions.
 | Scene planning | `gpt-5.3-chat-latest` | OpenAI | Every run |
 | Style bible | `gpt-5.3-chat-latest` | OpenAI | Every run |
 | Overlay content | `gpt-5.3-chat-latest` | OpenAI | When overlays have `ai_generated` mode |
-| Platform metadata | `gemini-2.5-flash` | Google | Post-production metadata |
+| Platform metadata | `gpt-5-mini` | OpenAI | Post-production metadata |
 | Premium reasoning | `gpt-5.3-chat-latest` | OpenAI | Only when `premium=true` or validation fails |
 | Draft keyframes | `gemini-3.1-flash-image-preview` | Google | During pipeline keyframe step |
 | Final keyframes | `gemini-3.1-flash-image-preview` | Google | When explicitly requested |
@@ -38,7 +38,7 @@ All API calls are made **server-side only** through Supabase Edge Functions.
 ### Model Selection Rationale
 
 1. **`gpt-5.3-chat-latest` for text** — More reliable than `gemini-2.5-pro` for structured output and prompt following
-2. **`gemini-2.5-flash` for metadata** — Classification/tagging doesn't need deep reasoning, cheap and fast
+2. **`gpt-5-mini` for metadata** — Classification/tagging doesn't need deep reasoning, fast and avoids Gemini availability spikes
 3. **`gemini-3.1-flash-image-preview` for images** — Native image generation with Flex pricing tier
 4. **Automatic model detection** — `isOpenAIModel()` routes based on model name prefix (`gpt-` or `openai/`)
 
@@ -71,7 +71,7 @@ Standalone REST endpoints for direct AI calls from the frontend:
 |----------|--------|-------|-------------|
 | `/plan` | POST | gpt-5.3-chat-latest | Generate scene plan |
 | `/style-bible` | POST | gpt-5.3-chat-latest | Generate style bible |
-| `/platform-metadata` | POST | gemini-2.5-flash | Generate platform metadata |
+| `/platform-metadata` | POST | gpt-5-mini | Generate platform metadata |
 | `/overlay` | POST | gpt-5.3-chat-latest | Generate overlay content |
 | `/image/draft` | POST | gemini-3.1-flash-image-preview | Draft keyframe image |
 | `/image/final` | POST | gemini-3.1-flash-image-preview | Final keyframe image |
