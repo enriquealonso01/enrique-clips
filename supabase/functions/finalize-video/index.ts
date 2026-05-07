@@ -1988,29 +1988,25 @@ Deno.serve(async (req) => {
                 (project as any).pika_resolution || "1080p"
               );
               const normalizedClipVideoLabels = clipInputIdxes.map((_, ci) => `clipv${ci}`);
-              const normalizedClipAudioLabels = clipInputIdxes.map((_, ci) => `clipa${ci}`);
 
+              // Video-only normalization. AI-generated clips (Pika/Vidu/Kling) typically have no
+              // audio track, so referencing [idx:a] would fail with "Stream specifier ':a' matches
+              // no streams". We always concat video-only and synthesize silent audio downstream
+              // when no music/VO source is provided.
               for (let ci = 0; ci < clipInputIdxes.length; ci++) {
                 const inputIdx = clipInputIdxes[ci];
                 filterParts.push(
                   `[${inputIdx}:v]scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${normalizedClipVideoLabels[ci]}]`
                 );
-                filterParts.push(
-                  `[${inputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${normalizedClipAudioLabels[ci]}]`
-                );
               }
-              await log("info", `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat to prevent mixed-dimension stitch failures.`);
+              await log("info", `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat (video-only; clip audio ignored to avoid missing-audio-stream failures).`);
 
-              // Concat filter: [0:v][0:a][1:v][1:a]...concat=n=N:v=1:a=1[cv][ca]
-              // If hasSelectedTrack, we strip audio (video-only concat) and add music later
-              if (hasSelectedTrack) {
-                const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
-              } else {
-                // Try to concat with audio — if clips have audio, preserve it
-                const concatInputs = normalizedClipVideoLabels.map((label, idx) => `[${label}][${normalizedClipAudioLabels[idx]}]`).join("");
-                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
-              }
+              const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
+              filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
+              // Always provide a silent [maina] companion stream so downstream paths
+              // (no-music + no-VO, VO-without-music, etc.) can map an audio track
+              // even though source clips have no audio.
+              filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
               // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
@@ -2024,7 +2020,11 @@ Deno.serve(async (req) => {
                   const vLabel = `tv${si}`;
                   const aLabel = `ta${si}`;
                   filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS,scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${vLabel}]`);
-                  filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
+                  // Clip audio is unavailable (AI-generated clips have no audio track).
+                  // Generate a silent stream of equivalent duration so downstream
+                  // crossfade/concat math still works.
+                  const segDur = Math.max(0.01, seg.endSec - seg.startSec).toFixed(3);
+                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${segDur},asetpts=PTS-STARTPTS[${aLabel}]`);
                   vTeaseLabels.push(vLabel);
                   aTeaseLabels.push(aLabel);
                 }
@@ -2046,7 +2046,8 @@ Deno.serve(async (req) => {
                 concatVideoLabel = "teasedv";
                 // Audio: crossfade teaser → main when we have concat audio; otherwise keep teaser stream for later mix with music
                 if (!hasSelectedTrack) {
-                  filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
+                  // No music — use silent base audio for the main section
+                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec - totalTeaserDurationSec + teaserDissolveSec).toFixed(3)}[mainafmt]`);
                   filterParts.push(`[${teaserAudioLabel}][mainafmt]acrossfade=d=${teaserDissolveSec}:c1=tri:c2=tri[teaseda]`);
                   concatAudioLabel = "teaseda";
                 } else {
