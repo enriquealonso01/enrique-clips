@@ -2003,6 +2003,10 @@ Deno.serve(async (req) => {
 
               const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
               filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
+              // Always provide a silent [maina] companion stream so downstream paths
+              // (no-music + no-VO, VO-without-music, etc.) can map an audio track
+              // even though source clips have no audio.
+              filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
               // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
