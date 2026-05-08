@@ -488,11 +488,13 @@ Deno.serve(async (req) => {
           // Chain to a fresh invocation to keep polling without hitting edge timeout
           await log("info", "Submagic still transcribing — chaining to fresh invocation to continue polling");
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
-          fetch(chainUrl, {
+          const chainPromise1 = fetch(chainUrl, {
             method: "POST",
             headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify({ run_id: runId, force_retry: true }),
           }).catch(() => {});
+          // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chainPromise1);
           return json({ status: "chained_submagic_transcribe", run_id: runId });
         }
 
@@ -544,11 +546,13 @@ Deno.serve(async (req) => {
         if (!captionedVideoUrl) {
           await log("info", "Submagic still exporting — chaining to fresh invocation");
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
-          fetch(chainUrl, {
+          const chainPromise2 = fetch(chainUrl, {
             method: "POST",
             headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify({ run_id: runId, force_retry: true }),
           }).catch(() => {});
+          // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chainPromise2);
           return json({ status: "chained_submagic_export", run_id: runId });
         }
 
@@ -574,11 +578,13 @@ Deno.serve(async (req) => {
         // ── Chain: re-invoke self to continue with end card stage (avoid 150s timeout) ──
         await log("info", "Chaining: re-invoking story-finalize for end card stage");
         const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
-        fetch(chainUrl, {
+        const chainPromise3 = fetch(chainUrl, {
           method: "POST",
           headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
           body: JSON.stringify({ run_id: runId, force_retry: true }),
         }).catch(() => {});
+        // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chainPromise3);
         return json({ status: "chained_to_endcard", run_id: runId });
       } catch (subErr) {
         const errMsg = (subErr as Error).message;
