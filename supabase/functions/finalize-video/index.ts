@@ -2476,9 +2476,20 @@ Deno.serve(async (req) => {
           }
 
           const finalPath = `${project.id}/final/${runId}/final-video-${Date.now()}.mp4`;
-          const { error: upErr } = await supabase.storage
-            .from("project-assets")
-            .upload(finalPath, finalVideo, { contentType: "video/mp4", upsert: false });
+          let upErr: any = null;
+          const UPLOAD_MAX_ATTEMPTS = 4;
+          for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+            const res = await supabase.storage
+              .from("project-assets")
+              .upload(finalPath, finalVideo, { contentType: "video/mp4", upsert: true });
+            upErr = res.error;
+            if (!upErr) break;
+            const msg = (upErr as any)?.message || String(upErr);
+            await log("warn", `Final video upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} failed: ${msg}`);
+            if (attempt < UPLOAD_MAX_ATTEMPTS) {
+              await new Promise((r) => setTimeout(r, 2000 * attempt));
+            }
+          }
 
           if (!upErr) {
             await supabase.from("assets").delete().eq("run_id", runId).eq("type", "final_video");
