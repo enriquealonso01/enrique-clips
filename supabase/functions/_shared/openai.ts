@@ -347,7 +347,7 @@ async function callTextOpenAI(opts: CallTextOptions, model: string): Promise<Cal
     if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   }
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
-  if (opts.max_tokens) body.max_tokens = opts.max_tokens;
+  if (opts.max_tokens) body.max_completion_tokens = opts.max_tokens;
 
   const result = await openaiRequest(model, body);
 
