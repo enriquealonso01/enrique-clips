@@ -2050,11 +2050,14 @@ Deno.serve(async (req) => {
                   const vLabel = `tv${si}`;
                   const aLabel = `ta${si}`;
                   filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS,scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${vLabel}]`);
-                  // Clip audio is unavailable (AI-generated clips have no audio track).
-                  // Generate a silent stream of equivalent duration so downstream
-                  // crossfade/concat math still works.
                   const segDur = Math.max(0.01, seg.endSec - seg.startSec).toFixed(3);
-                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${segDur},asetpts=PTS-STARTPTS[${aLabel}]`);
+                  if (useClipAudio) {
+                    // Use the clip's native audio (Vidu) for the teaser segment.
+                    filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
+                  } else {
+                    // Clip audio is unavailable (Pika/Kling): generate silence of equivalent duration.
+                    filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${segDur},asetpts=PTS-STARTPTS[${aLabel}]`);
+                  }
                   vTeaseLabels.push(vLabel);
                   aTeaseLabels.push(aLabel);
                 }
@@ -2076,8 +2079,12 @@ Deno.serve(async (req) => {
                 concatVideoLabel = "teasedv";
                 // Audio: crossfade teaser → main when we have concat audio; otherwise keep teaser stream for later mix with music
                 if (!hasSelectedTrack) {
-                  // No music — use silent base audio for the main section
-                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec - totalTeaserDurationSec + teaserDissolveSec).toFixed(3)}[mainafmt]`);
+                  // No music — base audio is either native clip audio (Vidu) or silence.
+                  if (useClipAudio) {
+                    filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
+                  } else {
+                    filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec - totalTeaserDurationSec + teaserDissolveSec).toFixed(3)}[mainafmt]`);
+                  }
                   filterParts.push(`[${teaserAudioLabel}][mainafmt]acrossfade=d=${teaserDissolveSec}:c1=tri:c2=tri[teaseda]`);
                   concatAudioLabel = "teaseda";
                 } else {
