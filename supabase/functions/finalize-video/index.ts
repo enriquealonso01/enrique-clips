@@ -1738,6 +1738,16 @@ Deno.serve(async (req) => {
           if (hasSelectedTrack) {
             await log("info", `Selected track ${chosenTrackId} for this run (crypto-random)`);
           }
+
+          // When no music track is selected and clips are from a generator that
+          // produces native audio (Vidu), preserve the clips' original audio in
+          // the final concat instead of synthesizing silence.
+          const generatorStr = String((project as any).video_generator || "").toLowerCase();
+          const generatorHasNativeAudio = generatorStr.includes("vidu");
+          const useClipAudio = !hasSelectedTrack && generatorHasNativeAudio;
+          if (useClipAudio) {
+            await log("info", `No music track selected — preserving native clip audio (generator=${generatorStr || "unknown"}).`);
+          }
           
           let finalVideo: Uint8Array | null = null;
 
@@ -1993,20 +2003,40 @@ Deno.serve(async (req) => {
               // audio track, so referencing [idx:a] would fail with "Stream specifier ':a' matches
               // no streams". We always concat video-only and synthesize silent audio downstream
               // when no music/VO source is provided.
+              const normalizedClipAudioLabels: string[] = [];
               for (let ci = 0; ci < clipInputIdxes.length; ci++) {
                 const inputIdx = clipInputIdxes[ci];
                 filterParts.push(
                   `[${inputIdx}:v]scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${normalizedClipVideoLabels[ci]}]`
                 );
+                if (useClipAudio) {
+                  const aLabel = `clipa${ci}`;
+                  // Normalize each clip's audio to a uniform format so concat works.
+                  filterParts.push(
+                    `[${inputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[${aLabel}]`
+                  );
+                  normalizedClipAudioLabels.push(aLabel);
+                }
               }
-              await log("info", `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat (video-only; clip audio ignored to avoid missing-audio-stream failures).`);
+              await log(
+                "info",
+                `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat (${useClipAudio ? "with native clip audio" : "video-only; clip audio ignored to avoid missing-audio-stream failures"}).`
+              );
 
-              const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
-              filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
-              // Always provide a silent [maina] companion stream so downstream paths
-              // (no-music + no-VO, VO-without-music, etc.) can map an audio track
-              // even though source clips have no audio.
-              filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
+              if (useClipAudio) {
+                // Concat with audio: interleave [v][a] pairs.
+                const concatPairs = normalizedClipVideoLabels
+                  .map((v, i) => `[${v}][${normalizedClipAudioLabels[i]}]`)
+                  .join("");
+                filterParts.push(`${concatPairs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
+              } else {
+                const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
+                // Always provide a silent [maina] companion stream so downstream paths
+                // (no-music + no-VO, VO-without-music, etc.) can map an audio track
+                // even though source clips have no audio.
+                filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
+              }
               // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
@@ -2020,11 +2050,14 @@ Deno.serve(async (req) => {
                   const vLabel = `tv${si}`;
                   const aLabel = `ta${si}`;
                   filterParts.push(`[${inIdx}:v]trim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},setpts=PTS-STARTPTS,scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${vLabel}]`);
-                  // Clip audio is unavailable (AI-generated clips have no audio track).
-                  // Generate a silent stream of equivalent duration so downstream
-                  // crossfade/concat math still works.
                   const segDur = Math.max(0.01, seg.endSec - seg.startSec).toFixed(3);
-                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${segDur},asetpts=PTS-STARTPTS[${aLabel}]`);
+                  if (useClipAudio) {
+                    // Use the clip's native audio (Vidu) for the teaser segment.
+                    filterParts.push(`[${inIdx}:a]atrim=start=${seg.startSec.toFixed(3)}:end=${seg.endSec.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[${aLabel}]`);
+                  } else {
+                    // Clip audio is unavailable (Pika/Kling): generate silence of equivalent duration.
+                    filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${segDur},asetpts=PTS-STARTPTS[${aLabel}]`);
+                  }
                   vTeaseLabels.push(vLabel);
                   aTeaseLabels.push(aLabel);
                 }
@@ -2046,8 +2079,12 @@ Deno.serve(async (req) => {
                 concatVideoLabel = "teasedv";
                 // Audio: crossfade teaser → main when we have concat audio; otherwise keep teaser stream for later mix with music
                 if (!hasSelectedTrack) {
-                  // No music — use silent base audio for the main section
-                  filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec - totalTeaserDurationSec + teaserDissolveSec).toFixed(3)}[mainafmt]`);
+                  // No music — base audio is either native clip audio (Vidu) or silence.
+                  if (useClipAudio) {
+                    filterParts.push(`[maina]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[mainafmt]`);
+                  } else {
+                    filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec - totalTeaserDurationSec + teaserDissolveSec).toFixed(3)}[mainafmt]`);
+                  }
                   filterParts.push(`[${teaserAudioLabel}][mainafmt]acrossfade=d=${teaserDissolveSec}:c1=tri:c2=tri[teaseda]`);
                   concatAudioLabel = "teaseda";
                 } else {
