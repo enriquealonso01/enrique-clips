@@ -1738,6 +1738,16 @@ Deno.serve(async (req) => {
           if (hasSelectedTrack) {
             await log("info", `Selected track ${chosenTrackId} for this run (crypto-random)`);
           }
+
+          // When no music track is selected and clips are from a generator that
+          // produces native audio (Vidu), preserve the clips' original audio in
+          // the final concat instead of synthesizing silence.
+          const generatorStr = String((project as any).video_generator || "").toLowerCase();
+          const generatorHasNativeAudio = generatorStr.includes("vidu");
+          const useClipAudio = !hasSelectedTrack && generatorHasNativeAudio;
+          if (useClipAudio) {
+            await log("info", `No music track selected — preserving native clip audio (generator=${generatorStr || "unknown"}).`);
+          }
           
           let finalVideo: Uint8Array | null = null;
 
