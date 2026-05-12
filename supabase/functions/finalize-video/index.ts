@@ -2003,20 +2003,40 @@ Deno.serve(async (req) => {
               // audio track, so referencing [idx:a] would fail with "Stream specifier ':a' matches
               // no streams". We always concat video-only and synthesize silent audio downstream
               // when no music/VO source is provided.
+              const normalizedClipAudioLabels: string[] = [];
               for (let ci = 0; ci < clipInputIdxes.length; ci++) {
                 const inputIdx = clipInputIdxes[ci];
                 filterParts.push(
                   `[${inputIdx}:v]scale=${targetVideoWidth}:${targetVideoHeight}:force_original_aspect_ratio=decrease,pad=${targetVideoWidth}:${targetVideoHeight}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[${normalizedClipVideoLabels[ci]}]`
                 );
+                if (useClipAudio) {
+                  const aLabel = `clipa${ci}`;
+                  // Normalize each clip's audio to a uniform format so concat works.
+                  filterParts.push(
+                    `[${inputIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[${aLabel}]`
+                  );
+                  normalizedClipAudioLabels.push(aLabel);
+                }
               }
-              await log("info", `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat (video-only; clip audio ignored to avoid missing-audio-stream failures).`);
+              await log(
+                "info",
+                `Normalizing ${clipUrls.length} clip(s) to ${targetVideoWidth}x${targetVideoHeight} before concat (${useClipAudio ? "with native clip audio" : "video-only; clip audio ignored to avoid missing-audio-stream failures"}).`
+              );
 
-              const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
-              filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
-              // Always provide a silent [maina] companion stream so downstream paths
-              // (no-music + no-VO, VO-without-music, etc.) can map an audio track
-              // even though source clips have no audio.
-              filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
+              if (useClipAudio) {
+                // Concat with audio: interleave [v][a] pairs.
+                const concatPairs = normalizedClipVideoLabels
+                  .map((v, i) => `[${v}][${normalizedClipAudioLabels[i]}]`)
+                  .join("");
+                filterParts.push(`${concatPairs}concat=n=${clipUrls.length}:v=1:a=1[mainv][maina]`);
+              } else {
+                const concatInputs = normalizedClipVideoLabels.map((label) => `[${label}]`).join("");
+                filterParts.push(`${concatInputs}concat=n=${clipUrls.length}:v=1:a=0[mainv]`);
+                // Always provide a silent [maina] companion stream so downstream paths
+                // (no-music + no-VO, VO-without-music, etc.) can map an audio track
+                // even though source clips have no audio.
+                filterParts.push(`anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${Math.max(0.1, videoDurationSec).toFixed(3)},asetpts=PTS-STARTPTS[maina]`);
+              }
               // Teaser: trim last 3s of last clip, then xfade-dissolve into the main concat
               let concatVideoLabel = "mainv";
               let concatAudioLabel = "maina";
