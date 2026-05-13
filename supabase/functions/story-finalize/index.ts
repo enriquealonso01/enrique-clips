@@ -474,6 +474,34 @@ Deno.serve(async (req) => {
         };
         await sb.from("story_runs").update({ generated_metadata: mergedMeta }).eq("id", runId);
 
+        const existingElapsedMs = existingSubmagicId ? Date.now() - Date.parse(submittedAt) : 0;
+        if (existingSubmagicId && Number.isFinite(existingElapsedMs) && existingElapsedMs > SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS) {
+          if (attempts < SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS) {
+            const nextAttempts = attempts + 1;
+            await log("warn", `Submagic transcription stuck after ${Math.round(existingElapsedMs / 60000)}m — abandoning stale project and creating a fresh Submagic project (attempt ${nextAttempts}/${SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS})`);
+            await sb.from("story_runs").update({
+              generated_metadata: {
+                ...mergedMeta,
+                submagic_project_id: null,
+                submagic_story_path: storyPath,
+                submagic_submitted_at: null,
+                submagic_transcription_attempts: nextAttempts,
+                submagic_stuck_project_id: subProjectId,
+              },
+            }).eq("id", runId);
+            const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+            const retryPromise = fetch(retryUrl, {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: runId, force_retry: true }),
+            }).catch(() => {});
+            // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+            if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(retryPromise);
+            return json({ status: "chained_submagic_recreate", run_id: runId });
+          }
+          throw new Error(`Submagic transcription stuck for ${Math.round(existingElapsedMs / 60000)} minutes after ${attempts} attempt(s)`);
+        }
+
         // Step 2: Poll for transcription completion
         let transcribed = false;
         const t0 = Date.now();
