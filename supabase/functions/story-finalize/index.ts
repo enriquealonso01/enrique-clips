@@ -460,7 +460,9 @@ Deno.serve(async (req) => {
         const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
         const metaBeforeSubmagic = ((curRunMeta?.generated_metadata as any) || {});
         const nowIso = new Date().toISOString();
-        const submittedAt = existingSubmagicId && metaBeforeSubmagic.submagic_submitted_at ? metaBeforeSubmagic.submagic_submitted_at : nowIso;
+        const submittedAt = existingSubmagicId
+          ? (metaBeforeSubmagic.submagic_submitted_at || run.started_at || run.created_at || nowIso)
+          : nowIso;
         const attempts = Number(metaBeforeSubmagic.submagic_transcription_attempts || (existingSubmagicId ? 1 : 0)) || 1;
         const mergedMeta = {
           ...metaBeforeSubmagic,
