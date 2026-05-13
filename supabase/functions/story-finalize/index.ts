@@ -11,6 +11,8 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
+const SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS = 45 * 60 * 1000;
+const SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS = 2;
 // Publishing intentionally mirrors the Projects pipeline (finalize-video):
 // async URL upload + hard idempotency on publish_jobs. No retry loop, no
 // chaining, no per-attempt timeouts. One publish_jobs row per run, ever.
@@ -164,9 +166,12 @@ Deno.serve(async (req) => {
     const priorMeta = (priorRun?.generated_metadata as any) || {};
     const existingSubmagicId: string | null = !resumeFromEndCard && priorMeta.submagic_project_id ? priorMeta.submagic_project_id : null;
     const existingSubmagicStoryPath: string | null = !resumeFromEndCard && priorMeta.submagic_story_path ? priorMeta.submagic_story_path : null;
-    const resumeFromSubmagic = !!existingSubmagicId && !!existingSubmagicStoryPath;
+    const resumeFromAssembledStory = !!existingSubmagicStoryPath;
+    const resumeFromSubmagic = !!existingSubmagicId && resumeFromAssembledStory;
     if (resumeFromSubmagic) {
       await log("info", `Resume detected: Submagic project ${existingSubmagicId} already submitted. Skipping Rendi, polling Submagic.`);
+    } else if (resumeFromAssembledStory) {
+      await log("info", `Resume detected: assembled story video already exists at ${existingSubmagicStoryPath}. Skipping Rendi, creating a fresh Submagic project.`);
     }
 
     // ── Get all scene clips (completed) ──
@@ -194,7 +199,7 @@ Deno.serve(async (req) => {
 
     // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    if (!resumeFromEndCard && !resumeFromSubmagic) {
+    if (!resumeFromEndCard && !resumeFromAssembledStory) {
       for (const clip of completedClips) {
         const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
         if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
@@ -270,6 +275,10 @@ Deno.serve(async (req) => {
       storyPath = existingSubmagicStoryPath!;
       captionedPath = storyPath; // will be overwritten by Submagic download below
       await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to Submagic poll.`);
+    } else if (resumeFromAssembledStory) {
+      storyPath = existingSubmagicStoryPath!;
+      captionedPath = storyPath;
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), creating a fresh Submagic project.`);
     } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
@@ -456,8 +465,49 @@ Deno.serve(async (req) => {
 
         // Persist project ID immediately so chained invocations can resume polling without re-creating
         const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
-        const mergedMeta = { ...((curRunMeta?.generated_metadata as any) || {}), submagic_project_id: subProjectId, submagic_story_path: storyPath };
+        const metaBeforeSubmagic = ((curRunMeta?.generated_metadata as any) || {});
+        const nowIso = new Date().toISOString();
+        const submittedAt = existingSubmagicId
+          ? (metaBeforeSubmagic.submagic_submitted_at || run.started_at || run.created_at || nowIso)
+          : nowIso;
+        const attempts = Number(metaBeforeSubmagic.submagic_transcription_attempts || (existingSubmagicId ? 1 : 0)) || 1;
+        const mergedMeta = {
+          ...metaBeforeSubmagic,
+          submagic_project_id: subProjectId,
+          submagic_story_path: storyPath,
+          submagic_submitted_at: submittedAt,
+          submagic_transcription_attempts: attempts,
+          submagic_last_polled_at: nowIso,
+        };
         await sb.from("story_runs").update({ generated_metadata: mergedMeta }).eq("id", runId);
+
+        const existingElapsedMs = existingSubmagicId ? Date.now() - Date.parse(submittedAt) : 0;
+        if (existingSubmagicId && Number.isFinite(existingElapsedMs) && existingElapsedMs > SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS) {
+          if (attempts < SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS) {
+            const nextAttempts = attempts + 1;
+            await log("warn", `Submagic transcription stuck after ${Math.round(existingElapsedMs / 60000)}m — abandoning stale project and creating a fresh Submagic project (attempt ${nextAttempts}/${SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS})`);
+            await sb.from("story_runs").update({
+              generated_metadata: {
+                ...mergedMeta,
+                submagic_project_id: null,
+                submagic_story_path: storyPath,
+                submagic_submitted_at: null,
+                submagic_transcription_attempts: nextAttempts,
+                submagic_stuck_project_id: subProjectId,
+              },
+            }).eq("id", runId);
+            const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+            const retryPromise = fetch(retryUrl, {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: runId, force_retry: true }),
+            }).catch(() => {});
+            // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+            if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(retryPromise);
+            return json({ status: "chained_submagic_recreate", run_id: runId });
+          }
+          throw new Error(`Submagic transcription stuck for ${Math.round(existingElapsedMs / 60000)} minutes after ${attempts} attempt(s)`);
+        }
 
         // Step 2: Poll for transcription completion
         let transcribed = false;
@@ -485,6 +535,35 @@ Deno.serve(async (req) => {
         }
 
         if (!transcribed) {
+          const elapsedMs = Date.now() - Date.parse(submittedAt);
+          if (Number.isFinite(elapsedMs) && elapsedMs > SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS) {
+            if (attempts < SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS) {
+              const nextAttempts = attempts + 1;
+              await log("warn", `Submagic transcription stuck after ${Math.round(elapsedMs / 60000)}m — creating a fresh Submagic project (attempt ${nextAttempts}/${SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS})`);
+              await sb.from("story_runs").update({
+                generated_metadata: {
+                  ...mergedMeta,
+                  submagic_project_id: null,
+                  submagic_story_path: storyPath,
+                  submagic_submitted_at: null,
+                  submagic_last_polled_at: nowIso,
+                  submagic_transcription_attempts: nextAttempts,
+                  submagic_stuck_project_id: subProjectId,
+                },
+              }).eq("id", runId);
+              const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+              const retryPromise = fetch(retryUrl, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ run_id: runId, force_retry: true }),
+              }).catch(() => {});
+              // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+              if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(retryPromise);
+              return json({ status: "chained_submagic_recreate", run_id: runId });
+            }
+            throw new Error(`Submagic transcription stuck for ${Math.round(elapsedMs / 60000)} minutes after ${attempts} attempt(s)`);
+          }
+
           // Chain to a fresh invocation to keep polling without hitting edge timeout
           await log("info", "Submagic still transcribing — chaining to fresh invocation to continue polling");
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
