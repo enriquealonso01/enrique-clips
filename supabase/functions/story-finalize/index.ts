@@ -11,6 +11,8 @@ const DEFAULT_STORY_EMOJI_PATH = "defaults/emoji-heart-bandage.png";
 const DEFAULT_STORY_FPS = 24;
 const DEFAULT_STORY_AUDIO_RATE = 48000;
 const DEFAULT_END_CARD_DURATION_SEC = 5;
+const SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS = 45 * 60 * 1000;
+const SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS = 2;
 // Publishing intentionally mirrors the Projects pipeline (finalize-video):
 // async URL upload + hard idempotency on publish_jobs. No retry loop, no
 // chaining, no per-attempt timeouts. One publish_jobs row per run, ever.
