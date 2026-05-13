@@ -166,9 +166,12 @@ Deno.serve(async (req) => {
     const priorMeta = (priorRun?.generated_metadata as any) || {};
     const existingSubmagicId: string | null = !resumeFromEndCard && priorMeta.submagic_project_id ? priorMeta.submagic_project_id : null;
     const existingSubmagicStoryPath: string | null = !resumeFromEndCard && priorMeta.submagic_story_path ? priorMeta.submagic_story_path : null;
-    const resumeFromSubmagic = !!existingSubmagicId && !!existingSubmagicStoryPath;
+    const resumeFromAssembledStory = !!existingSubmagicStoryPath;
+    const resumeFromSubmagic = !!existingSubmagicId && resumeFromAssembledStory;
     if (resumeFromSubmagic) {
       await log("info", `Resume detected: Submagic project ${existingSubmagicId} already submitted. Skipping Rendi, polling Submagic.`);
+    } else if (resumeFromAssembledStory) {
+      await log("info", `Resume detected: assembled story video already exists at ${existingSubmagicStoryPath}. Skipping Rendi, creating a fresh Submagic project.`);
     }
 
     // ── Get all scene clips (completed) ──
@@ -196,7 +199,7 @@ Deno.serve(async (req) => {
 
     // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
-    if (!resumeFromEndCard && !resumeFromSubmagic) {
+    if (!resumeFromEndCard && !resumeFromAssembledStory) {
       for (const clip of completedClips) {
         const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
         if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
@@ -272,6 +275,10 @@ Deno.serve(async (req) => {
       storyPath = existingSubmagicStoryPath!;
       captionedPath = storyPath; // will be overwritten by Submagic download below
       await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to Submagic poll.`);
+    } else if (resumeFromAssembledStory) {
+      storyPath = existingSubmagicStoryPath!;
+      captionedPath = storyPath;
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), creating a fresh Submagic project.`);
     } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
