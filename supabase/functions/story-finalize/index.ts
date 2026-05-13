@@ -458,7 +458,18 @@ Deno.serve(async (req) => {
 
         // Persist project ID immediately so chained invocations can resume polling without re-creating
         const { data: curRunMeta } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
-        const mergedMeta = { ...((curRunMeta?.generated_metadata as any) || {}), submagic_project_id: subProjectId, submagic_story_path: storyPath };
+        const metaBeforeSubmagic = ((curRunMeta?.generated_metadata as any) || {});
+        const nowIso = new Date().toISOString();
+        const submittedAt = existingSubmagicId && metaBeforeSubmagic.submagic_submitted_at ? metaBeforeSubmagic.submagic_submitted_at : nowIso;
+        const attempts = Number(metaBeforeSubmagic.submagic_transcription_attempts || (existingSubmagicId ? 1 : 0)) || 1;
+        const mergedMeta = {
+          ...metaBeforeSubmagic,
+          submagic_project_id: subProjectId,
+          submagic_story_path: storyPath,
+          submagic_submitted_at: submittedAt,
+          submagic_transcription_attempts: attempts,
+          submagic_last_polled_at: nowIso,
+        };
         await sb.from("story_runs").update({ generated_metadata: mergedMeta }).eq("id", runId);
 
         // Step 2: Poll for transcription completion
@@ -487,6 +498,35 @@ Deno.serve(async (req) => {
         }
 
         if (!transcribed) {
+          const elapsedMs = Date.now() - Date.parse(submittedAt);
+          if (Number.isFinite(elapsedMs) && elapsedMs > SUBMAGIC_TRANSCRIPTION_MAX_AGE_MS) {
+            if (attempts < SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS) {
+              const nextAttempts = attempts + 1;
+              await log("warn", `Submagic transcription stuck after ${Math.round(elapsedMs / 60000)}m — creating a fresh Submagic project (attempt ${nextAttempts}/${SUBMAGIC_MAX_TRANSCRIPTION_ATTEMPTS})`);
+              await sb.from("story_runs").update({
+                generated_metadata: {
+                  ...mergedMeta,
+                  submagic_project_id: null,
+                  submagic_story_path: storyPath,
+                  submagic_submitted_at: null,
+                  submagic_last_polled_at: nowIso,
+                  submagic_transcription_attempts: nextAttempts,
+                  submagic_stuck_project_id: subProjectId,
+                },
+              }).eq("id", runId);
+              const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+              const retryPromise = fetch(retryUrl, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ run_id: runId, force_retry: true }),
+              }).catch(() => {});
+              // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+              if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(retryPromise);
+              return json({ status: "chained_submagic_recreate", run_id: runId });
+            }
+            throw new Error(`Submagic transcription stuck for ${Math.round(elapsedMs / 60000)} minutes after ${attempts} attempt(s)`);
+          }
+
           // Chain to a fresh invocation to keep polling without hitting edge timeout
           await log("info", "Submagic still transcribing — chaining to fresh invocation to continue polling");
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
