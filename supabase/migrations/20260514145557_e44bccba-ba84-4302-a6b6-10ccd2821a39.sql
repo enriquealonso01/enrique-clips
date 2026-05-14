@@ -1,0 +1,2 @@
+UPDATE public.runs SET status='running', current_step='publish', progress_pct=90, finished_at=NULL, error_message=NULL WHERE id='9b6590e4-f28c-4681-9e37-8863617420b6';
+DELETE FROM public.publish_jobs WHERE run_id='9b6590e4-f28c-4681-9e37-8863617420b6';
