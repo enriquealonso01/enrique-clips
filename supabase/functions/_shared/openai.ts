@@ -348,7 +348,8 @@ async function callTextOpenAI(opts: CallTextOptions, model: string): Promise<Cal
   }
   // GPT-5 family only accepts the default temperature. Omit custom values so
   // non-critical calls (captions/metadata/config repair) don't fail with 400s.
-  if (opts.temperature !== undefined && !(model.startsWith("gpt-5") && opts.temperature !== 1)) body.temperature = opts.temperature;
+  const isGpt5Family = model.startsWith("gpt-5") || model.startsWith("openai/gpt-5");
+  if (opts.temperature !== undefined && !(isGpt5Family && opts.temperature !== 1)) body.temperature = opts.temperature;
   if (opts.max_tokens) body.max_completion_tokens = opts.max_tokens;
 
   const result = await openaiRequest(model, body);
