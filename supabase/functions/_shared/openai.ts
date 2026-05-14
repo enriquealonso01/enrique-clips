@@ -346,7 +346,9 @@ async function callTextOpenAI(opts: CallTextOptions, model: string): Promise<Cal
     body.tools = opts.tools;
     if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   }
-  if (opts.temperature !== undefined) body.temperature = opts.temperature;
+  // GPT-5 family only accepts the default temperature. Omit custom values so
+  // non-critical calls (captions/metadata/config repair) don't fail with 400s.
+  if (opts.temperature !== undefined && !(model.startsWith("gpt-5") && opts.temperature !== 1)) body.temperature = opts.temperature;
   if (opts.max_tokens) body.max_completion_tokens = opts.max_tokens;
 
   const result = await openaiRequest(model, body);
