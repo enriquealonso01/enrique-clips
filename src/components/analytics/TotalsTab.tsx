@@ -49,6 +49,7 @@ function daysSince(dateStr: string | null): number | null {
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
 export function TotalsTab({ profiles, period: _period }: Props) {
   // links per platform in the Per-Profile Breakdown table.
   const socialAccountsQuery = useQuery({
