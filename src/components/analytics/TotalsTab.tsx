@@ -49,8 +49,7 @@ function daysSince(dateStr: string | null): number | null {
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-}
-  // One-shot fetch of social handles for all Upload-Post profiles. Used to build clickable
+export function TotalsTab({ profiles, period: _period }: Props) {
   // links per platform in the Per-Profile Breakdown table.
   const socialAccountsQuery = useQuery({
     queryKey: ["upload-post-social-accounts"],
