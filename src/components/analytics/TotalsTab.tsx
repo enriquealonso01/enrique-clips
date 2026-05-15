@@ -42,7 +42,14 @@ function getViewsTimeseries(platform: string, p: any): Array<{ date: string; val
   return ts.map((d: any) => ({ date: String(d.date), value: Number(d.value) || 0 }));
 }
 
-export function TotalsTab({ profiles, period: _period }: Props) {
+function daysSince(dateStr: string | null): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
   // One-shot fetch of social handles for all Upload-Post profiles. Used to build clickable
   // links per platform in the Per-Profile Breakdown table.
   const socialAccountsQuery = useQuery({
