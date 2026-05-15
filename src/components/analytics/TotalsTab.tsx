@@ -201,17 +201,20 @@ export function TotalsTab({ profiles, period: _period }: Props) {
 
   async function copyTable(format: "tsv" | "md") {
     const rows = aggregates.perProfile;
-    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments", "First Data"];
+    const header = ["Profile", "Platform", "Views", "Followers", "Likes", "Comments", "Days since first data"];
     const totalRow = ["TOTAL", "", aggregates.totalViews, aggregates.totalFollowers, aggregates.totalLikes, aggregates.totalComments, ""];
     const fmt = (n: number | null) => n === null ? "N/A" : String(n);
-    const fmtDate = (d: string | null) => d ?? "—";
+    const fmtDays = (d: string | null) => {
+      const days = daysSince(d);
+      return days === null ? "—" : `${days}d`;
+    };
     let text = "";
     if (format === "tsv") {
-      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDate(r.firstDataDate)].join("\t")), totalRow.join("\t")].join("\n");
+      text = [header.join("\t"), ...rows.map((r) => [r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDays(r.firstDataDate)].join("\t")), totalRow.join("\t")].join("\n");
     } else {
       const sep = "| " + header.map(() => "---").join(" | ") + " |";
       const line = (cells: any[]) => "| " + cells.join(" | ") + " |";
-      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDate(r.firstDataDate)])), line(totalRow)].join("\n");
+      text = [line(header), sep, ...rows.map((r) => line([r.display, r.platform, r.views, r.followers, fmt(r.likes), fmt(r.comments), fmtDays(r.firstDataDate)])), line(totalRow)].join("\n");
     }
     try {
       await navigator.clipboard.writeText(text);
@@ -332,7 +335,7 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                     <TableHead className="text-right">Followers</TableHead>
                     <TableHead className="text-right">Likes</TableHead>
                     <TableHead className="text-right">Comments</TableHead>
-                    <TableHead className="text-right">First Data</TableHead>
+                    <TableHead className="text-right">Days since first data</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -370,7 +373,12 @@ export function TotalsTab({ profiles, period: _period }: Props) {
                           <TableCell className="text-right font-mono">{r.followers.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.likes === null ? <span className="text-muted-foreground">N/A</span> : r.likes.toLocaleString()}</TableCell>
                           <TableCell className="text-right font-mono">{r.comments === null ? <span className="text-muted-foreground">N/A</span> : r.comments.toLocaleString()}</TableCell>
-                          <TableCell className="text-right font-mono text-xs">{r.firstDataDate ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                          <TableCell className="text-right font-mono text-xs" title={r.firstDataDate ?? undefined}>
+                            {(() => {
+                              const days = daysSince(r.firstDataDate);
+                              return days === null ? <span className="text-muted-foreground">—</span> : <span>{days}d</span>;
+                            })()}
+                          </TableCell>
                         </TableRow>
                         {isLastOfProfile && totals && (
                           <TableRow className="bg-muted/20 text-xs">
