@@ -643,8 +643,10 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
         imageSize: qualityToResolution(opts.quality),
       },
     },
-    service_tier: "flex",
   };
+  if (_imageServiceTier === "flex") {
+    body.service_tier = "flex";
+  }
 
   const attemptStart = Date.now();
   const tryRequest = async (apiKey?: string) => {
