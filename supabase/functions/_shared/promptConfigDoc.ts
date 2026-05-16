@@ -148,6 +148,27 @@ Controls how the AI planner breaks down your concept into scenes.
 | \`scene_progression_rules\`      | string[] | Rules for logical continuity between scenes.                                    | Add domain-specific rules: \`"Architectural elements must follow real structural engineering logic"\`.        |
 | \`start_state_rules\`            | string[] | Rules for K0 (starting-state keyframe). Injected into the prompt compiler to define what the very first image looks like. K0 anchors the entire keyframe chain (K0 → K1 → K2 → ...). | For construction: describe empty site. For rescue/restoration: describe neglected/damaged state. Must match series concept — do NOT use generic "untouched" language for non-construction projects. |
 
+#### CRITICAL: K0 must be visually distinct from K1
+
+K0 is the **starting-state** keyframe (the world *before* Scene 1 happens). K1 is the **end frame of Scene 1** (the world *after* Scene 1 happens). If \`start_state_rules\` describes the same state as Scene 1's \`end_keyframe_prompt\`, K0 and K1 will look identical and the opening of the video will feel frozen.
+
+Rules:
+- \`start_state_rules\` must describe the **pre-Scene-1 state**, NOT a duplicate of Scene 1.
+- For POV/walking openings: K0 should depict the very first instant (e.g. standing still at the doorway, hand on the doorknob, before walking begins) while K1 depicts the end of that walk.
+- For construction/build series: K0 is the empty/undeveloped site; K1 already shows the first stage of work.
+- For rescue/restoration: K0 is the fully neglected/damaged state; K1 already shows the first cleanup or intervention.
+- Never reuse Scene 1's location, framing, and subject state verbatim in \`start_state_rules\`.
+
+#### CRITICAL: Never hardcode the scene count in planner prompts
+
+The actual number of scenes comes from the project's \`scene_count\` column (configured in the UI) and is injected into the planner via the \`{scene_count}\` placeholder. Do NOT write fixed numbers like "exactly 6 scenes" or "MANDATORY 6-SCENE STRUCTURE" inside \`planner_system_prompt\` or anywhere else in the JSON — if you do, the planner will always produce that many scenes regardless of the project setting (e.g. a project set to 10 scenes will still output only 6).
+
+Rules:
+- Always reference scene count dynamically as \`{scene_count}\` inside \`planner_user_prompt_template\`.
+- In \`planner_system_prompt\`, describe the *structure* in proportional terms ("the opening scenes are POV", "the middle scenes are construction", "the final scene is the reveal") rather than fixed numeric anchors.
+- If you need a structural breakdown by phase, express it as ratios or roles (e.g. "first 1-2 scenes: POV hook; remaining scenes: construction timelapse; final scene: reveal") so it scales with \`{scene_count}\`.
+- Do NOT enumerate "Scene 1 ... Scene 2 ... Scene 6" with a fixed last number.
+
 ### 3.3 \`keyframes\` — Image Generation Control
 
 Controls how each scene's end-frame image is generated.
