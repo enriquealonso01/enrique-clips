@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { callStructured, callText, callImage, MODELS, Image503RetryableError } from "../_shared/openai.ts";
+import { callStructured, callText, callImage, MODELS, Image503RetryableError, setImageServiceTier } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1294,6 +1294,9 @@ serve(async (req) => {
     }
 
     const meta = (currentRun?.generated_metadata as any) || {};
+
+    // Scheduled runs use Flex-tier image pricing; manual runs use default.
+    setImageServiceTier(meta.use_flex_image_tier ? "flex" : null);
 
     // ── Resume logic for self-chaining ──
     if (resumeStage === "stage10_continue") {

@@ -1,7 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
-import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError } from "../_shared/openai.ts";
+import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError, setImageServiceTier } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -332,6 +332,10 @@ Deno.serve(async (req) => {
       .eq("id", runId)
       .single();
     if (runErr || !run) return json({ error: "Run not found" }, 404);
+
+    // Scheduled runs use Flex-tier image pricing; manual runs use default.
+    const _runMeta = (run.generated_metadata as any) || {};
+    setImageServiceTier(_runMeta.use_flex_image_tier ? "flex" : null);
 
     const { data: project, error: projErr } = await supabase
       .from("projects")

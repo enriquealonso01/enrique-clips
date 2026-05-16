@@ -56,6 +56,8 @@ Deno.serve(async (req) => {
         if (activeRuns && activeRuns.length > 0) { console.log(`Project ${project.id} already has an active run, skipping`); continue; }
 
         const initialMetadata: Record<string, unknown> = {};
+        // Mark scheduled runs so the pipeline opts into Flex-tier image pricing.
+        initialMetadata.use_flex_image_tier = true;
         if (schedule.scheduled_post_time) {
           let postTimeStr: string = schedule.scheduled_post_time;
           if (schedule.scheduled_post_time_end) {
@@ -145,6 +147,8 @@ Deno.serve(async (req) => {
           if (activeRuns && activeRuns.length > 0) { console.log(`Story project ${(project as any).id} already has an active run, skipping`); continue; }
 
           const initialMetadata: Record<string, unknown> = {};
+          // Mark scheduled story runs so the pipeline opts into Flex-tier image pricing.
+          initialMetadata.use_flex_image_tier = true;
           if (schedule.scheduled_post_time) {
             let postTimeStr: string = schedule.scheduled_post_time;
             if (schedule.scheduled_post_time_end) {
