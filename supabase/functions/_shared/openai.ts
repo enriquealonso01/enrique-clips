@@ -555,6 +555,19 @@ export interface CallImageOptions {
   referenceImage?: string;
 }
 
+// ── Image service tier (Flex vs Default) ─────────────────
+// Module-level toggle: pipelines set this at request start to opt into
+// Flex-tier pricing (slower but cheaper) for scheduled runs only.
+// Manual runs leave it null so default-tier pricing is used.
+let _imageServiceTier: string | null = null;
+export function setImageServiceTier(tier: "flex" | null) {
+  _imageServiceTier = tier;
+  console.log(`[AI] Image service tier set to: ${tier ?? "default"}`);
+}
+export function getImageServiceTier(): string | null {
+  return _imageServiceTier;
+}
+
 export interface CallImageResult {
   b64_json: string;
   revised_prompt?: string;
