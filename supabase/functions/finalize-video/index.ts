@@ -136,7 +136,7 @@ function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
 
 function escapeFFmpegDrawtextText(text: string): string {
   return text
-    .replace(/['\[\]]/g, "")        // strip chars that break FFmpeg filter parsing
+    .replace(/['"\[\]]/g, "")       // strip quotes/brackets that break FFmpeg filter parsing & shell args
     .replace(/,/g, "")              // commas break filter_complex separator
     .replace(/%/g, "pct")           // percent signs trigger FFmpeg text expansion
     .replace(/\\/g, "")             // backslashes cause escape confusion
