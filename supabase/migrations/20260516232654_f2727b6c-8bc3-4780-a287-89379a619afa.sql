@@ -1,0 +1,1 @@
+UPDATE public.runs SET status='running', current_step='stitch', progress_pct=55, error_message=NULL, finished_at=NULL WHERE id='a3bf13f1-1984-4a24-af2b-34360c1b83a5';
