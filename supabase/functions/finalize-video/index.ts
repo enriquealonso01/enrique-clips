@@ -1946,7 +1946,13 @@ Deno.serve(async (req) => {
             const tempCleanupPaths: string[] = [];
 
             if (RENDI_API_KEY) {
-              await log("info", `Rendi all-in-one: ${clipUrls.length} clips to concat, ${textOverlays.length} text overlay(s), ${imageOverlays.length} image overlay(s), music=${hasSelectedTrack ? "yes" : "no"}`);
+              // Pre-filter overlays that will actually render a drawtext call. We must
+              // gate the font input on this — otherwise Rendi rejects the job for
+              // having more input_files than referenced `-i` / placeholders.
+              const renderableTextOverlays = textOverlays.filter((tov: any) =>
+                tov && tov.start_pct !== tov.end_pct && ((tov.content_text || "").trim().length > 0)
+              );
+              await log("info", `Rendi all-in-one: ${clipUrls.length} clips to concat, ${textOverlays.length} text overlay(s) (${renderableTextOverlays.length} renderable), ${imageOverlays.length} image overlay(s), music=${hasSelectedTrack ? "yes" : "no"}`);
 
               // Build input_files map for Rendi — one input per clip
               const inputFiles: Record<string, string> = {};
@@ -1956,7 +1962,7 @@ Deno.serve(async (req) => {
 
               // Add Anton font for text overlays (condensed bold, social-media / game-style)
               const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FAnton-Regular.ttf";
-              if (textOverlays.length > 0) {
+              if (renderableTextOverlays.length > 0) {
                 inputFiles["in_font"] = FONT_URL;
               }
 
