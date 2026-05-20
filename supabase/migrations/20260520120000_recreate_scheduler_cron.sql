@@ -41,8 +41,11 @@ select cron.schedule(
 
 select cron.schedule(
   'story-vidu-offpeak-sweeper', '*/5 * * * *',
+  -- story-poll-vidu needs {"sweeper": true} to enter batch off-peak mode; an empty
+  -- body falls through to 400 "run_id required" (unlike poll-vidu-direct, which sweeps by default).
   $$ select net.http_post(
        url := 'https://hvdvrqmrphbsouomjeqz.supabase.co/functions/v1/story-poll-vidu',
+       body := jsonb_build_object('sweeper', true),
        headers := jsonb_build_object(
          'Content-Type', 'application/json',
          'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_invoke_key')
