@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical } from "lucide-react";
+import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
@@ -124,6 +124,57 @@ export default function ProjectsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
   });
 
+  const duplicateProject = useMutation({
+    mutationFn: async (projectId: string) => {
+      const { data: src, error: srcErr } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("id", projectId)
+        .single();
+      if (srcErr) throw srcErr;
+
+      const { id, created_at, updated_at, last_run_at, ...rest } = src;
+      const { data: newProject, error: insertErr } = await supabase
+        .from("projects")
+        .insert({ ...rest, title: `${src.title} (Copy)`, is_enabled: false })
+        .select()
+        .single();
+      if (insertErr) throw insertErr;
+
+      const { data: overlays } = await supabase
+        .from("overlays")
+        .select("*")
+        .eq("project_id", projectId);
+      if (overlays && overlays.length > 0) {
+        const newOverlays = overlays.map(({ id: _id, created_at: _ca, project_id: _pid, ...o }) => ({
+          ...o,
+          project_id: newProject.id,
+        }));
+        await supabase.from("overlays").insert(newOverlays);
+      }
+
+      const { data: tracks } = await supabase
+        .from("project_tracks")
+        .select("*")
+        .eq("project_id", projectId);
+      if (tracks && tracks.length > 0) {
+        const newTracks = tracks.map(({ id: _id, created_at: _ca, project_id: _pid, ...t }) => ({
+          ...t,
+          project_id: newProject.id,
+        }));
+        await supabase.from("project_tracks").insert(newTracks);
+      }
+
+      return newProject;
+    },
+    onSuccess: (newProject) => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast({ title: "Project duplicated", description: `"${newProject.title}" created` });
+      navigate(`/projects/${newProject.id}`);
+    },
+    onError: () => toast({ title: "Error", description: "Failed to duplicate project", variant: "destructive" }),
+  });
+
   const toggleArchived = useMutation({
     mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
       const { error } = await supabase
@@ -222,6 +273,16 @@ export default function ProjectsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              duplicateProject.mutate(project.id);
+                            }}
+                            disabled={duplicateProject.isPending}
+                          >
+                            <Copy className="mr-2 h-4 w-4" />
+                            Duplicate
+                          </DropdownMenuItem>
                           {project.is_archived ? (
                             <DropdownMenuItem
                               onClick={(e) => {
