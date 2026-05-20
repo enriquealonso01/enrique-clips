@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
+import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError, setImageServiceTier } from "../_shared/openai.ts";
 
@@ -259,9 +260,12 @@ Deno.serve(async (req) => {
           for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
           const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
           const fullPath = `${storagePath}.${ext}`;
-          const { error: uploadErr } = await supabase.storage
-            .from("project-assets")
-            .upload(fullPath, imageData, { contentType: mimeType, upsert: true });
+          let uploadErr: any = null;
+          try {
+            await r2Upload(fullPath, imageData, mimeType);
+          } catch (e) {
+            uploadErr = e;
+          }
           if (!uploadErr) {
             const { data: asset } = await supabase
               .from("assets")
@@ -296,9 +300,12 @@ Deno.serve(async (req) => {
             for (let j = 0; j < raw.length; j++) imageData[j] = raw.charCodeAt(j);
             const ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
             const fullPath = `${storagePath}.${ext}`;
-            const { error: uploadErr } = await supabase.storage
-              .from("project-assets")
-              .upload(fullPath, imageData, { contentType: mimeType, upsert: true });
+            let uploadErr: any = null;
+            try {
+              await r2Upload(fullPath, imageData, mimeType);
+            } catch (e) {
+              uploadErr = e;
+            }
             if (!uploadErr) {
               const { data: asset } = await supabase.from("assets").insert({
                 supabase_path: fullPath, type: assetType as any,
@@ -999,8 +1006,7 @@ Generate the timed text frames.`,
               .eq("id", k0AssetId)
               .single();
             if (k0Asset) {
-              const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(k0Asset.supabase_path);
-              prevKeyframeUrl = urlData.publicUrl;
+              prevKeyframeUrl = mediaPublicUrl(k0Asset.supabase_path);
             }
           } else {
             await log("warn", "K0 image extraction failed — continuing without visual anchor");

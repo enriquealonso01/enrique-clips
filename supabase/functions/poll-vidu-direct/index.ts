@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload } from "../_shared/r2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -143,28 +144,20 @@ Deno.serve(async (req) => {
               if (videoResp.ok) {
               const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
                 const storagePath = `${project.id}/clips/${runId}/vidu-${taskId}.mp4`;
-                const { error: uploadErr } = await supabase.storage
-                  .from("project-assets")
-                  .upload(storagePath, videoBytes, {
-                    contentType: "video/mp4",
-                    upsert: true,
-                  });
-                if (uploadErr) {
-                  await log(runId, "error", `Vidu Direct upload to storage FAILED for ${taskId}: ${uploadErr.message}. Will retry on next poll.`);
+                let videoPublicUrl = "";
+                try {
+                  ({ publicUrl: videoPublicUrl } = await r2Upload(storagePath, videoBytes, "video/mp4"));
+                } catch (e) {
+                  await log(runId, "error", `Vidu Direct R2 upload FAILED for ${taskId}: ${(e as Error).message}. Will retry on next poll.`);
                   allDone = false;
                   continue;
                 }
-                // Verify the file is actually retrievable before marking the asset complete.
+                // Verify the object is actually retrievable before marking the asset complete.
                 // Guards against silent storage failures (the underlying bug behind run ec2b7bc6 stitch failure).
                 let verified = false;
                 for (let v = 0; v < 3; v++) {
-                  const { data: head } = await supabase.storage
-                    .from("project-assets")
-                    .createSignedUrl(storagePath, 60);
-                  if (head?.signedUrl) {
-                    const headResp = await fetch(head.signedUrl, { method: "HEAD" });
-                    if (headResp.ok) { verified = true; break; }
-                  }
+                  const headResp = await fetch(videoPublicUrl, { method: "HEAD" });
+                  if (headResp.ok) { verified = true; break; }
                   await new Promise((r) => setTimeout(r, 1000));
                 }
                 if (!verified) {

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload } from "../_shared/r2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
             if (videoResp.ok) {
               const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
               const storagePath = `story-runs/${runId}/scene_${meta.scene_index}_raw.mp4`;
-              await sb.storage.from("project-assets").upload(storagePath, videoBytes, { contentType: "video/mp4", upsert: true });
+              await r2Upload(storagePath, videoBytes, "video/mp4");
               await sb.from("story_assets").update({
                 supabase_path: storagePath,
                 metadata: { ...meta, status: "completed", generator: "vidu_direct" },
