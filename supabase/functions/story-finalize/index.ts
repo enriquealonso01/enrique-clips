@@ -495,7 +495,7 @@ Deno.serve(async (req) => {
             const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
             const retryPromise = fetch(retryUrl, {
               method: "POST",
-              headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
               body: JSON.stringify({ run_id: runId, force_retry: true }),
             }).catch(() => {});
             // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
@@ -550,7 +550,7 @@ Deno.serve(async (req) => {
               const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
               const retryPromise = fetch(retryUrl, {
                 method: "POST",
-                headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+                headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
                 body: JSON.stringify({ run_id: runId, force_retry: true }),
               }).catch(() => {});
               // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
@@ -565,7 +565,7 @@ Deno.serve(async (req) => {
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
           const chainPromise1 = fetch(chainUrl, {
             method: "POST",
-            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify({ run_id: runId, force_retry: true }),
           }).catch(() => {});
           // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
@@ -623,7 +623,7 @@ Deno.serve(async (req) => {
           const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
           const chainPromise2 = fetch(chainUrl, {
             method: "POST",
-            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify({ run_id: runId, force_retry: true }),
           }).catch(() => {});
           // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
@@ -655,7 +655,7 @@ Deno.serve(async (req) => {
         const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
         const chainPromise3 = fetch(chainUrl, {
           method: "POST",
-          headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+          headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
           body: JSON.stringify({ run_id: runId, force_retry: true }),
         }).catch(() => {});
         // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
@@ -1223,7 +1223,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}` },
       await fetch(notifyUrl, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ run_id: runId, type: "completed" }),

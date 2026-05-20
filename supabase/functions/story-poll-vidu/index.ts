@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     for (const rid of offPeakRunIds) {
       fetch(fnUrl, {
         method: "POST",
-        headers: { Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
         body: JSON.stringify({ run_id: rid }),
       }).catch(e => console.error("Sweeper dispatch error:", e));
     }
@@ -133,7 +133,7 @@ Deno.serve(async (req) => {
         fetch(selfUrl, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ run_id: runId }),
@@ -156,7 +156,7 @@ Deno.serve(async (req) => {
     await fetch(fnUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ run_id: runId }),

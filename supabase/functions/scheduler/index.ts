@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
         ]);
 
         const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/run-pipeline`;
-        fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run.id }) }).catch((e) => console.error(`Pipeline invoke error:`, e));
+        fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: run.id }) }).catch((e) => console.error(`Pipeline invoke error:`, e));
         triggered.push(`${project.title} (schedule ${schedule.time_utc})`);
         console.log(`Triggered run ${run.id} for project "${project.title}" at ${schedule.time_utc}`);
       }
@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
           await supabase.from("schedules").update({ last_triggered_at: now.toISOString() }).eq("id", schedule.id);
 
           const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-pipeline`;
-          fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: storyRun.id }) }).catch((e) => console.error(`Story pipeline invoke error:`, e));
+          fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: storyRun.id }) }).catch((e) => console.error(`Story pipeline invoke error:`, e));
           storyTriggered.push(`${(project as any).title} (schedule ${schedule.time_utc})`);
           console.log(`Triggered story run ${storyRun.id} for "${(project as any).title}" at ${schedule.time_utc}`);
         }
@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
           await supabase.from("run_logs").insert({ run_id: stuck.id, level: "warn" as any, message: `Watchdog: run appeared stuck at step="${stuck.current_step}". Re-triggering pipeline.` });
 
           const fnUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/run-pipeline`;
-          fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: stuck.id }) }).catch((e) => console.error(`Watchdog error for ${stuck.id}:`, e));
+          fetch(fnUrl, { method: "POST", headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" }, body: JSON.stringify({ run_id: stuck.id }) }).catch((e) => console.error(`Watchdog error for ${stuck.id}:`, e));
           stuckResults.push(`${stuck.id} (step=${stuck.current_step})`);
         }
       }
@@ -282,7 +282,7 @@ Deno.serve(async (req) => {
           if (targetFn === "story-finalize") body.force_retry = true;
           fetch(fnUrl, {
             method: "POST",
-            headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }).catch((e) => console.error(`Story watchdog error for ${stuck.id}:`, e));
           storyStuckResults.push(`${stuck.id} (stage=${stuck.current_stage} → ${targetFn}:${resumeStage ?? "full"})`);

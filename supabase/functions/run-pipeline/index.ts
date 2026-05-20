@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
     fetch(fnUrl, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ run_id: runId }),
@@ -1860,7 +1860,7 @@ Generate the timed text frames.`,
                 await fetch(fnUrl, {
                   method: "POST",
                   headers: {
-                    "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                    "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
                     "Content-Type": "application/json",
                   },
                   body: JSON.stringify({ run_id: runId }),
@@ -1892,7 +1892,7 @@ Generate the timed text frames.`,
           const pollResp = await fetch(fnUrl, {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+              "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ run_id: runId }),
@@ -1920,7 +1920,7 @@ Generate the timed text frames.`,
       fetch(fnUrl, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ run_id: runId }),
@@ -1940,7 +1940,7 @@ Generate the timed text frames.`,
       await fetch(notifyUrl, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ run_id: runId, type: "error", error_message: err.message }),

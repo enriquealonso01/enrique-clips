@@ -56,7 +56,7 @@ async function selfChain(runId: string, stage: string) {
   await fetch(fnUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ run_id: runId, resume_stage: stage }),
@@ -68,7 +68,7 @@ async function chainFunction(fnName: string, body: any) {
   await fetch(fnUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+      Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
