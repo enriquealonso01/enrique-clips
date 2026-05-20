@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 import { MODELS, callText } from "../_shared/openai.ts";
 
@@ -1576,7 +1577,7 @@ Deno.serve(async (req) => {
         const { data: lastKf } = await supabase.from("assets").select("*").eq("run_id", runId).eq("type", "keyframe").order("created_at", { ascending: false }).limit(1).single();
         if (!lastKf) { await log("warn", "No keyframe found — skipping."); return json({ status: "skipped" }); }
 
-        const kfPublicUrl = supabase.storage.from("project-assets").getPublicUrl(lastKf.supabase_path).data.publicUrl;
+        const kfPublicUrl = mediaPublicUrl(lastKf.supabase_path);
         const { data: lastScene } = await supabase.from("scenes").select("scene_description, end_keyframe_prompt, scene_title").eq("run_id", runId).order("scene_index", { ascending: false }).limit(1).single();
         const imageDesc = [
           run.topic_summary ? `Topic: ${run.topic_summary}` : "",
@@ -1698,12 +1699,7 @@ Deno.serve(async (req) => {
           await log("warn", "No completed clips — skipping stitch.");
         } else {
           // Build clip URLs (no downloading into memory — Rendi handles everything)
-          const clipUrls: string[] = completedClips.map((clip: any) => {
-            const { data: urlData } = supabase.storage
-              .from("project-assets")
-              .getPublicUrl(clip.supabase_path);
-            return urlData.publicUrl;
-          });
+          const clipUrls: string[] = completedClips.map((clip: any) => mediaPublicUrl(clip.supabase_path));
           await log("info", `Prepared ${clipUrls.length} clip URLs for Rendi concat`);
 
           // Check for tracks via project_tracks junction table (multi-track, random per run)
@@ -1961,7 +1957,7 @@ Deno.serve(async (req) => {
               }
 
               // Add Anton font for text overlays (condensed bold, social-media / game-style)
-              const FONT_URL = "https://esdnydtcheytbrwonlqh.supabase.co/storage/v1/object/public/project-assets/fonts%2FAnton-Regular.ttf";
+              const FONT_URL = mediaPublicUrl("fonts/Anton-Regular.ttf");
               if (renderableTextOverlays.length > 0) {
                 inputFiles["in_font"] = FONT_URL;
               }
@@ -2522,11 +2518,13 @@ Deno.serve(async (req) => {
           let upErr: any = null;
           const UPLOAD_MAX_ATTEMPTS = 4;
           for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
-            const res = await supabase.storage
-              .from("project-assets")
-              .upload(finalPath, finalVideo, { contentType: "video/mp4", upsert: true });
-            upErr = res.error;
-            if (!upErr) break;
+            try {
+              await r2Upload(finalPath, finalVideo, "video/mp4");
+              upErr = null;
+              break;
+            } catch (e) {
+              upErr = e;
+            }
             const msg = (upErr as any)?.message || String(upErr);
             await log("warn", `Final video upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} failed: ${msg}`);
             if (attempt < UPLOAD_MAX_ATTEMPTS) {
@@ -2686,16 +2684,16 @@ Deno.serve(async (req) => {
           .limit(1);
 
         if (keyframeAssets && keyframeAssets.length > 0) {
-          const { data: srcUrl } = supabase.storage
-            .from("project-assets")
-            .getPublicUrl(keyframeAssets[0].supabase_path);
-          const imgResp = await fetch(srcUrl.publicUrl);
+          const imgResp = await fetch(mediaPublicUrl(keyframeAssets[0].supabase_path));
           const imgBytes = new Uint8Array(await imgResp.arrayBuffer());
 
           const thumbPath = `${project.id}/thumbnails/${runId}/thumbnail.jpg`;
-          const { error: thumbErr } = await supabase.storage
-            .from("project-assets")
-            .upload(thumbPath, imgBytes, { contentType: "image/jpeg", upsert: true });
+          let thumbErr: any = null;
+          try {
+            await r2Upload(thumbPath, imgBytes, "image/jpeg");
+          } catch (e) {
+            thumbErr = e;
+          }
 
           if (!thumbErr) {
             await supabase.from("assets").insert({
@@ -2957,8 +2955,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
         if (!videoPath) {
           await log("warn", "No video found — skipping publish.");
         } else {
-          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(videoPath);
-          const videoUrl = urlData.publicUrl;
+          const videoUrl = mediaPublicUrl(videoPath);
 
           const { data: freshRun } = await supabase
             .from("runs")
@@ -3134,7 +3131,7 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           .single();
 
         if (lastKf) {
-          const kfPublicUrl = supabase.storage.from("project-assets").getPublicUrl(lastKf.supabase_path).data.publicUrl;
+          const kfPublicUrl = mediaPublicUrl(lastKf.supabase_path);
 
           // Build image description from run context
           const { data: lastScene } = await supabase

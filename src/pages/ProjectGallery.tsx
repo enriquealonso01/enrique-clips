@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { mediaUrl } from "@/lib/media";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -80,11 +81,6 @@ export default function ProjectGallery() {
     enabled: !!projectId,
   });
 
-  const getPublicUrl = (path: string) => {
-    const { data } = supabase.storage.from("project-assets").getPublicUrl(path);
-    return data.publicUrl;
-  };
-
   const isVideo = (path: string) =>
     path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov");
 
@@ -144,7 +140,7 @@ export default function ProjectGallery() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
           {assets.map((asset) => {
-            const url = getPublicUrl(asset.supabase_path);
+            const url = mediaUrl(asset.supabase_path);
             const typeInfo = ASSET_TYPE_LABELS[asset.type] || { label: asset.type, icon: Image };
             const Icon = typeInfo.icon;
             const scene = (asset as any).scenes;

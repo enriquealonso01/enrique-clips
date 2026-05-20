@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload } from "../_shared/r2.ts";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
 
 const corsHeaders = {
@@ -108,10 +109,7 @@ Deno.serve(async (req) => {
             if (videoResp.ok) {
               const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
               const storagePath = `${project.id}/clips/${runId}/fal-${reqId}.mp4`;
-              await supabase.storage.from("project-assets").upload(storagePath, videoBytes, {
-                contentType: "video/mp4",
-                upsert: true,
-              });
+              await r2Upload(storagePath, videoBytes, "video/mp4");
               await supabase.from("assets").update({
                 supabase_path: storagePath,
                 metadata: { pika_request_id: reqId, batch_index: meta.batch_index, status: "completed" },
