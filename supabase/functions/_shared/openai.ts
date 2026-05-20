@@ -24,8 +24,11 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 const OPENAI_BASE = "https://api.openai.com/v1/chat/completions";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_TIMEOUT_MS = 180_000;
-const IMAGE_TIMEOUT_MS = 120_000;
-const IMAGE_RETRY_DELAY_MS = 30_000;
+// Recovery budget (IMAGE_TIMEOUT_MS + IMAGE_RETRY_DELAY_MS) must stay well under the
+// edge-function wall-clock limit (~150s). If it doesn't, a stalled image call gets the
+// whole function killed mid-retry — before it can re-chain — leaving the run orphaned.
+const IMAGE_TIMEOUT_MS = 90_000;
+const IMAGE_RETRY_DELAY_MS = 5_000;
 const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
 /** Returns true if the model should be routed through OpenAI API */
