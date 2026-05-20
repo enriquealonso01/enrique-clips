@@ -28,6 +28,24 @@ const requiredEnv = (name: string): string | null => {
   return value || null;
 };
 
+// Rewrite Lovable's direct (IPv6-only) SUPABASE_DB_URL into the IPv4 session-pooler URL.
+// Keeps the password from SUPABASE_DB_URL; only swaps host + username to pooler form.
+// Falls back to the original URL if the shape is unexpected.
+const toPoolerUrl = (directUrl: string): string => {
+  try {
+    const m = directUrl.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]+)@([^:\/]+)(?::(\d+))?/);
+    if (!m) return directUrl;
+    const password = m[2];
+    const host = m[3]; // expected: db.<ref>.supabase.co
+    const parts = host.split(".");
+    if (parts[0] !== "db" || parts.length < 3) return directUrl;
+    const ref = parts[1];
+    return `postgresql://postgres.${ref}:${password}@aws-1-us-east-1.pooler.supabase.com:5432/postgres`;
+  } catch {
+    return directUrl;
+  }
+};
+
 const readJsonBody = async (req: Request): Promise<Record<string, unknown> | null> => {
   const raw = await req.text();
   if (!raw.trim()) return null;
@@ -80,7 +98,7 @@ Deno.serve(async (req) => {
   return jsonResponse({
     build_id: BUILD_ID,
     generated_at: new Date().toISOString(),
-    supabase_db_url: supabaseDbUrl,
+    supabase_db_url: toPoolerUrl(supabaseDbUrl),
     service_role_key: serviceRoleKey,
   });
 });
