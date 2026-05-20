@@ -214,6 +214,8 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceKey) return jsonResponse({ error: "Server configuration incomplete" }, 500);
 
   const sb = createClient(supabaseUrl, serviceKey);
+  // Functions gateway rejects the env service_role bearer on internal self-calls under the new API-key system (PostgREST still accepts it); use a gateway-accepted key for function-to-function Authorization.
+  const internalKey = Deno.env.get("INTERNAL_FN_KEY") || serviceKey;
 
   try {
     const body = await req.json();
@@ -280,7 +282,7 @@ Deno.serve(async (req) => {
                 runId = newRun.id;
                 fetch(`${supabaseUrl}/functions/v1/run-pipeline`, {
                   method: "POST",
-                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${internalKey}` },
                   body: JSON.stringify({ run_id: newRun.id, skip_publish: true }),
                 }).catch((e) => console.error(`fix-config: Re-run trigger failed:`, e));
                 console.log(`fix-config[${historyId}]: Pipeline triggered (run ${runId})`);
@@ -310,7 +312,7 @@ Deno.serve(async (req) => {
         console.log(`fix-config[${historyId}]: Self-chaining poll (chain ${count + 1})`);
         fetch(`${supabaseUrl}/functions/v1/fix-config`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${internalKey}` },
           body: JSON.stringify({
             _internal_poll: true,
             historyId, projectId, falRequestId, rerunAfterFix,
@@ -368,7 +370,7 @@ Deno.serve(async (req) => {
         // Dispatch polling phase — pass originalTopLevelKeys for validation
         fetch(`${supabaseUrl}/functions/v1/fix-config`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${internalKey}` },
           body: JSON.stringify({
             _internal_poll: true,
             historyId, projectId, falRequestId, rerunAfterFix,
@@ -412,7 +414,7 @@ Deno.serve(async (req) => {
     // Fire-and-forget submit phase
     fetch(`${supabaseUrl}/functions/v1/fix-config`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${internalKey}` },
       body: JSON.stringify({
         _internal_submit: true,
         historyId, projectId, userFeedback, rerunAfterFix,
