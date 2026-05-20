@@ -23,7 +23,9 @@ export type ImageModel = typeof MODELS.IMAGE_DRAFT | typeof MODELS.IMAGE_FINAL;
 
 const OPENAI_BASE = "https://api.openai.com/v1/chat/completions";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_TIMEOUT_MS = 180_000;
+// Kept under the ~150s edge wall-clock limit so a slow text call aborts (and the
+// pipeline fails cleanly) instead of the whole function being killed mid-call.
+const DEFAULT_TIMEOUT_MS = 120_000;
 // Recovery budget (IMAGE_TIMEOUT_MS + IMAGE_RETRY_DELAY_MS) must stay well under the
 // edge-function wall-clock limit (~150s). If it doesn't, a stalled image call gets the
 // whole function killed mid-retry — before it can re-chain — leaving the run orphaned.
@@ -465,13 +467,13 @@ export async function callText(opts: CallTextOptions): Promise<CallTextResult> {
           });
           throw err;
         }
-        console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 60s before retry...`);
+        console.warn(`[AI] Text 503 on attempt ${attempt} (${endpoint}). Waiting 20s before retry...`);
         logUsage({
           endpoint: `${endpoint}_503_attempt_${attempt}`, model, success: false,
           latency_ms: Date.now() - start,
           error: `503 attempt ${attempt}`,
         });
-        await sleep(60_000);
+        await sleep(20_000);
         continue;
       }
 
