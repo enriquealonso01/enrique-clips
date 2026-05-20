@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { mediaUrl } from "@/lib/media";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StoryStatusBadge } from "@/components/story/StoryStatusBadge";
 import { StoryRunStages } from "@/components/story/StoryRunStages";
@@ -115,8 +116,7 @@ export default function StoryRunMonitor() {
   const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
 
   const getSignedUrl = async (path: string): Promise<string | null> => {
-    const { data } = await supabase.storage.from("project-assets").createSignedUrl(path, 600);
-    return data?.signedUrl || null;
+    return mediaUrl(path) || null;
   };
 
   const playAudio = async (assetPath: string, assetId: string) => {

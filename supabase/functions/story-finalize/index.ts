@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { callStructured, MODELS } from "../_shared/openai.ts";
 
 const corsHeaders = {
@@ -193,16 +194,14 @@ Deno.serve(async (req) => {
 
     let narrationUrl: string | null = null;
     if (narrationAsset) {
-      const { data: nUrl } = await sb.storage.from("project-assets").createSignedUrl(narrationAsset.supabase_path, 3600);
-      narrationUrl = nUrl?.signedUrl || null;
+      narrationUrl = mediaPublicUrl(narrationAsset.supabase_path);
     }
 
     // ── Get clip URLs (skip on resume — captioned video already built) ──
     const clipUrls: string[] = [];
     if (!resumeFromEndCard && !resumeFromAssembledStory) {
       for (const clip of completedClips) {
-        const { data: cUrl } = await sb.storage.from("project-assets").createSignedUrl(clip.supabase_path, 3600);
-        if (cUrl?.signedUrl) clipUrls.push(cUrl.signedUrl);
+        clipUrls.push(mediaPublicUrl(clip.supabase_path));
       }
       if (clipUrls.length === 0) {
         await failRun("No clip URLs available");
@@ -213,8 +212,7 @@ Deno.serve(async (req) => {
     // ── Get background music URL if uploaded ──
     let bgMusicUrl: string | null = null;
     if (project?.background_music_path) {
-      const { data: bgUrl } = await sb.storage.from("project-assets").createSignedUrl(project.background_music_path, 3600);
-      bgMusicUrl = bgUrl?.signedUrl || null;
+      bgMusicUrl = mediaPublicUrl(project.background_music_path);
     }
 
     // ── Get real image for end card ──
@@ -223,8 +221,7 @@ Deno.serve(async (req) => {
     // ── Get ending audio URL if uploaded ──
     let endingAudioUrl: string | null = null;
     if (project?.ending_audio_path) {
-      const { data: eUrl } = await sb.storage.from("project-assets").createSignedUrl(project.ending_audio_path, 3600);
-      endingAudioUrl = eUrl?.signedUrl || null;
+      endingAudioUrl = mediaPublicUrl(project.ending_audio_path);
     }
 
     // ══════════════════════════════════════════════════════
@@ -415,7 +412,7 @@ Deno.serve(async (req) => {
     const storyDl = await fetch(storyVideoUrl);
         storyBytes = new Uint8Array(await storyDl.arrayBuffer());
     storyPath = `story-runs/${runId}/story_video.mp4`;
-    await sb.storage.from("project-assets").upload(storyPath, storyBytes, { contentType: "video/mp4", upsert: true });
+    await r2Upload(storyPath, storyBytes, "video/mp4");
 
     await updateRun({ progress_pct: 80 });
     if (await checkCancelled()) return json({ status: "cancelled" });
@@ -440,9 +437,8 @@ Deno.serve(async (req) => {
           await log("info", `Reusing existing Submagic project: ${subProjectId}`);
         } else {
           // Get a public signed URL for the story video (Submagic needs a public URL)
-          const { data: storySignedUrl } = await sb.storage.from("project-assets").createSignedUrl(storyPath, 3600);
-          const videoUrl = storySignedUrl?.signedUrl;
-          if (!videoUrl) throw new Error("Could not get signed URL for story video");
+          const videoUrl = mediaPublicUrl(storyPath);
+          if (!videoUrl) throw new Error("Could not get URL for story video");
 
           const createResp = await fetch("https://api.submagic.co/v1/projects", {
             method: "POST",
@@ -640,10 +636,10 @@ Deno.serve(async (req) => {
         if (!captDl.ok) throw new Error(`Failed to download captioned video: ${captDl.status}`);
         const captBytes = new Uint8Array(await captDl.arrayBuffer());
         captionedPath = `story-runs/${runId}/captioned_story_video.mp4`;
-        await sb.storage.from("project-assets").upload(captionedPath, captBytes, { contentType: "video/mp4", upsert: true });
+        await r2Upload(captionedPath, captBytes, "video/mp4");
 
         // Store as asset
-        const { data: captSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 60 * 60 * 24 * 7);
+        const captSignedUrl = { signedUrl: mediaPublicUrl(captionedPath) };
         await sb.from("story_assets").insert({
           run_id: runId,
           type: "captioned_story_video",
@@ -685,7 +681,7 @@ Deno.serve(async (req) => {
 
     if (publishOnly) {
       await updateRun({ current_stage: "publishing", progress_pct: 94, error_message: null });
-      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath!, 60 * 60 * 24 * 7)).data || null;
+      finalSignedUrl = { signedUrl: mediaPublicUrl(finalPath!) };
     } else if (await checkCancelled()) return json({ status: "cancelled" });
     if (!publishOnly) {
       await updateRun({ current_stage: "end_card_rendering", progress_pct: 85 });
@@ -713,8 +709,7 @@ Deno.serve(async (req) => {
         await log("info", `No project emoji configured; falling back to ${DEFAULT_STORY_EMOJI_PATH}`);
       }
       if (emojiPath) {
-        const { data: eUrl } = await sb.storage.from("project-assets").createSignedUrl(emojiPath, 3600);
-        emojiUrl = eUrl?.signedUrl || null;
+        emojiUrl = mediaPublicUrl(emojiPath);
       }
       if (emojiUrl) {
         endCardInputs["in_emoji"] = emojiUrl;
@@ -807,7 +802,7 @@ Deno.serve(async (req) => {
       await log("info", "Stage 18: Concatenating captioned story video + end card");
 
       // Get captioned story video URL
-      const { data: captUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+      const captUrl = { signedUrl: mediaPublicUrl(captionedPath) };
 
       // Reliability-first final assembly: normalize both inputs, then hard-concatenate.
       // Captioned videos from Submagic can arrive with odd timebases, which makes xfade brittle.
@@ -873,7 +868,7 @@ Deno.serve(async (req) => {
     } else {
       await log("info", "No end card — using captioned video as final");
       // Re-read captioned video from storage
-      const { data: captSignedUrl } = await sb.storage.from("project-assets").createSignedUrl(captionedPath, 3600);
+      const captSignedUrl = { signedUrl: mediaPublicUrl(captionedPath) };
       if (captSignedUrl?.signedUrl) {
         const dl = await fetch(captSignedUrl.signedUrl);
         finalVideoBytes = new Uint8Array(await dl.arrayBuffer());
@@ -889,8 +884,8 @@ Deno.serve(async (req) => {
     if (!publishOnly) {
       const ts = Date.now();
       finalPath = `story-runs/${runId}/final_video_${ts}.mp4`;
-      await sb.storage.from("project-assets").upload(finalPath, finalVideoBytes!, { contentType: "video/mp4", upsert: true });
-      finalSignedUrl = (await sb.storage.from("project-assets").createSignedUrl(finalPath, 60 * 60 * 24 * 7)).data || null;
+      await r2Upload(finalPath, finalVideoBytes!, "video/mp4");
+      finalSignedUrl = { signedUrl: mediaPublicUrl(finalPath) };
 
       await sb.from("story_assets").insert({
         run_id: runId,
@@ -941,7 +936,7 @@ Deno.serve(async (req) => {
         }
         // Async URL upload: Upload-Post fetches the video itself. No Blob, no
         // client-side timeout, no chaining. Mirrors the Projects pipeline.
-        const { data: finalDownloadUrl } = await sb.storage.from("project-assets").createSignedUrl(finalPath, 6 * 60 * 60);
+        const finalDownloadUrl = { signedUrl: mediaPublicUrl(finalPath) };
         if (!finalDownloadUrl?.signedUrl) {
           throw new Error("Could not create signed URL for final story video");
         }

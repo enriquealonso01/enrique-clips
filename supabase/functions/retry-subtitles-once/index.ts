@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,9 +30,8 @@ Deno.serve(async (req) => {
 
     if (!finalAsset) throw new Error("No final_video asset found");
 
-    const { data: signedUrl } = await sb.storage.from("project-assets")
-      .createSignedUrl(finalAsset.supabase_path, 3600);
-    if (!signedUrl?.signedUrl) throw new Error("Could not sign final video URL");
+    const signedUrl = { signedUrl: mediaPublicUrl(finalAsset.supabase_path) };
+    if (!signedUrl?.signedUrl) throw new Error("Could not get final video URL");
 
     await log("Submitting final video to Submagic with userThemeId");
 
@@ -97,9 +97,9 @@ Deno.serve(async (req) => {
     const dl = await fetch(downloadUrl);
     const bytes = new Uint8Array(await dl.arrayBuffer());
     const path = `story-runs/${run_id}/captioned_retry_${Date.now()}.mp4`;
-    await sb.storage.from("project-assets").upload(path, bytes, { contentType: "video/mp4", upsert: true });
+    await r2Upload(path, bytes, "video/mp4");
 
-    const { data: signed } = await sb.storage.from("project-assets").createSignedUrl(path, 60 * 60 * 24 * 7);
+    const signed = { signedUrl: mediaPublicUrl(path) };
 
     await sb.from("story_assets").insert({
       run_id,

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { callStructured, callText, callImage, MODELS, Image503RetryableError, setImageServiceTier } from "../_shared/openai.ts";
+import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -93,17 +94,16 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
 }
 
 async function uploadAndStoreAsset(sb: SB, runId: string, path: string, data: Uint8Array, type: string, metadata: any = {}, sceneIndex?: number) {
-  await sb.storage.from("project-assets").upload(path, data, { contentType: type.includes("image") ? "image/png" : "video/mp4", upsert: true });
-  const { data: urlData } = await sb.storage.from("project-assets").createSignedUrl(path, 60 * 60 * 24 * 7);
+  const { publicUrl } = await r2Upload(path, data, type.includes("image") ? "image/png" : "video/mp4");
   await sb.from("story_assets").insert({
     run_id: runId,
     type: type as any,
     supabase_path: path,
-    signed_url_last: urlData?.signedUrl || null,
+    signed_url_last: publicUrl,
     metadata,
     scene_index: sceneIndex ?? null,
   });
-  return urlData?.signedUrl;
+  return publicUrl;
 }
 
 // Helper: get project config for a run
@@ -754,22 +754,13 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
     const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, prev, next);
     const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
     const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
-    const { error: upErr } = await sb.storage.from("project-assets").upload(uploadPath, audioBytes, {
-      contentType: "audio/mpeg",
-      upsert: true,
-    });
-    if (upErr) throw new Error(`Failed to upload narration segment ${i}: ${upErr.message}`);
+    await r2Upload(uploadPath, audioBytes, "audio/mpeg");
     perSegment.push({ audioBytes, alignment, duration, uploadPath });
     await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB${isLast ? "" : " (period stripped)"}`);
   }
 
   // Build signed URLs for each segment for Rendi
-  const segUrls: string[] = [];
-  for (const seg of perSegment) {
-    const { data } = await sb.storage.from("project-assets").createSignedUrl(seg.uploadPath, 60 * 60);
-    if (!data?.signedUrl) throw new Error(`Failed to sign URL for ${seg.uploadPath}`);
-    segUrls.push(data.signedUrl);
-  }
+  const segUrls: string[] = perSegment.map((seg) => mediaPublicUrl(seg.uploadPath));
 
   // Build Rendi FFmpeg command:
   // LAYER A: aggressive silenceremove on each segment (strip leading silence completely
@@ -1036,8 +1027,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
   await log(sb, runId, "info", `Stage 10: Generating ${remaining.length} scene images (${doneIndices.size} already done)`);
 
   // Get cast reference image for consistency
-  const { data: castUrl } = await sb.storage.from("project-assets").createSignedUrl(castImagePath, 3600);
-  const castRef = castUrl?.signedUrl ? await fetchImageAsBase64(castUrl.signedUrl) : undefined;
+  const castRef = await fetchImageAsBase64(mediaPublicUrl(castImagePath));
 
   const imageUrls: string[] = [];
 
@@ -1191,9 +1181,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
     const isLastScene = i === scenes.length - 1;
     const requestDuration = Math.ceil(targetDuration) + (isLastScene ? 1 : 0);
 
-    const { data: signedData } = await sb.storage.from("project-assets")
-      .createSignedUrl(asset.supabase_path, 3600);
-    const imageUrl = signedData?.signedUrl;
+    const imageUrl = mediaPublicUrl(asset.supabase_path);
     if (!imageUrl) {
       const message = `No URL for scene image ${i + 1}`;
       await failRun(sb, runId, message);
