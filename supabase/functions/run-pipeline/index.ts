@@ -1021,8 +1021,7 @@ Generate the timed text frames.`,
         }
       } else {
         // K0 already exists — use it as starting chain reference
-        const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(existingK0[0].supabase_path);
-        prevKeyframeUrl = urlData.publicUrl;
+        prevKeyframeUrl = mediaPublicUrl(existingK0[0].supabase_path);
         await log("info", "K0 already exists, using as chain anchor.");
       }
 
@@ -1039,8 +1038,7 @@ Generate the timed text frames.`,
             .eq("type", "keyframe")
             .limit(1);
           if (prevKf && prevKf.length > 0) {
-            const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(prevKf[0].supabase_path);
-            prevKeyframeUrl = urlData.publicUrl;
+            prevKeyframeUrl = mediaPublicUrl(prevKf[0].supabase_path);
           }
         }
       }
@@ -1140,8 +1138,7 @@ Generate the timed text frames.`,
               .eq("id", assetId)
               .single();
             if (newAsset) {
-              const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(newAsset.supabase_path);
-              prevKeyframeUrl = urlData.publicUrl;
+              prevKeyframeUrl = mediaPublicUrl(newAsset.supabase_path);
             }
           } else {
             await log("warn", `No image data for keyframe K${scene.scene_index} after retry`);
