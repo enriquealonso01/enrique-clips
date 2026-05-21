@@ -109,11 +109,12 @@ function getTargetVideoDimensions(aspectRatio: string, resolution: string): { wi
 
 // Wrap text to fit within ~70% of a 9:16 frame width
 // Estimates chars per line based on font size vs frame width (assumes 540p baseline width = 304px for 9:16)
-function wrapOverlayText(text: string, fontSize: number, scale = 1): string {
+function wrapOverlayText(text: string, fontSize: number, scale = 1, charFactor = 0.52): string {
   const frameWidth = Math.round(304 * scale); // 9:16 at 540p height
   const maxWidth = frameWidth * 0.85; // allow text to use up to 85% of frame width
-  // Approximate: each uppercase char in Anton ≈ 0.52 * fontSize width (Anton is condensed)
-  const charWidth = fontSize * 0.52;
+  // Approximate per-char width as charFactor * fontSize. Anton (condensed) ≈ 0.52; wider
+  // display faces (e.g. Montserrat Black, all-caps) need ~0.62 or lines overflow the column.
+  const charWidth = fontSize * charFactor;
   const maxChars = Math.max(12, Math.floor(maxWidth / charWidth));
   
   const words = text.split(/\s+/);
@@ -1956,10 +1957,16 @@ Deno.serve(async (req) => {
                 inputFiles[`in_clip${String(ci).padStart(3, "0")}`] = clipUrls[ci];
               }
 
-              // Add Anton font for text overlays (condensed bold, social-media / game-style)
-              const FONT_URL = mediaPublicUrl("fonts/Anton-Regular.ttf");
+              // Overlay font (single font per job): from the first text overlay's
+              // style_config.font_family, else Anton. The .ttf must exist in Supabase
+              // Storage at project-assets/fonts/<file>.
+              const overlayFontFile =
+                renderableTextOverlays.find((o: any) => o.style_config?.font_family)?.style_config?.font_family
+                || "Anton-Regular.ttf";
+              const FONT_URL = mediaPublicUrl(`fonts/${overlayFontFile}`);
               if (renderableTextOverlays.length > 0) {
                 inputFiles["in_font"] = FONT_URL;
+                await log("info", `Overlay font: ${overlayFontFile}`);
               }
 
               let imgInputIdx = 0;
@@ -2171,12 +2178,25 @@ Deno.serve(async (req) => {
                 // Skip disabled overlays (start_pct === end_pct means zero duration)
                 if (textOv.start_pct === textOv.end_pct) continue;
 
-                const rawText = (textOv.content_text || "");
+                // Per-overlay visual style overrides (null = current default behavior).
+                const sc = (textOv.style_config && typeof textOv.style_config === "object") ? textOv.style_config : {};
+                let rawText = (textOv.content_text || "");
                 if (!rawText.trim()) continue; // skip empty text overlays
+                if (sc.uppercase) rawText = rawText.toUpperCase();
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
-                const wrappedText = wrapOverlayText(rawText, fontSize, resScale);
+                // Wider faces (Montserrat etc.) need a larger per-char estimate than Anton (0.52).
+                const wrapCharFactor = (sc.font_family && !/anton/i.test(sc.font_family)) ? 0.62 : 0.52;
+                const wrappedText = wrapOverlayText(rawText, fontSize, resScale, wrapCharFactor);
                 const lines = wrappedText.split("\n");
                 const fontColor = textOv.font_color || "#FFFFFF";
+                // Accent (keyword) color: when set, colors the lower half of the wrapped lines.
+                const accentColor = (typeof sc.accent_color === "string" && sc.accent_color) ? sc.accent_color : null;
+                const accentFromLine = accentColor ? Math.floor(lines.length / 2) : lines.length;
+                // Optional subtle drop shadow.
+                const shadowOffset = Math.max(2, Math.round(fontSize * 0.08));
+                const shadowStr = sc.shadow
+                  ? `:shadowcolor=black@0.55:shadowx=${shadowOffset}:shadowy=${shadowOffset}`
+                  : "";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
 
@@ -2194,7 +2214,9 @@ Deno.serve(async (req) => {
 
                 const scaledBoxBorder = Math.round(10 * resScale);
                 const fontFileRef = `fontfile={{in_font}}`;
-                const borderW = Math.max(2, Math.round(4.5 * resScale));
+                const borderW = (typeof sc.stroke_width === "number")
+                  ? Math.max(1, Math.round(sc.stroke_width * resScale))
+                  : Math.max(2, Math.round(4.5 * resScale));
                 const lineHeight = Math.round(fontSize * 1.15); // font size + 15% spacing
 
                 // Calculate total block height for vertical positioning
@@ -2212,8 +2234,13 @@ Deno.serve(async (req) => {
 
                 // Base Y for the first line
                 let baseYExpr: string;
-                if (pos.startsWith("top")) baseYExpr = `${topPad}`;
-                else if (pos === "center") baseYExpr = `(h-${totalBlockHeight})/2`;
+                if (pos.startsWith("top")) {
+                  // style_config.top_pct (% of frame height) overrides the default top padding.
+                  const topY = (typeof sc.top_pct === "number")
+                    ? Math.round((sc.top_pct / 100) * targetVideoHeight)
+                    : topPad;
+                  baseYExpr = `${topY}`;
+                } else if (pos === "center") baseYExpr = `(h-${totalBlockHeight})/2`;
                 else baseYExpr = `h-${totalBlockHeight}-${pad}`; // bottom
 
                 for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
@@ -2223,9 +2250,11 @@ Deno.serve(async (req) => {
                     ? `${baseYExpr}+${yOffset}`
                     : `${baseYExpr}+${yOffset}`;
                   const outLabel = `v${filterIdx}`;
+                  // Lower half of the wrapped lines uses the accent (keyword) color when set.
+                  const lineColor = (accentColor && lineIdx >= accentFromLine) ? accentColor : fontColor;
 
                   filterParts.push(
-                    `[${currentVideoLabel}]drawtext=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':text=${lineText}:${fontFileRef}:fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderW}:bordercolor=black:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}[${outLabel}]`
+                    `[${currentVideoLabel}]drawtext=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':text=${lineText}:${fontFileRef}:fontsize=${fontSize}:fontcolor=${lineColor}:borderw=${borderW}:bordercolor=black${shadowStr}:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}[${outLabel}]`
                   );
                   currentVideoLabel = outLabel;
                   filterIdx++;

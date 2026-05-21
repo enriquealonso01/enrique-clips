@@ -1,0 +1,11 @@
+-- Per-overlay visual style overrides for the drawtext renderer.
+-- Nullable JSONB; null = current default behavior (Anton, no uppercase, single color,
+-- no shadow, top padding = 160*resScale). Recognized keys:
+--   font_family   text   e.g. "Montserrat-Black.ttf" (must exist in Storage project-assets/fonts/)
+--   uppercase     bool   uppercase the overlay text before wrapping
+--   accent_color  text   hex; colors the lower half of wrapped lines (keyword highlight)
+--   shadow        bool   add a subtle drop shadow
+--   top_pct       number for top_* positions, place first line at this % of frame height
+--   stroke_width  number outline width in 540p-baseline px (scaled by resScale)
+-- Populated by run-pipeline from prompt_config overlays[].style_config; read by finalize-video.
+alter table public.overlays add column if not exists style_config jsonb;

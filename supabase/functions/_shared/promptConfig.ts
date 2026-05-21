@@ -56,6 +56,14 @@ export interface PromptConfigOverlayItem {
   z_index?: number;
   sort_order?: number;
   voiceover_enabled?: boolean;
+  style_config?: {
+    font_family?: string;
+    uppercase?: boolean;
+    accent_color?: string;
+    shadow?: boolean;
+    top_pct?: number;
+    stroke_width?: number;
+  };
 }
 
 export interface PromptConfigOverlays {

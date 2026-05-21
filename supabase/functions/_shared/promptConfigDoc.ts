@@ -229,6 +229,19 @@ This is where you define specific overlays with complete parameter control. **Th
 }
 \`\`\`
 
+#### \`style_config\` — Per-Overlay Visual Style (optional)
+
+Optional object on a text overlay item; omit/null = current default (Anton, single color, no shadow, top padding ≈16.7%).
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| \`font_family\` | string | Font \`.ttf\` in Storage \`project-assets/fonts/\` (e.g. \`Montserrat-Black.ttf\`). One font per render job. |
+| \`uppercase\` | bool | Uppercase the text before wrapping. |
+| \`accent_color\` | hex | Colors the lower half of the wrapped lines (keyword highlight). |
+| \`shadow\` | bool | Subtle drop shadow. |
+| \`top_pct\` | number | For \`top_*\` positions, places the first line at this % of frame height. |
+| \`stroke_width\` | number | Outline width in 540p-baseline px (auto-scaled). |
+
 #### Position Options
 
 | Value           | Location             |

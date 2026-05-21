@@ -708,6 +708,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
               z_index: item.z_index ?? 1,
               sort_order: nextSortOrder++,
               voiceover_enabled: item.voiceover_enabled ?? false,
+              style_config: item.style_config ?? null,
             });
           }
           await log("info", `${jsonOverlays.length} JSON overlay(s) synced into DB`);

@@ -115,12 +115,20 @@
         "z_index": 2,
         "bg_color": "rgba(0,0,0,0)",
         "position": "top_center",
-        "font_size": 36,
+        "font_size": 32,
         "start_pct": 0,
         "font_color": "#FFFFFF",
         "sort_order": 0,
         "content_mode": "ai_generated",
         "overlay_type": "text",
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE approved opening hook from the list below and return it verbatim. Do not rank the hooks. Do not optimize toward one favorite. Do not rewrite the hook. Do not generate a new hook. Do not combine hooks. Do not paraphrase. Do not add emojis. Do not add hashtags. Do not add punctuation unless it already exists in the hook. Return the selected hook exactly as written. Approved hooks: POV: How \"hiding from your wife\" really looks | Married men will understand this in 10 seconds | My wife thinks this is just a closet | I needed one room in this house that was mine | Every husband has thought about doing this | My wife has no idea what's behind this door | Sometimes a man just needs his own space | I finally built the room I always wanted | This is how dads disappear after work | I told her I was cleaning the basement | My wife said I could have \"one small space\" | Every dad needs a backup plan | My wife calls it storage. I call it freedom | This is what \"I'll be right back\" means | This is where dad mode turns off | I built the room every husband wants"
       }
     ],
