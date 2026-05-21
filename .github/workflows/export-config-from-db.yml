@@ -1,0 +1,54 @@
+name: Capture new project configs from DB
+
+# Projects are created/duplicated in the app (DB-first), so a brand-new project
+# has no file in the repo until we export it. This job runs config-export in
+# --new-only mode (writes files only for projects not yet in the manifest, never
+# overwrites existing repo-owned files) and commits any new ones back to main.
+#
+# Direction: DB -> repo (the opposite of sync-config-to-db.yml, which is repo -> DB).
+# Requires repo secret: SUPABASE_SERVICE_ROLE_KEY.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch: {} # manual run from the Actions tab
+
+concurrency:
+  group: export-config-from-db
+  cancel-in-progress: false
+
+permissions:
+  contents: write # needed to push the capture commit
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22+ for native WebSocket (supabase-js realtime client needs it).
+          node-version: 22
+
+      - name: Install export-script dependency
+        run: npm install --no-save "@supabase/supabase-js@^2.98.0"
+
+      - name: Capture new projects from DB
+        env:
+          SUPABASE_URL: https://hvdvrqmrphbsouomjeqz.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/config-export.mjs --new-only
+
+      - name: Commit new configs if any
+        run: |
+          if [ -n "$(git status --porcelain config)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add config
+            git commit -m "chore: capture new project configs from DB"
+            git push
+            echo "Committed new project configs."
+          else
+            echo "No new projects to capture."
+          fi
