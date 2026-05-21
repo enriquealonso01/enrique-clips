@@ -1238,8 +1238,7 @@ Generate the timed text frames.`,
           .eq("type", "keyframe")
           .limit(1);
         if (kfAssets && kfAssets.length > 0) {
-          const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(kfAssets[0].supabase_path);
-          sceneKeyframes[scene.scene_index] = urlData.publicUrl;
+          sceneKeyframes[scene.scene_index] = mediaPublicUrl(kfAssets[0].supabase_path);
         }
       }
 
@@ -1252,8 +1251,7 @@ Generate the timed text frames.`,
         .eq("type", "initial_image")
         .limit(1);
       if (initAssets && initAssets.length > 0) {
-        const { data: urlData } = supabase.storage.from("project-assets").getPublicUrl(initAssets[0].supabase_path);
-        runInitialImageUrl = urlData.publicUrl;
+        runInitialImageUrl = mediaPublicUrl(initAssets[0].supabase_path);
       }
 
       // ══════════════════════════════════════════════════════
