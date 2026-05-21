@@ -132,7 +132,14 @@
         "sort_order": 0,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE hook from this list and output it verbatim:\nThe client said \"it just needs a light cleaning\"...\nThe HOA was about to fine them for this.\nYou will NOT recognize this backyard at the end.\nI quoted this job sight unseen. Big mistake.\nThey wanted this ready for a party next week... 😳\nThis is what 2 years of neglect looks like.\nThere's something moving in the water...\nThe final reveal is one of my best ever.\nThe neighbors have been complaining for months.\nIs this even a pool anymore?\nMy client swore this happened overnight.\nWe had to sign a waiver just to start this job.\nWait until you see the night shot...\nI've seen bad pools, but this is next level.\n\nOutput only the chosen hook. Do not paraphrase. Do not add hashtags. Do not add emojis unless the selected line already contains one.",
         "voiceover_enabled": true
       },
@@ -148,7 +155,14 @@
         "sort_order": 1,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE (not the best, not the worse, just random) retention overlay for the 20 percent point from this list and output it verbatim:\nIt gets worse…\nThis is just the beginning…\nYou haven't seen the worst part yet…\nThen I noticed something strange…\nThis is where things changed…\nI didn't expect this at all…\nWait… look at this…\nThis part shocked me…\nAnd then it got even worse…\nDon't skip this part…\n\nOutput only the chosen line. Do not paraphrase.",
         "voiceover_enabled": true
       },
@@ -164,7 +178,14 @@
         "sort_order": 2,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE (not the best, not the worse, just random) retention overlay for the 40 percent point from this list and output it verbatim:\nStill not clean…\nThis took way longer than expected…\nWe were only halfway done…\nThis is where it got difficult…\nThought we were done… we weren't\nThen we found another problem…\nThis slowed everything down…\nNot even close yet…\nHere's where it got messy…\nWe almost gave up here…\n\nOutput only the chosen line. Do not paraphrase.",
         "voiceover_enabled": true
       },
@@ -180,7 +201,14 @@
         "sort_order": 3,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE (not the best, not the worse, just random) retention overlay for the 60 percent point from this list and output it verbatim:\nNow it starts to change…\nThis is where it finally comes together…\nWait till you see this part…\nHuge difference already…\nThis made everything worth it…\nNow things get satisfying…\nYou can finally see it…\nAlmost looks new… almost…\nBig reveal coming soon…\nDon't miss what happens next…\n\nOutput only the chosen line. Do not paraphrase.",
         "voiceover_enabled": true
       },
@@ -196,7 +224,14 @@
         "sort_order": 4,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE (not the best, not the worse, just random) retention overlay for the 80 percent point from this list and output it verbatim:\nFinal result in a few seconds…\nWait for the before & after…\nThis is the best part…\nDon't skip now…\nYou've got to see this…\nAlmost done… trust me\nWorth the wait…\nHere comes the reveal…\nThis is why we did it…\nReady for this?\n\nOutput only the chosen line. Do not paraphrase.",
         "voiceover_enabled": true
       }

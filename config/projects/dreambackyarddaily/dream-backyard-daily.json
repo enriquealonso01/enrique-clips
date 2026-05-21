@@ -129,7 +129,14 @@
         "sort_order": 0,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "You MUST read the scene plan provided as context to find the SELECTED DAY NUMBER. The planner states it clearly at the top of the plan (e.g. 'SELECTED DAY NUMBER: Day 14'). Extract that exact number. Do NOT default to Day 1. Do NOT guess. Do NOT ignore the scene plan context.\n\nOnce you have the correct Day number, output ONLY this exact text in ALL CAPS with no emojis, no hashtags, no punctuation, no quotes, and no extra words:\nDAY {NUMBER} OF POSTING AI UNTIL SOMEONE ACTUALLY DOES IT\n\nReplace {NUMBER} with the actual Day number from the scene plan. For example, if the plan says Day 14, output: DAY 14 OF POSTING AI UNTIL SOMEONE ACTUALLY DOES IT"
       },
       {
@@ -144,7 +151,14 @@
         "sort_order": 1,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE approved 20 percent overlay from the list below and return it verbatim in ALL CAPS only. Do not rewrite it. Do not add punctuation unless already present. Do not add emojis or hashtags. It must fit the selected luxury backyard concept and imply setup, layout, or first transformation decision. Approved overlays: WOULD YOU START WITH THIS LAYOUT | THIS IS WHERE THE IDEA STARTS | IMAGINE MARKING THIS OUT FIRST | THE FIRST LINE DECIDES EVERYTHING | WOULD YOU BUILD IT HERE | THIS EMPTY YARD HAS POTENTIAL | THIS IS WHERE THE TRANSFORMATION BEGINS | THE PLAN HAS TO START SOMEWHERE | WOULD YOU TRUST THIS DESIGN | THIS PART LOOKS TOO SIMPLE AT FIRST | EVERY DREAM YARD STARTS WITH A LINE | THIS IS THE BORING PART THAT MATTERS | IF THIS LAYOUT IS OFF IT ALL FAILS | THE WHOLE BUILD STARTS RIGHT HERE | SOMEONE COULD ACTUALLY TRY THIS"
       },
       {
@@ -159,7 +173,14 @@
         "sort_order": 2,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE approved 40 percent overlay from the list below and return it verbatim in ALL CAPS only. Do not rewrite it. Do not add punctuation unless already present. Do not add emojis or hashtags. It must imply visible effort, structure, and the backyard starting to become believable. Approved overlays: THIS IS WHERE IT STARTS LOOKING REAL | THE BASE HAS TO BE PERFECT | WOULD YOU KEEP GOING AFTER THIS | THIS PART WOULD TAKE ALL WEEKEND | NOW THE SHAPE MAKES SENSE | THE HARD PART IS MAKING IT LEVEL | THIS IS WHERE MOST BUILDS GO WRONG | EVERY INCH HAS TO LINE UP | THE YARD IS FINALLY CHANGING | THIS IS MORE WORK THAN IT LOOKS | IF THIS HOLDS THE REST WORKS | THE STRUCTURE IS STARTING TO LOCK IN | THIS IS WHERE THE DREAM GETS EXPENSIVE | WOULD YOU ATTEMPT THIS YOURSELF | THE EMPTY YARD IS DISAPPEARING"
       },
       {
@@ -174,7 +195,14 @@
         "sort_order": 3,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE approved 60 percent overlay from the list below and return it verbatim in ALL CAPS only. Do not rewrite it. Do not add punctuation unless already present. Do not add emojis or hashtags. It must imply the luxury feature, premium finish, water/fire/light/system install, or the moment the concept becomes desirable. Approved overlays: NOW IT DOESN'T LOOK LIKE A NORMAL YARD | THIS IS WHERE IT TURNS LUXURY | THE FEATURE CHANGES EVERYTHING | IMAGINE THIS WITH THE LIGHTS ON | THIS IS THE PART THAT SELLS IT | WOULD THIS ADD VALUE TO THE HOUSE | THE DETAILS MAKE IT FEEL REAL | THIS IS WHERE THE DESIGN WAKES UP | NOW SOMEONE HAS TO BUILD THIS | THE BACKYARD IS BECOMING A DESTINATION | THIS WOULD BE INSANE AT NIGHT | THE FINISHES CHANGE THE WHOLE MOOD | THIS IS THE MOMENT IT STOPS BEING AN IDEA | WOULD YOU PAY FOR THIS | THE LUXURY PART IS FINALLY SHOWING"
       },
       {
@@ -189,7 +217,14 @@
         "sort_order": 4,
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "style_config": { "font_family": "Montserrat-Black.ttf" },
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
         "content_prompt": "Choose RANDOMLY ONE approved 80 percent overlay from the list below and return it verbatim in ALL CAPS only. Do not rewrite it. Do not add punctuation unless already present. Do not add emojis or hashtags. It must imply final reveal, viewer imagination, comment bait, or the challenge for someone to make it real. Approved overlays: WOULD YOU WANT THIS IN YOUR YARD | SOMEONE NEEDS TO BUILD THIS | IMAGINE WALKING OUT TO THIS | THIS STARTED AS AN EMPTY YARD | WOULD THIS BE WORTH IT | THE FINAL RESULT IS CRAZY | WHAT WOULD YOU CHANGE | WOULD YOU ACTUALLY USE THIS | THIS NEEDS TO EXIST FOR REAL | FROM NOTHING TO THIS | WOULD YOU BUILD THIS OR SKIP IT | THIS IS THE REVEAL THAT MAKES IT WORTH IT | TELL ME THIS SHOULDN'T BE REAL | WHO IS MAKING THIS FIRST | THE INTERNET NEEDS TO BUILD ONE"
       }
     ],
