@@ -7,26 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, RotateCcw, Wand2, Bot, Loader2, History, Clock, CheckCircle2, XCircle, Send } from "lucide-react";
+import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, Loader2, Send } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
-import { MemorySourceProjects } from "@/components/MemorySourceProjects";
 import { ScheduleManager } from "@/components/ScheduleManager";
 import { toast } from "@/hooks/use-toast";
 import { useState, useEffect, useMemo } from "react";
 import type { Tables } from "@/integrations/supabase/types";
-import {
-  getDefaultPromptConfig,
-  validatePromptConfig,
-  legacyFieldsToPromptConfig,
-  buildResolvedPromptConfig,
-  mergePromptConfig,
-} from "@/lib/promptConfig";
+import { buildResolvedPromptConfig } from "@/lib/promptConfig";
 
 type Project = Tables<"projects">;
 
@@ -44,15 +36,10 @@ export default function ProjectEditor() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<Partial<Project & { prompt_config_json?: any }>>({});
   const [customKlingModel, setCustomKlingModel] = useState(false);
+  // prompt_config_json is read-only here — it is version-controlled in the repo
+  // (config/projects/...) and synced to the DB via scripts/config-push.mjs.
   const [promptConfigText, setPromptConfigText] = useState("");
-  const [promptConfigErrors, setPromptConfigErrors] = useState<string[]>([]);
   const [resolvedPreviewOpen, setResolvedPreviewOpen] = useState(false);
-  const [aiFeedback, setAiFeedback] = useState("");
-  const [aiFixLoading, setAiFixLoading] = useState(false);
-  const [aiRerunAfterFix, setAiRerunAfterFix] = useState(false);
-  const [aiFixOpen, setAiFixOpen] = useState(false);
-  const [aiFixLogs, setAiFixLogs] = useState<string[]>([]);
-  const [showFixHistory, setShowFixHistory] = useState(false);
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
@@ -145,23 +132,6 @@ export default function ProjectEditor() {
     }
   };
 
-  // Fetch AI fix history
-  const { data: fixHistory, refetch: refetchFixHistory } = useQuery({
-    queryKey: ["ai-fix-history", projectId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("ai_fix_history" as any)
-        .select("*")
-        .eq("project_id", projectId!)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (error) throw error;
-      return data as any[];
-    },
-    enabled: !!projectId && showFixHistory,
-    refetchInterval: showFixHistory ? 5000 : false,
-  });
-
   const KLING_PRESETS = ["kling-v1", "kling-v1-5", "kling-v1-6", "kling-v2-master", "kling-v2-1", "kling-v2-1-master", "kling-v2-5-turbo", "kling-v2-6"];
 
   useEffect(() => {
@@ -170,10 +140,9 @@ export default function ProjectEditor() {
       if (project.kling_model_name && !KLING_PRESETS.includes(project.kling_model_name)) {
         setCustomKlingModel(true);
       }
-      // Init prompt config text from project
+      // Init prompt config text from project (display only — read-only)
       const pcj = (project as any).prompt_config_json;
       setPromptConfigText(pcj ? JSON.stringify(pcj, null, 2) : "");
-      setPromptConfigErrors([]);
     }
   }, [project]);
 
@@ -191,29 +160,10 @@ export default function ProjectEditor() {
   });
 
   const handleSave = () => {
-    const { id, created_at, updated_at, ...updates } = form as any;
-
-    // Validate and attach prompt config JSON if present
-    if (promptConfigText.trim()) {
-      try {
-        const parsed = JSON.parse(promptConfigText);
-        const validation = validatePromptConfig(parsed);
-        if (!validation.valid) {
-          setPromptConfigErrors(validation.errors);
-          toast({ title: "Validation Error", description: validation.errors[0], variant: "destructive" });
-          return;
-        }
-        updates.prompt_config_json = parsed;
-        setPromptConfigErrors([]);
-      } catch (e: any) {
-        setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
-        toast({ title: "Invalid JSON", description: e.message, variant: "destructive" });
-        return;
-      }
-    } else {
-      updates.prompt_config_json = null;
-    }
-
+    // prompt_config_json is intentionally excluded: it is read-only in the app
+    // and managed in the repo (config/projects/...). Saving here must never
+    // overwrite the git-controlled config.
+    const { id, created_at, updated_at, prompt_config_json, ...updates } = form as any;
     updateProject.mutate(updates);
   };
 
@@ -324,34 +274,15 @@ export default function ProjectEditor() {
             </CardContent>
           </Card>
 
-          {/* Series Memory */}
+          {/* Series Memory (read-only — lives inside the git-controlled prompt config JSON) */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                Series Memory
-                <Switch
-                  checked={(() => {
-                    try {
-                      const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
-                      return pcj?.memory?.enabled || false;
-                    } catch { return false; }
-                  })()}
-                  onCheckedChange={(checked) => {
-                    try {
-                      const pcj = promptConfigText.trim() ? JSON.parse(promptConfigText) : {};
-                      if (!pcj.memory) pcj.memory = { enabled: false, instruction: "", lookback_count: 30 };
-                      pcj.memory.enabled = checked;
-                      if (!pcj.version) pcj.version = 1;
-                      setPromptConfigText(JSON.stringify(pcj, null, 2));
-                    } catch {}
-                  }}
-                />
-              </CardTitle>
+              <CardTitle>Series Memory</CardTitle>
               <CardDescription>
-                Feed the planner with memory of past videos to avoid repetition or continue themes. When enabled, the last N topic summaries are injected into the planning prompt.
+                Read-only. Memory settings live inside the prompt config JSON, which is managed in the repo. Edit them there, then sync to the DB.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               {(() => {
                 let memoryEnabled = false;
                 let memoryInstruction = "";
@@ -365,56 +296,18 @@ export default function ProjectEditor() {
                   sourceProjectIds = pcj?.memory?.source_project_ids || [];
                 } catch {}
 
-                if (!memoryEnabled) return <p className="text-sm text-muted-foreground">Enable the toggle above to configure memory.</p>;
+                if (!memoryEnabled) return <p className="text-sm text-muted-foreground">Memory is disabled for this project.</p>;
 
                 return (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Memory Instruction</Label>
-                      <Textarea
-                        value={memoryInstruction}
-                        onChange={(e) => {
-                          try {
-                            const pcj = JSON.parse(promptConfigText || "{}");
-                            pcj.memory.instruction = e.target.value;
-                            setPromptConfigText(JSON.stringify(pcj, null, 2));
-                          } catch {}
-                        }}
-                        placeholder="e.g. Do not repeat the construction landmarks shown in the last videos. Pick a different famous landmark each time."
-                        rows={3}
-                      />
-                      <p className="text-xs text-muted-foreground">Tell the planner how to use the memory of past videos.</p>
+                  <div className="space-y-2 text-sm">
+                    <div><span className="text-muted-foreground">Enabled:</span> Yes</div>
+                    <div><span className="text-muted-foreground">Lookback count:</span> {lookbackCount}</div>
+                    <div className="space-y-1">
+                      <span className="text-muted-foreground">Instruction:</span>
+                      <p className="whitespace-pre-wrap">{memoryInstruction || "—"}</p>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Lookback Count</Label>
-                      <Input
-                        type="number"
-                        value={lookbackCount}
-                        onChange={(e) => {
-                          try {
-                            const pcj = JSON.parse(promptConfigText || "{}");
-                            pcj.memory.lookback_count = parseInt(e.target.value) || 30;
-                            setPromptConfigText(JSON.stringify(pcj, null, 2));
-                          } catch {}
-                        }}
-                        min={1}
-                        max={100}
-                      />
-                      <p className="text-xs text-muted-foreground">How many past video topics to include (max 100).</p>
-                    </div>
-                    <MemorySourceProjects
-                      currentProjectId={projectId!}
-                      sourceProjectIds={sourceProjectIds}
-                      onChange={(ids) => {
-                        try {
-                          const pcj = JSON.parse(promptConfigText || "{}");
-                          if (!pcj.memory) pcj.memory = { enabled: true, instruction: "", lookback_count: 30 };
-                          pcj.memory.source_project_ids = ids;
-                          setPromptConfigText(JSON.stringify(pcj, null, 2));
-                        } catch {}
-                      }}
-                    />
-                  </>
+                    <div><span className="text-muted-foreground">Source projects:</span> {sourceProjectIds.length}</div>
+                  </div>
                 );
               })()}
             </CardContent>
@@ -425,70 +318,18 @@ export default function ProjectEditor() {
             <CardHeader>
               <CardTitle>Prompt Config JSON</CardTitle>
               <CardDescription>
-                Advanced: override all pipeline prompts, rules, and settings via a single JSON configuration.
-                If empty, the system uses legacy fields above + system defaults.
+                Read-only. This config is version-controlled in the repo (<code className="text-xs">config/projects/…</code>)
+                and edited there (via Claude / PRs), then synced to the DB. Editing in the app is disabled.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex gap-2 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setPromptConfigText(JSON.stringify(getDefaultPromptConfig(), null, 2));
-                    setPromptConfigErrors([]);
-                  }}
-                >
-                  <RotateCcw className="mr-1 h-3 w-3" /> Reset to Default
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const legacy = legacyFieldsToPromptConfig({
-                      series_prompt: form.series_prompt as string,
-                      series_rules: form.series_rules as string,
-                      negative_prompt: form.negative_prompt as string,
-                    });
-                    const merged = mergePromptConfig(getDefaultPromptConfig(), legacy);
-                    setPromptConfigText(JSON.stringify(merged, null, 2));
-                    setPromptConfigErrors([]);
-                  }}
-                >
-                  <Wand2 className="mr-1 h-3 w-3" /> Generate from Legacy Fields
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    try {
-                      const parsed = JSON.parse(promptConfigText);
-                      setPromptConfigText(JSON.stringify(parsed, null, 2));
-                    } catch (e: any) {
-                      setPromptConfigErrors([`Invalid JSON: ${e.message}`]);
-                    }
-                  }}
-                >
-                  Pretty Print
-                </Button>
-              </div>
               <Textarea
                 value={promptConfigText}
-                onChange={(e) => {
-                  setPromptConfigText(e.target.value);
-                  setPromptConfigErrors([]);
-                }}
-                placeholder='Paste or edit JSON config here... Leave empty to use legacy fields.'
+                readOnly
+                placeholder="No prompt config set for this project."
                 rows={16}
-                className="font-mono text-xs"
+                className="font-mono text-xs bg-muted/40 cursor-default"
               />
-              {promptConfigErrors.length > 0 && (
-                <div className="text-sm text-destructive space-y-1">
-                  {promptConfigErrors.map((err, i) => (
-                    <p key={i}>⚠ {err}</p>
-                  ))}
-                </div>
-              )}
 
               {/* Resolved Config Preview */}
               <Collapsible open={resolvedPreviewOpen} onOpenChange={setResolvedPreviewOpen}>
@@ -518,143 +359,6 @@ export default function ProjectEditor() {
             </CardContent>
           </Card>
 
-          {/* AI Config Fix */}
-          <Card>
-            <CardHeader>
-              <Collapsible open={aiFixOpen} onOpenChange={setAiFixOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" className="w-full justify-between p-0 h-auto">
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <Bot className="h-4 w-4" /> Fix Config with AI
-                    </CardTitle>
-                    <ChevronDown className={`h-4 w-4 transition-transform ${aiFixOpen ? "rotate-180" : ""}`} />
-                  </Button>
-                </CollapsibleTrigger>
-                <CardDescription className="mt-1">
-                  Describe what went wrong and let AI fix the config. You can close the app — it runs server-side.
-                </CardDescription>
-                <CollapsibleContent>
-                  <CardContent className="px-0 pt-4 space-y-4">
-                    <div className="space-y-2">
-                      <Label>What went wrong?</Label>
-                      <Textarea
-                        value={aiFeedback}
-                        onChange={(e) => setAiFeedback(e.target.value)}
-                        placeholder="e.g. The workers appeared too early in scene 2, the camera was shaking, the reveal didn't feel dramatic enough..."
-                        rows={4}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Checkbox
-                        id="ai-rerun"
-                        checked={aiRerunAfterFix}
-                        onCheckedChange={(checked) => setAiRerunAfterFix(checked === true)}
-                      />
-                      <Label htmlFor="ai-rerun" className="text-sm cursor-pointer">
-                        Re-run pipeline without publishing after fix
-                      </Label>
-                    </div>
-                    <Button
-                      onClick={async () => {
-                        if (!aiFeedback.trim()) {
-                          toast({ title: "Error", description: "Please describe what went wrong", variant: "destructive" });
-                          return;
-                        }
-                        setAiFixLoading(true);
-                        setAiFixLogs(["🚀 Submitted to AI (server-side). You can leave the app."]);
-                        try {
-                          const { data, error } = await supabase.functions.invoke("fix-config", {
-                            body: {
-                              project_id: projectId,
-                              user_feedback: aiFeedback,
-                              rerun_after_fix: aiRerunAfterFix,
-                            },
-                          });
-                          if (error) throw error;
-                          if (data?.error) throw new Error(data.error);
-
-                          setAiFixLogs(prev => [...prev, "✅ Server received the request. Check history for results."]);
-                          setAiFeedback("");
-                          toast({ title: "Submitted!", description: "AI is fixing the config server-side. Check history for results." });
-                          // Refresh history
-                          setShowFixHistory(true);
-                          setTimeout(() => refetchFixHistory(), 2000);
-                          // Also refresh project data after some time
-                          setTimeout(() => queryClient.invalidateQueries({ queryKey: ["project", projectId] }), 10000);
-                        } catch (err: any) {
-                          setAiFixLogs(prev => [...prev, `❌ Failed: ${err.message}`]);
-                          toast({ title: "AI Fix Failed", description: err.message, variant: "destructive" });
-                        } finally {
-                          setAiFixLoading(false);
-                        }
-                      }}
-                      disabled={aiFixLoading || !aiFeedback.trim()}
-                      className="w-full"
-                    >
-                      {aiFixLoading ? (
-                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Submitting...</>
-                      ) : (
-                        <><Bot className="mr-2 h-4 w-4" /> Fix with AI</>
-                      )}
-                    </Button>
-                    {aiFixLogs.length > 0 && (
-                      <div className="mt-3 rounded-md border bg-muted/50 p-3 max-h-40 overflow-y-auto">
-                        <p className="text-xs font-medium text-muted-foreground mb-1">Status</p>
-                        {aiFixLogs.map((log, i) => (
-                          <p key={i} className="text-xs font-mono text-foreground/80">{log}</p>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* History Button */}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setShowFixHistory(!showFixHistory);
-                        if (!showFixHistory) refetchFixHistory();
-                      }}
-                      className="w-full"
-                    >
-                      <History className="mr-2 h-4 w-4" />
-                      {showFixHistory ? "Hide" : "Show"} Feedback History
-                    </Button>
-
-                    {/* History List */}
-                    {showFixHistory && (
-                      <div className="space-y-2 mt-2">
-                        {!fixHistory?.length && (
-                          <p className="text-xs text-muted-foreground text-center py-4">No feedback submitted yet.</p>
-                        )}
-                        {fixHistory?.map((item: any) => (
-                          <div key={item.id} className="rounded-md border p-3 space-y-1">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-1.5">
-                                {item.status === "completed" && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
-                                {item.status === "failed" && <XCircle className="h-3.5 w-3.5 text-destructive" />}
-                                {(item.status === "pending" || item.status === "processing") && <Clock className="h-3.5 w-3.5 text-yellow-500 animate-pulse" />}
-                                <span className="text-xs font-medium capitalize">{item.status}</span>
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(item.created_at).toLocaleString()}
-                              </span>
-                            </div>
-                            <p className="text-xs text-foreground/80 line-clamp-3">{item.feedback}</p>
-                            {item.error_message && (
-                              <p className="text-xs text-destructive">Error: {item.error_message}</p>
-                            )}
-                            {item.rerun_triggered && item.run_id && (
-                              <p className="text-xs text-muted-foreground">Re-run: {item.run_id.slice(0, 8)}...</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </CollapsibleContent>
-              </Collapsible>
-            </CardHeader>
-          </Card>
         </TabsContent>
 
         {/* Video Generator Tab */}
