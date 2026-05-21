@@ -28,9 +28,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - run: npm ci
+      # config-push.mjs only needs @supabase/supabase-js + Node builtins, so we
+      # install just that. This avoids coupling the sync to the frontend
+      # package-lock (which can drift) — no full `npm ci` required.
+      - name: Install sync-script dependency
+        run: npm install --no-save "@supabase/supabase-js@^2.98.0"
 
       - name: Push configs to DB
         env:
