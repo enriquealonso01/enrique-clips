@@ -27,7 +27,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22+ for native WebSocket (supabase-js realtime client needs it).
+          node-version: 22
 
       # config-push.mjs only needs @supabase/supabase-js + Node builtins, so we
       # install just that. This avoids coupling the sync to the frontend
