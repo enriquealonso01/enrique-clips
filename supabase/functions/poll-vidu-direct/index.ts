@@ -201,6 +201,24 @@ Deno.serve(async (req) => {
         return { status: "polling", completed: completedCount, total: viduAssets.length };
       }
 
+      // Only advance if at least one clip actually succeeded. If every task failed,
+      // the run failed at Vidu — mark it failed rather than false-"completing" with no video.
+      const { count: succeededClips } = await supabase
+        .from("assets")
+        .select("id", { count: "exact", head: true })
+        .eq("run_id", runId)
+        .eq("type", "clip")
+        .filter("metadata->>status", "eq", "completed");
+      if (!succeededClips || succeededClips === 0) {
+        await log(runId, "error", "All Vidu Direct tasks resolved but 0 clips succeeded — marking run failed (no video to stitch).");
+        await supabase.from("runs").update({
+          status: "failed",
+          error_message: "All Vidu video tasks failed — no clips to stitch.",
+          finished_at: new Date().toISOString(),
+        }).eq("id", runId);
+        return { status: "vidu_direct_all_failed", run_id: runId };
+      }
+
       // All done — resume the run and advance to stitch
       await log(runId, "info", "All Vidu Direct tasks complete. Resuming run and advancing to stitch.");
       await supabase.from("runs").update({

@@ -3238,6 +3238,16 @@ Rules:
     }
     } // end skipPublish check for FB image post
 
+    // Guard: never mark a run "completed" without a real final video — prevents the
+    // false "completed" that occurs when the clip/Vidu step yields no usable clips (ff98762f-class bug).
+    {
+      const { data: finalVideoCheck } = await supabase
+        .from("assets").select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
+      if (!finalVideoCheck || finalVideoCheck.length === 0) {
+        throw new Error("No final video produced (clip/Vidu step yielded no usable clips) — failing run instead of marking complete.");
+      }
+    }
+
     // ===== DONE =====
     await updateRun({
       current_step: "done",
