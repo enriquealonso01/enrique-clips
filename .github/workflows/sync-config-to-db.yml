@@ -1,0 +1,39 @@
+name: Sync project configs to DB
+
+# When prompt config files change on main, push them into the live DB
+# (projects.prompt_config_json). The repo is the source of truth; this makes
+# the DB match it. config-push.mjs only writes projects whose config differs.
+#
+# Requires repo secret: SUPABASE_SERVICE_ROLE_KEY
+# (GitHub -> Settings -> Secrets and variables -> Actions).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "config/**"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# Never let two syncs race against the same DB rows.
+concurrency:
+  group: sync-config-to-db
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Push configs to DB
+        env:
+          SUPABASE_URL: https://hvdvrqmrphbsouomjeqz.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run config:push
