@@ -130,6 +130,28 @@
           "stroke_width": 3
         },
         "content_prompt": "Choose RANDOMLY ONE approved opening hook from the list below and return it verbatim. Do not rank the hooks. Do not optimize toward one favorite. Do not rewrite the hook. Do not generate a new hook. Do not combine hooks. Do not paraphrase. Do not add emojis. Do not add hashtags. Do not add punctuation unless it already exists in the hook. Return the selected hook exactly as written. Approved hooks: POV: How \"hiding from your wife\" really looks | Married men will understand this in 10 seconds | My wife thinks this is just a closet | I needed one room in this house that was mine | Every husband has thought about doing this | My wife has no idea what's behind this door | Sometimes a man just needs his own space | I finally built the room I always wanted | This is how dads disappear after work | I told her I was cleaning the basement | My wife said I could have \"one small space\" | Every dad needs a backup plan | My wife calls it storage. I call it freedom | This is what \"I'll be right back\" means | This is where dad mode turns off | I built the room every husband wants"
+      },
+      {
+        "style": "minimal",
+        "end_pct": 85,
+        "z_index": 2,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "top_center",
+        "font_size": 32,
+        "start_pct": 60,
+        "font_color": "#FFFFFF",
+        "sort_order": 1,
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
+        "content_prompt": "Choose RANDOMLY ONE approved comment-engagement line from the list below and return it verbatim. You MUST pick at random each time — do not always return the same one, do not default to the first, do not rank them, and do not optimize toward one favorite. Do not rewrite the line. Do not generate a new line. Do not combine lines. Do not paraphrase. Do not add emojis. Do not add hashtags. Do not add punctuation unless it already exists in the line. Return the selected line exactly as written. Approved comments: What is the first thing you'd add in here? | Best man cave idea gets built next | Would your wife actually allow this? | What would your wife say about this? | Tag a husband who needs this | Send this to your wife | Tag a wife who would say no | Tag the friend who needs an escape room | Real build or AI? Comment your verdict | Real or AI? What is your final answer? | Bet you can't prove this one is fake | Real renovation or AI? You decide | Could one guy really build all this? | Rate this man cave 1 to 10 | Guess how many days this took"
       }
     ],
     "ending": {
