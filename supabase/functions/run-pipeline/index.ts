@@ -690,12 +690,40 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
           let nextSortOrder = (existingOverlays?.[0]?.sort_order ?? -1) + 1;
 
           for (const item of jsonOverlays) {
+            // Resolve "pick one from an approved list" overlays in code, with true
+            // uniform randomness. These overlays are authored as ai_generated with a
+            // prose prompt ending in "Approved overlays: A | B | C ..." and previously
+            // asked the model to "Choose RANDOMLY ONE". LLMs do NOT sample uniformly —
+            // given an identical list they collapse onto the same item, so sibling
+            // projects that share a list (e.g. Secret Backyard Builds 1 & 3) and
+            // back-to-back runs kept selecting the exact same overlay text. Pick here
+            // with crypto.getRandomValues (same pattern as track selection) so every
+            // run is independently uniform; the model is never asked to be random.
+            let contentMode = item.content_mode || "exact";
+            let contentText = item.content_text || null;
+            if (contentMode === "ai_generated" && !contentText && typeof item.content_prompt === "string") {
+              const marker = "Approved overlays:";
+              const markerIdx = item.content_prompt.lastIndexOf(marker);
+              if (markerIdx !== -1) {
+                const options = item.content_prompt
+                  .slice(markerIdx + marker.length)
+                  .split("|")
+                  .map((s: string) => s.trim())
+                  .filter((s: string) => s.length > 0);
+                if (options.length > 0) {
+                  const rand = new Uint32Array(1);
+                  crypto.getRandomValues(rand);
+                  contentText = options[rand[0] % options.length];
+                  await log("info", `Random overlay pick (sort_order ${item.sort_order ?? "?"}): chose 1 of ${options.length} → "${contentText}"`);
+                }
+              }
+            }
             await supabase.from("overlays").insert({
               project_id: project.id,
               source: "json_config",
               overlay_type: item.overlay_type || "text",
-              content_mode: item.content_mode || "exact",
-              content_text: item.content_text || null,
+              content_mode: contentMode,
+              content_text: contentText,
               content_prompt: item.content_prompt || null,
               image_path: item.image_path || null,
               position: item.position || "bottom_center",
