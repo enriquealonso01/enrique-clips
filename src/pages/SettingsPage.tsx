@@ -6,6 +6,7 @@ import { Save, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
 import { TrackUploader } from "@/components/TrackUploader";
+import { SfxLibrary } from "@/components/SfxLibrary";
 
 export default function SettingsPage() {
   const [keys, setKeys] = useState({
@@ -27,6 +28,8 @@ export default function SettingsPage() {
       </div>
 
       <TrackUploader />
+
+      <SfxLibrary />
 
       <Card>
         <CardHeader>
