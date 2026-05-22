@@ -140,7 +140,7 @@
           "top_pct": 20,
           "stroke_width": 3
         },
-        "content_prompt": "Choose RANDOMLY ONE hook from this list and output it verbatim:\nThe client said \"it just needs a light cleaning\"...\nThe HOA was about to fine them for this.\nYou will NOT recognize this backyard at the end.\nI quoted this job sight unseen. Big mistake.\nThey wanted this ready for a party next week... 😳\nThis is what 2 years of neglect looks like.\nThere's something moving in the water...\nThe final reveal is one of my best ever.\nThe neighbors have been complaining for months.\nIs this even a pool anymore?\nMy client swore this happened overnight.\nWe had to sign a waiver just to start this job.\nWait until you see the night shot...\nI've seen bad pools, but this is next level.\n\nOutput only the chosen hook. Do not paraphrase. Do not add hashtags. Do not add emojis unless the selected line already contains one.",
+        "content_prompt": "Select ONE hook uniformly at random from the list below. Give EVERY line an equal chance and vary your choice on every single run. Do NOT default to the first line, the most dramatic, or a previous favorite. Roll across the full list before you pick.\n\nThe client said \"it just needs a quick vacuum.\"\n\"It was crystal clear last summer,\" they told me.\nThe listing called this a \"luxury pool.\"\nThey described it as \"a little green.\"\n\"The kids still swim in it sometimes.\"\nThe realtor swore it was \"move-in ready.\"\nI quoted this one over the phone. Rookie mistake.\nWe made them sign a waiver before we started.\nI almost turned this job down.\nMy team drew straws for who'd go in first.\nI've restored 200 pools. This one scared me.\nWe doubled the quote once we saw it in person.\nI charge extra when it's this far gone.\nThis is what 3 years of neglect looks like.\nNobody had touched this pool since 2019.\nThere were 31,000 gallons of black water in here.\nThe algae was thicker than the water.\nI've seen bad pools. This one wins.\nThe deep end had its own ecosystem.\nYou couldn't see 2 inches into this water.\nThere's something moving in the water...\nYou will not recognize this backyard by the end.\nWait until you see the night shot.\nThe reveal at the end is my best yet.\nThe before and after still doesn't look real.\nThe last 5 seconds are worth it.\nNo crew. No excavator. Just one guy.\nYears of neglect, undone in one rescue.\nThe HOA was days from fining them.\nNeighbors had been reporting this for months.\nThe city tagged this pool as a hazard.\nMosquito control had already been called.\nThis pool failed three inspections.\n\nOutput only the chosen hook verbatim. Do not paraphrase. Do not add hashtags. Do not add emojis unless the selected line already contains one.",
         "voiceover_enabled": true
       },
       {
@@ -233,6 +233,29 @@
           "stroke_width": 3
         },
         "content_prompt": "Choose RANDOMLY ONE (not the best, not the worse, just random) retention overlay for the 80 percent point from this list and output it verbatim:\nFinal result in a few seconds…\nWait for the before & after…\nThis is the best part…\nDon't skip now…\nYou've got to see this…\nAlmost done… trust me\nWorth the wait…\nHere comes the reveal…\nThis is why we did it…\nReady for this?\n\nOutput only the chosen line. Do not paraphrase.",
+        "voiceover_enabled": true
+      },
+      {
+        "style": "engagement",
+        "end_pct": 85,
+        "z_index": 4,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "top_center",
+        "font_size": 34,
+        "start_pct": 60,
+        "font_color": "#FFFFFF",
+        "sort_order": 5,
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "style_config": {
+          "font_family": "Montserrat-Black.ttf",
+          "uppercase": true,
+          "accent_color": "#F7C204",
+          "shadow": true,
+          "top_pct": 20,
+          "stroke_width": 3
+        },
+        "content_prompt": "Select ONE line uniformly at random from the list below. Give EVERY line an equal chance and vary your choice on every single run. Do NOT default to the first line, the funniest, or the most dramatic. Roll across the full list before you pick.\n\nCould one man really do all this alone?\nTell me you've seen a worse pool than this.\nDoes this raise the home value or not?\nReal rescue or AI? Comment your verdict.\nReal or AI - what's your final answer?\nBet you can't prove this one is fake.\nRate this rescue 1 to 10.\nWhat should he rescue next? Comment it.\nComment the worst pool you've ever seen.\nName something nastier than that water.\nWhat upgrade would you add to this pool?\nTell me the wildest thing found in a pool.\nWould you tackle this yourself?\nWould you trust this water now?\nTag someone who needs to clean their pool.\nSend this to someone who loves a cleanup.\nTag a pool owner avoiding this exact job.\nGuess how many days this took.\n\nOutput only the chosen line verbatim. Do not paraphrase. Do not add hashtags. Do not add emojis.",
         "voiceover_enabled": true
       }
     ],
