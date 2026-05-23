@@ -93,7 +93,7 @@ async function fetchImageAsBase64(url: string): Promise<string | undefined> {
   } catch { return undefined; }
 }
 
-async function uploadAndStoreAsset(sb: SB, runId: string, path: string, data: Uint8Array, type: string, metadata: any = {}, sceneIndex?: number) {
+async function uploadAndStoreAsset(sb: SB, runId: string, path: string, data: Uint8Array, type: string, metadata: any = {}, sceneIndex?: number, cost_usd?: number) {
   const { publicUrl } = await r2Upload(path, data, type.includes("image") ? "image/png" : "video/mp4");
   await sb.from("story_assets").insert({
     run_id: runId,
@@ -102,6 +102,7 @@ async function uploadAndStoreAsset(sb: SB, runId: string, path: string, data: Ui
     signed_url_last: publicUrl,
     metadata,
     scene_index: sceneIndex ?? null,
+    ...(cost_usd != null ? { cost_usd } : {}),
   });
   return publicUrl;
 }
@@ -474,7 +475,7 @@ async function stage4(sb: SB, runId: string, story: any) {
     image_description: `AI-generated photorealistic image for "${story.title}"`,
     characters_visible: (story.characters || []).map((c: any) => c.name),
     source: "gemini_generation",
-  });
+  }, undefined, imageResult.cost_usd);
 
   return {
     primary_url: signedUrl,
@@ -506,7 +507,7 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
 
   const path = `story-runs/${runId}/cast_reference.png`;
   const bytes = Uint8Array.from(atob(imageResult.b64_json), c => c.charCodeAt(0));
-  const url = await uploadAndStoreAsset(sb, runId, path, bytes, "cast_reference_image", { story_title: story.title });
+  const url = await uploadAndStoreAsset(sb, runId, path, bytes, "cast_reference_image", { story_title: story.title }, undefined, imageResult.cost_usd);
   return { path, signedUrl: url };
 }
 
@@ -1057,7 +1058,7 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 
       const path = `story-runs/${runId}/scene_${i}.png`;
       const bytes = Uint8Array.from(atob(imgResult.b64_json), c => c.charCodeAt(0));
-      const url = await uploadAndStoreAsset(sb, runId, path, bytes, "scene_image", { beat_index: i, prompt: scene.prompt.substring(0, 200) }, i);
+      const url = await uploadAndStoreAsset(sb, runId, path, bytes, "scene_image", { beat_index: i, prompt: scene.prompt.substring(0, 200) }, i, imgResult.cost_usd);
       imageUrls.push(url || path);
       await log(sb, runId, "info", `Scene image ${i + 1}/${scenes.length} generated`);
     } catch (err) {
@@ -1245,7 +1246,7 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
         run_id: runId,
         type: "scene_video_raw",
         supabase_path: `story-runs/${runId}/scene_${i}_raw.mp4`,
-        metadata: { vidu_task_id: taskId, status: "pending", target_duration: targetDuration, request_duration: requestDuration, scene_index: i },
+        metadata: { vidu_task_id: taskId, status: "pending", target_duration: targetDuration, request_duration: requestDuration, scene_index: i, vidu_credits: viduData.credits ?? null },
         scene_index: i,
       });
 

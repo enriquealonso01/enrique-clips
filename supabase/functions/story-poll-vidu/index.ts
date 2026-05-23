@@ -94,8 +94,10 @@ Deno.serve(async (req) => {
               const videoBytes = new Uint8Array(await videoResp.arrayBuffer());
               const storagePath = `story-runs/${runId}/scene_${meta.scene_index}_raw.mp4`;
               await r2Upload(storagePath, videoBytes, "video/mp4");
+              const clipCostUsd = meta.vidu_credits != null ? meta.vidu_credits * 0.005 : null;
               await sb.from("story_assets").update({
                 supabase_path: storagePath,
+                cost_usd: clipCostUsd,
                 metadata: { ...meta, status: "completed", generator: "vidu_direct" },
               }).eq("id", asset.id);
               await log("info", `Vidu clip ${meta.scene_index} downloaded: ${taskId}`);

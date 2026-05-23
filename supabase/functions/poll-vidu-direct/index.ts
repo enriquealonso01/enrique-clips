@@ -165,8 +165,10 @@ Deno.serve(async (req) => {
                   allDone = false;
                   continue;
                 }
+                const clipCostUsd = meta.vidu_credits != null ? meta.vidu_credits * 0.005 : null;
                 await supabase.from("assets").update({
                   supabase_path: storagePath,
+                  cost_usd: clipCostUsd,
                   metadata: { ...meta, status: "completed", generator: "vidu_direct" },
                 }).eq("id", asset.id);
                 await log(runId, "info", `Vidu Direct video downloaded, stored, and verified: ${taskId}`);

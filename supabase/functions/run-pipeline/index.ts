@@ -243,7 +243,8 @@ Deno.serve(async (req) => {
     aiResult: any,
     storagePath: string,
     assetType: string,
-    assetMeta: Record<string, unknown>
+    assetMeta: Record<string, unknown>,
+    cost_usd?: number
   ): Promise<string | null> {
     const message = aiResult.choices?.[0]?.message;
     if (!message) return null;
@@ -275,6 +276,7 @@ Deno.serve(async (req) => {
                 run_id: assetMeta.run_id as string || null,
                 scene_id: assetMeta.scene_id as string || null,
                 metadata: assetMeta,
+                ...(cost_usd != null ? { cost_usd } : {}),
               })
               .select()
               .single();
@@ -1025,7 +1027,8 @@ Generate the timed text frames.`,
             k0Result,
             `${project.id}/keyframes/${runId}/scene-0-start`,
             "initial_image",
-            { run_id: runId, purpose: "k0_starting_state", keyframe_type: "start", scene_index: 0 }
+            { run_id: runId, purpose: "k0_starting_state", keyframe_type: "start", scene_index: 0 },
+            k0Result._image_cost_usd,
           );
           if (k0AssetId) {
             await log("info", "K0 (starting-state keyframe) saved");
@@ -1149,7 +1152,8 @@ Generate the timed text frames.`,
               imageResult,
               `${project.id}/keyframes/${runId}/scene-${scene.scene_index}-end`,
               "keyframe",
-              { run_id: runId, scene_id: scene.id, keyframe_type: "end", scene_index: scene.scene_index }
+              { run_id: runId, scene_id: scene.id, keyframe_type: "end", scene_index: scene.scene_index },
+              imageResult._image_cost_usd,
             );
 
             if (assetId) break;
@@ -1385,6 +1389,7 @@ Generate the timed text frames.`,
                 status: "submitted",
                 generator: "vidu_direct",
                 model: viduModel,
+                vidu_credits: result.credits ?? null,
               },
             });
           } catch (submitErr) {

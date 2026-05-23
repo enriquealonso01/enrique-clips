@@ -576,6 +576,7 @@ export function getImageServiceTier(): string | null {
 export interface CallImageResult {
   b64_json: string;
   revised_prompt?: string;
+  cost_usd?: number;
 }
 
 function sizeToAspectRatio(size?: string): string {
@@ -704,7 +705,11 @@ export async function callImage(opts: CallImageOptions): Promise<CallImageResult
       total_tokens: usage?.total_tokens,
     });
 
-    return { b64_json: imagePart.inlineData.data, revised_prompt: undefined };
+    return {
+      b64_json: imagePart.inlineData.data,
+      revised_prompt: undefined,
+      cost_usd: usage ? (usage.completion_tokens ?? 0) * 0.00006 : undefined,
+    };
   } catch (err) {
     const latency = Date.now() - attemptStart;
 
@@ -836,6 +841,7 @@ export async function callAI(
         },
         finish_reason: "stop",
       }],
+      _image_cost_usd: imgResult.cost_usd,
     };
   }
 
