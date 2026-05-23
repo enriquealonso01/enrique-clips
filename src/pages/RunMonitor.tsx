@@ -11,7 +11,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Play, Pause, Square, Send } from "lucide-react";
+import { ArrowLeft, Play, Pause, Square, Send, ImagePlay } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { toast } from "@/hooks/use-toast";
 
@@ -23,6 +23,7 @@ export default function RunMonitor() {
   const queryClient = useQueryClient();
   const [logFilter, setLogFilter] = useState<string>("all");
   const [posting, setPosting] = useState(false);
+  const [retryingKeyframes, setRetryingKeyframes] = useState(false);
   const finalizeInvokedRef = useRef<string | null>(null);
 
   const { data: run } = useQuery({
@@ -279,6 +280,38 @@ export default function RunMonitor() {
     }
   };
 
+  const retryKeyframes = async () => {
+    if (!runId || !run) return;
+    setRetryingKeyframes(true);
+    try {
+      const meta = { ...((run.generated_metadata as any) || {}) };
+      delete meta.keyframe_attempts;
+
+      await supabase
+        .from("runs")
+        .update({
+          status: "running",
+          current_step: "keyframes",
+          progress_pct: 15,
+          error_message: null,
+          finished_at: null,
+          generated_metadata: meta,
+        })
+        .eq("id", runId);
+
+      supabase.functions.invoke("run-pipeline", { body: { run_id: runId } })
+        .then((res) => { if (res.error) console.error("run-pipeline error:", res.error); })
+        .catch(console.error);
+
+      toast({ title: "Retrying keyframes", description: "Pipeline restarted from the keyframes step." });
+      queryClient.invalidateQueries({ queryKey: ["run", runId] });
+    } catch (e: any) {
+      toast({ title: "Error", description: e?.message || "Failed to retry keyframes", variant: "destructive" });
+    } finally {
+      setRetryingKeyframes(false);
+    }
+  };
+
   if (!run) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading run...</div>;
 
   const currentStepIndex = STEPS.indexOf(run.current_step);
@@ -287,6 +320,8 @@ export default function RunMonitor() {
   const canStop = ["running", "paused", "queued"].includes(run.status);
   const canPostNow = !!finalAsset?.supabase_path
     && ["done", "failed", "stopped", "running", "paused"].includes(run.status);
+  const canRetryKeyframes = currentStepIndex >= STEPS.indexOf("keyframes")
+    && !["running", "queued"].includes(run.status);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -302,6 +337,11 @@ export default function RunMonitor() {
           </div>
         </div>
         <div className="flex gap-1 md:gap-2 shrink-0">
+          {canRetryKeyframes && (
+            <Button size="sm" variant="outline" disabled={retryingKeyframes} onClick={retryKeyframes}>
+              <ImagePlay className="h-3 w-3 mr-1" /> Retry Keyframes
+            </Button>
+          )}
           {canPostNow && (
             <Button size="sm" disabled={posting} onClick={postNow}>
               <Send className="h-3 w-3 mr-1" /> Post Now
