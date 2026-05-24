@@ -314,6 +314,7 @@ Deno.serve(async (req) => {
                 run_id: assetMeta.run_id as string || null,
                 scene_id: assetMeta.scene_id as string || null,
                 metadata: assetMeta,
+                ...(cost_usd != null ? { cost_usd } : {}),
               }).select().single();
               return asset?.id || null;
             }
