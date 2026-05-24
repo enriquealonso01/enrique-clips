@@ -41,7 +41,7 @@ const PERIODS: { key: Period; label: string }[] = [
 
 export default function ExpensesPage() {
   const [period, setPeriod] = useState<Period>("30d");
-  const { start, end } = getPeriodRange(period);
+  const { start, end } = useMemo(() => getPeriodRange(period), [period]);
   const startIso = start.toISOString();
   const endIso = end.toISOString();
 
