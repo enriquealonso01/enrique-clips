@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "global": {
+    "content_type": "transformation",
+    "concept_prompt": "PLACEHOLDER — finalize in the craftsmanship/storytelling pass. Photorealistic documentary footage at ONE fixed, recognizable watch-restoration workbench (the channel's signature setting, identical every episode). A single watchmaker's hands restore one vintage wristwatch from neglected/non-running condition to fully serviced and gleaming: teardown, cleaning, rust/grime removal, part repair, reassembly, regulation, case/crystal polish, final beauty shot. Locked, controlled macro lighting. Hand tools only. No faces, no text/logos baked into frames (all text is overlay-only).",
+    "style_notes": "PLACEHOLDER. Photoreal macro bench documentary realism. Same workbench, mat, lighting, and tool layout every episode for brand recognition. Each clip is a distinct angle/zoom of a cleaning or repair step. Watch identity (dial, case, hands, movement) stays IDENTICAL across the whole video; only its condition (dirty → restored) changes.",
+    "rules": [
+      "Exactly one person (the watchmaker); only the hands and forearms are visible — never a face.",
+      "The workbench, mat, lighting, and background are the same recognizable setting in every scene and every episode.",
+      "Hand tools and bench equipment only — no industrial machinery.",
+      "The watch's identity is locked: same dial, case, hands, and movement throughout; only its condition changes from neglected to restored.",
+      "No text, numbers, logos, or watermarks baked into any frame — all text comes from the overlay system.",
+      "Photorealistic; never cartoon, anime, or stylized."
+    ],
+    "negative_prompt": "PLACEHOLDER. face, person's face, multiple hands, multiple people, text, watermark, logo, subtitles, cartoon, anime, CGI look, changing watch model mid-video, different workbench, morphing watch, warped geometry, extra fingers, blurry, low quality"
+  },
+  "planning": {
+    "planner_system_prompt": "You plan a satisfying watch-restoration video at a fixed macro workbench. Each scene is one clear restoration step shown from a distinct angle/zoom, progressing from a neglected watch to a fully restored one.",
+    "planner_user_prompt_template": "Create a {scene_count}-scene watch-restoration plan for: {concept_prompt}",
+    "first_scene_hook_rules": [
+      "Scene 1 opens on the signature empty workbench, then the watchmaker's hands place the neglected watch down — the 'before' state."
+    ],
+    "viral_pacing_rules": [
+      "Each scene shows visible restoration progress — never repeat the same step.",
+      "Alternate macro detail shots with slightly wider bench shots.",
+      "The final scene is the satisfying restored-and-running reveal."
+    ],
+    "scene_progression_rules": [
+      "Strict order: teardown → clean → de-rust/de-grime → repair → reassemble → polish/regulate → final reveal.",
+      "The watch must stay the same identity; only its condition advances."
+    ],
+    "start_state_rules": [
+      "K0 = the signature empty workbench (the recurring brand setting), with the neglected watch about to be worked on. This is the 'before' anchor and the same setting every episode.",
+      "Show the watch in clearly neglected/non-running condition: dull, dirty, scratched, possibly stopped."
+    ],
+    "behavior_assignment_rules": [
+      "Restoration/repair steps → timelapse_build.",
+      "Final running-and-gleaming reveal → reveal."
+    ]
+  },
+  "keyframes": {
+    "prompt_template": "Generate a {aspect_ratio} macro photo — keyframe K{scene_index} of {total_scenes} at the signature watch-restoration bench.\n\n=== STYLE BIBLE ===\n{style_bible}\n\n=== SCENE ===\n{end_keyframe_prompt}\n\n=== RULES ===\n{composition_rules}\n{continuity_rules}\n- No text, watermarks, or logos.",
+    "composition_rules": [
+      "Macro framing on the watch and the watchmaker's hands at the fixed bench.",
+      "Keep the same lighting and background as the style bible's locked setting."
+    ],
+    "continuity_rules": [
+      "Lock the watch's identity (dial, case, hands, movement) and the bench/lighting IDENTICALLY across all keyframes.",
+      "Vary only the camera angle, zoom, and the current restoration step — NOT the watch model or the setting.",
+      "Each keyframe is a self-contained composition (clips are clean cuts between angles, not morphs)."
+    ],
+    "single_shot_only": true
+  },
+  "motion": {
+    "prompt_template": "[{behavior}/{density}] {kling_prompt}",
+    "camera_rules": [
+      "Locked, controlled bench camera; smooth, minimal movement.",
+      "ManCave-style POV is NOT used here."
+    ],
+    "motion_rules": [
+      "Realistic close hand motion performing the restoration step.",
+      "The watch's identity must not morph or change; no teleporting parts."
+    ],
+    "negative_prompt_extra": "morphing watch, changing dial, changing case, extra fingers, warped tools, flicker, jitter, text, watermark, logo",
+    "frame_mode": "single",
+    "first_clip_pair": true
+  },
+  "overlays": {
+    "opening": { "enabled": false, "generation_prompt": "" },
+    "ending": { "enabled": false, "generation_prompt": "" },
+    "items": [
+      {
+        "overlay_type": "text",
+        "content_mode": "ai_generated",
+        "content_prompt": "Write a 1-line on-screen hook (<=9 words, ALL CAPS, no emojis/punctuation) tied to THIS episode's watch-owner story — heart-tugging or 'wow'. Use the provided Story summary. Example shapes: 'HER GRANDFATHER WORE THIS EVERY DAY' / 'FORGOTTEN IN A DRAWER FOR 40 YEARS'.",
+        "position": "top_center",
+        "style": "engagement",
+        "start_pct": 1,
+        "end_pct": 14,
+        "font_size": 34,
+        "font_color": "#FFFFFF",
+        "bg_color": "rgba(0,0,0,0)",
+        "z_index": 3,
+        "sort_order": 0,
+        "style_config": { "font_family": "Montserrat-Black.ttf", "uppercase": true, "accent_color": "#F7C204", "shadow": true, "top_pct": 20, "stroke_width": 3 }
+      }
+    ]
+  },
+  "metadata": {
+    "title_prompt": "Write a curiosity/emotion-driven title (<=100 chars) for a vintage watch restoration short, reflecting THIS episode's owner story. No clickbait lies.",
+    "description_prompt": "Write an engaging description (<=500 chars): the watch's story, the restoration, a light CTA.",
+    "hashtag_prompt": "8-12 hashtags mixing watch-restoration/horology niche tags with broad satisfying-restoration tags."
+  },
+  "audio": {
+    "strategy": "sfx_only",
+    "enabled": true
+  },
+  "voiceover": {
+    "enabled": true,
+    "mode": "story_script",
+    "voice_id": "3RbK5MAeB6NkutT3d6qF",
+    "model": "eleven_multilingual_v2",
+    "speed": 1.0,
+    "stability": 0.5,
+    "similarity_boost": 0.7,
+    "style": 0.4,
+    "use_speaker_boost": true,
+    "script_prompt": "PLACEHOLDER — refine in the storytelling pass. You are a master short-form storyteller. Write a narration that tells the TRUE-feeling story of THIS watch's owner: who they were, how the watch came to the bench, why it had to be saved, and the emotional payoff when it runs again. Open on a 2-second hook that promises heartbreak-or-wonder; one spoken idea per beat; build to the reveal; end on a line that earns a 'wow' or a tear. No 'today I'll show you'. Match the restoration steps on screen."
+  },
+  "subtitles": {
+    "enabled": true,
+    "provider": "submagic",
+    "user_theme_id": "8ef61dce-7589-48ff-b269-8623a3a5179e",
+    "language": "en"
+  },
+  "pipeline": {
+    "use_legacy_fallbacks": true
+  },
+  "memory": {
+    "enabled": true,
+    "instruction": "Do not repeat the same watch type, owner story archetype, or restoration angle across recent episodes. Vary the watch (dress/diver/chronograph/military/pocket), the owner's story, and the standout restoration moment while keeping the locked bench setting.",
+    "lookback_count": 15
+  }
+}

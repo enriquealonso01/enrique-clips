@@ -1940,6 +1940,62 @@ Deno.serve(async (req) => {
               await log("info", `${voiceoverOverlays.length} overlay(s) have voiceover_enabled but project voiceover is disabled in config`);
             }
 
+            // ── Story-script narration (opt-in: voiceover.mode === "story_script") ──
+            // One continuous narration track (e.g. the watch-owner's story), synthesized
+            // from the script written in the plan step and injected as a single VO entry
+            // at t=0 so the existing VO mix path (ducked SFX/music) carries it unchanged.
+            // Gated + fail-soft: skipped for every current channel (mode is unset there).
+            if (
+              voiceoverConfig.enabled &&
+              (voiceoverConfig as any).mode === "story_script" &&
+              ELEVENLABS_API_KEY
+            ) {
+              const narrationText: string = runMetadataForVO.narration_script?.full_script || "";
+              if (narrationText.trim()) {
+                try {
+                  const ttsResp = await withRetry(() =>
+                    fetch(
+                      `https://api.elevenlabs.io/v1/text-to-speech/${voiceoverConfig.voice_id}?output_format=mp3_44100_128`,
+                      {
+                        method: "POST",
+                        headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          text: narrationText,
+                          model_id: voiceoverConfig.model,
+                          voice_settings: {
+                            stability: voiceoverConfig.stability ?? 0.5,
+                            similarity_boost: voiceoverConfig.similarity_boost ?? 0.7,
+                            style: voiceoverConfig.style ?? 0.4,
+                            use_speaker_boost: voiceoverConfig.use_speaker_boost ?? true,
+                            speed: voiceoverConfig.speed ?? 1.0,
+                          },
+                        }),
+                      }
+                    ), 2, 2000
+                  );
+                  if (ttsResp.ok) {
+                    const audioBuffer = new Uint8Array(await ttsResp.arrayBuffer());
+                    const voPath = `${project.id}/final/${runId}/narration_${Date.now()}.mp3`;
+                    const { error: voUpErr } = await supabase.storage
+                      .from("project-assets")
+                      .upload(voPath, audioBuffer, { contentType: "audio/mpeg", upsert: true });
+                    if (!voUpErr) {
+                      voiceoverAudioPaths.push({ inputKey: "in_vo_narration", startSec: 0, storagePath: voPath });
+                      await log("info", `Story narration generated: ${(audioBuffer.length / 1024).toFixed(0)}KB full-length track (voice=${voiceoverConfig.voice_id})`);
+                    } else {
+                      await log("warn", `Narration upload failed: ${voUpErr.message}`);
+                    }
+                  } else {
+                    await log("warn", `Narration TTS failed: ${ttsResp.status} — ${(await ttsResp.text()).substring(0, 200)}`);
+                  }
+                } catch (narrErr) {
+                  await log("warn", `Narration generation error (non-fatal): ${(narrErr as Error).message}`);
+                }
+              } else {
+                await log("info", "voiceover.mode=story_script but no narration_script.full_script found — skipping narration.");
+              }
+            }
+
             const tempCleanupPaths: string[] = [];
 
             if (RENDI_API_KEY) {
@@ -2947,6 +3003,37 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     if (skipPublish) {
       // skip publish entirely
     } else {
+    // ── Subtitles via Submagic (opt-in: subtitles.enabled) ──
+    // Runs after the audio-merged final video exists and BEFORE publish, so the
+    // captioned cut is what gets posted. Offloaded to the subtitles-submagic
+    // function (Submagic's transcribe+export poll is long); that function stores
+    // captioned_video_path, sets current_step="publish", and re-invokes us.
+    // Gated + fail-soft: on Submagic failure it sets subtitles_failed and we
+    // publish uncaptioned. Every current channel has no subtitles block → skipped.
+    const pubMeta0 = (run.generated_metadata as any) || {};
+    const subsEnabled = ((project as any).prompt_config_json || {}).subtitles?.enabled === true;
+    if (subsEnabled && !pubMeta0.captioned_video_path && !pubMeta0.subtitles_failed) {
+      const { data: fvForSubs } = await supabase
+        .from("assets").select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
+      if (fvForSubs && fvForSubs.length > 0) {
+        if (!pubMeta0.submagic_dispatched) {
+          await updateRun({ current_step: "publish", generated_metadata: { ...pubMeta0, submagic_dispatched: true } });
+          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/subtitles-submagic`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ run_id: runId }),
+          }).catch(() => {});
+          await log("info", "Subtitles enabled — dispatched final video to Submagic; pausing publish until the captioned cut is ready.");
+        } else {
+          await log("info", "Awaiting Submagic captioned video before publish.");
+        }
+        return json({ status: "awaiting_subtitles", run_id: runId });
+      }
+      // No final video found (shouldn't happen at publish) — fall through.
+    }
     // Idempotency: skip if a publish job is already submitted/polling/completed
     const { data: existingJobs } = await supabase
       .from("publish_jobs")
@@ -2968,7 +3055,11 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
           .limit(1);
 
         let videoPath: string | null = null;
-        if (finalAssets && finalAssets.length > 0) {
+        const captionedPath = (run.generated_metadata as any)?.captioned_video_path;
+        if (captionedPath) {
+          videoPath = captionedPath;
+          await log("info", "Publishing captioned (subtitled) video.");
+        } else if (finalAssets && finalAssets.length > 0) {
           videoPath = finalAssets[0].supabase_path;
         } else {
           const { data: clips } = await supabase

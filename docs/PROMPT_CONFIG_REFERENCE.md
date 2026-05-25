@@ -367,6 +367,35 @@ Manual overlays can also toggle voiceover via the UI switch in the overlay edito
 - AI sequence overlays: each frame's text will be narrated individually if the parent has `voiceover_enabled`.
 - Choose a voice that matches your content's tone (documentary → George/Brian, casual → Chris/Liam).
 
+### 3.8b Opt-in: story narration, subtitles & single-frame video (watch-restoration pattern)
+
+These three opt-in settings power channels like **watch-restoration**. **They are fully gated** — every existing channel omits them and behaves exactly as before. Turning them on adds extra pipeline steps **only for that channel**.
+
+**`voiceover.mode`** — extends §3.8.
+
+| Field           | Type   | Default          | Purpose                                                                                                                                                                                                              |
+| --------------- | ------ | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`          | string | `"per_overlay"`  | `"per_overlay"` (absent) = legacy behavior (each overlay with `voiceover_enabled` is read aloud). `"story_script"` = generate ONE continuous narration script (plan step, `gpt-5.3`) and synthesize a single full-length track mixed over ducked SFX/music (finalize). |
+| `script_prompt` | string | `""`             | Storyteller instructions used to write the narration when `mode==="story_script"` (e.g. "tell the watch owner's story; hook in 2s; pay off at the reveal"). The generated script is stored in `runs.generated_metadata.narration_script`. |
+
+**`subtitles`** — burned-in captions via Submagic, applied to the audio-merged final video **before** publish.
+
+| Field           | Type    | Default      | Purpose                                                                                          |
+| --------------- | ------- | ------------ | ------------------------------------------------------------------------------------------------ |
+| `enabled`       | boolean | `false`      | Master toggle. Absent/`false` = no subtitle pass (every current channel).                        |
+| `provider`      | string  | `"submagic"` | Captioning provider. Only `submagic` is implemented.                                             |
+| `user_theme_id` | string  | shared default | Submagic caption style (`userThemeId`).                                                        |
+| `language`      | string  | `"en"`       | Caption language.                                                                                |
+
+When enabled, finalize-video hands the final video to the `subtitles-submagic` function, which captions it, stores `runs.generated_metadata.captioned_video_path`, and re-invokes finalize to publish the captioned cut. Fail-soft: on a Submagic error the run publishes uncaptioned.
+
+**`motion.frame_mode`** — extends §3.x motion.
+
+| Field             | Type    | Default  | Purpose                                                                                                                                                              |
+| ----------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `frame_mode`      | string  | `"pair"` | `"pair"` (absent) = consecutive start→end keyframe pairs → Vidu `start-end2video` (default for all channels). `"single"` = one start frame per clip → Vidu `img2video`. |
+| `first_clip_pair` | boolean | `true`   | When `frame_mode==="single"`, keep the FIRST clip a start→end pair (e.g. empty bench → hands+watch); remaining clips are single-frame.                                |
+
 ### 3.9 `pipeline` — Technical Settings
 
 | Field                  | Type    | Purpose                                                                                                                                                 |

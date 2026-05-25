@@ -670,6 +670,46 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         return json({ status: "plan_rechaining_for_overlays", run_id: runId });
       }
 
+      // ── 1c-narration: Story narration script (opt-in: voiceover.mode === "story_script") ──
+      // Gated — every current channel has voiceover.enabled=false and no mode, so this
+      // block is skipped entirely and their plan step is unchanged. Fail-soft: any error
+      // logs a warning and the run continues without narration.
+      const voCfgPlan: any = (resolvedConfig as any).voiceover || {};
+      if (voCfgPlan.enabled && voCfgPlan.mode === "story_script" && !metadataState.narration_script) {
+        try {
+          const { data: narrScenes } = await supabase
+            .from("scenes").select("scene_index, scene_title, scene_description")
+            .eq("run_id", runId).order("scene_index");
+          const clipDur = (project as any).clip_duration_sec || 5;
+          const sceneCount = (narrScenes || []).length || 7;
+          const targetDuration = Math.max(15, sceneCount * clipDur);
+          const sceneList = (narrScenes || [])
+            .map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n");
+          const scriptPrompt = voCfgPlan.script_prompt
+            || "Write an emotional short-form narration that hooks in 2 seconds and pays off at the end.";
+          const narrResult = await callAI(
+            [
+              { role: "system", content: "You are a master short-form video scriptwriter. Hook the viewer in the first 2 seconds, build emotional pacing, and land a 'wow' or tearful payoff at the reveal. Write for spoken narration — one idea per beat, natural cadence. Return ONLY valid JSON, no markdown fences." },
+              { role: "user", content: `${scriptPrompt}\n\nSeries: ${conceptPrompt || project.title}\nTarget spoken duration: ~${targetDuration}s\nScene plan:\n${sceneList}\n\nReturn JSON exactly: {"full_script":"the complete narration as one block","summary":"one-line story summary for the on-screen hook overlay","beats":[{"index":0,"text":"...","purpose":"hook|build|climax|resolve"}]}` },
+            ],
+            undefined, undefined,
+            "gpt-5.3-chat-latest"
+          );
+          const narrRaw = narrResult.choices?.[0]?.message?.content || "";
+          const narrClean = narrRaw.replace(/```json\s*|```/g, "").trim();
+          const parsed = JSON.parse(narrClean);
+          if (parsed && typeof parsed.full_script === "string" && parsed.full_script.trim()) {
+            metadataState.narration_script = parsed;
+            await updateRun({ generated_metadata: metadataState });
+            await log("info", `Narration script generated: ${parsed.beats?.length || 0} beats, ${parsed.full_script.length} chars (~${targetDuration}s target)`);
+          } else {
+            await log("warn", "Narration script returned no usable full_script — skipping narration for this run.");
+          }
+        } catch (narrErr) {
+          await log("warn", `Narration script generation failed (non-fatal): ${(narrErr as Error).message}`);
+        }
+      }
+
       // ── 1d: Sync JSON-defined overlays into DB ──
       try {
         // First, remove stale JSON-sourced overlays from previous runs
@@ -788,7 +828,7 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
               },
               {
                 role: "user",
-                content: `Series: ${conceptPrompt || project.title}
+                content: `Series: ${conceptPrompt || project.title}${metadataState.narration_script?.summary ? `\nStory (craft a heart-tugging or 'wow' hook overlay around this): ${metadataState.narration_script.summary}` : ""}
 Scenes: ${scenesForOverlay.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
@@ -1314,33 +1354,61 @@ Generate the timed text frames.`,
           return json({ error: "Not enough keyframes" }, 500);
         }
 
-        const pairs: Array<{ start: string; end: string; sceneIndex: number; prompt: string }> = [];
-        for (let i = 0; i < imageUrls.length - 1; i++) {
-          const scene = scenes[i] || scenes[scenes.length - 1];
-          pairs.push({
-            start: imageUrls[i], end: imageUrls[i + 1],
-            sceneIndex: scene.scene_index,
-            prompt: scene.kling_prompt || conceptPrompt || "smooth cinematic transition",
-          });
+        // Decide framing mode. Default ("pair") is the long-standing behavior:
+        // consecutive start→end keyframe pairs → Vidu start-end2video. Opt-in
+        // "single" (set only on channels like watch-restoration via
+        // motion.frame_mode) feeds ONE start frame per clip → Vidu img2video,
+        // optionally keeping the FIRST clip a start→end pair (empty bench →
+        // hands+watch). Every current channel resolves to "pair" → unchanged.
+        const pcjMotion: any = ((project as any).prompt_config_json || {}).motion || {};
+        const frameMode: string = pcjMotion.frame_mode === "single" ? "single" : "pair";
+        const firstClipPair: boolean = pcjMotion.first_clip_pair !== false;
+
+        // Build clip submission descriptors. kind="pair" → 2 images (start-end2video);
+        // kind="single" → 1 image (img2video). The default branch produces exactly
+        // the same pair descriptors (and thus the same API calls) as before.
+        type ViduSub = { kind: "pair" | "single"; images: string[]; sceneIndex: number; prompt: string };
+        const subs: ViduSub[] = [];
+        const sceneMeta = (arrIdx: number) => {
+          const sc = scenes[Math.min(Math.max(arrIdx, 0), scenes.length - 1)];
+          return { sceneIndex: sc.scene_index, prompt: sc.kling_prompt || conceptPrompt || "smooth cinematic transition" };
+        };
+        if (frameMode === "single") {
+          let imgStart = 1; // skip K0 (initial image) by default in pure-single mode
+          if (firstClipPair && imageUrls.length >= 2) {
+            const m = sceneMeta(0);
+            subs.push({ kind: "pair", images: [imageUrls[0], imageUrls[1]], sceneIndex: m.sceneIndex, prompt: m.prompt });
+            imgStart = 2;
+          }
+          for (let i = imgStart; i < imageUrls.length; i++) {
+            const m = sceneMeta(i - 1);
+            subs.push({ kind: "single", images: [imageUrls[i]], sceneIndex: m.sceneIndex, prompt: m.prompt });
+          }
+        } else {
+          for (let i = 0; i < imageUrls.length - 1; i++) {
+            const m = sceneMeta(i);
+            subs.push({ kind: "pair", images: [imageUrls[i], imageUrls[i + 1]], sceneIndex: m.sceneIndex, prompt: m.prompt });
+          }
         }
 
-        await log("info", `Vidu Direct: submitting ${pairs.length} clip(s), model=${viduModel}, duration=${clipDuration}s, resolution=${viduResolution}`);
+        await log("info", `Vidu Direct: submitting ${subs.length} clip(s) [frame_mode=${frameMode}], model=${viduModel}, duration=${clipDuration}s, resolution=${viduResolution}`);
 
         const viduTaskIds: string[] = [];
         const viduStartTime = Date.now();
 
-        for (let clipIdx = 0; clipIdx < pairs.length; clipIdx++) {
+        for (let clipIdx = 0; clipIdx < subs.length; clipIdx++) {
           if (Date.now() - viduStartTime > 100_000) {
             await log("info", `Time budget reached after ${clipIdx} Vidu Direct submissions. Re-chaining.`);
             break;
           }
-          const pair = pairs[clipIdx];
+          const sub = subs[clipIdx];
+          // Vidu: start-end2video accepts [start,end]; img2video accepts [start].
+          const endpoint = sub.kind === "single" ? "img2video" : "start-end2video";
 
-          // Vidu start-end2video API accepts 2 images: [start_frame, end_frame]
           const viduBody: Record<string, any> = {
             model: viduModel,
-            images: [pair.start, pair.end],
-            prompt: pair.prompt,
+            images: sub.images,
+            prompt: sub.prompt,
             duration: clipDuration,
             resolution: viduResolution,
             audio: enableAudio,
@@ -1348,13 +1416,12 @@ Generate the timed text frames.`,
             off_peak: true,
           };
 
-          await log("debug", `Vidu Direct clip ${clipIdx + 1}/${pairs.length} (scene ${pair.sceneIndex})`, {
-            start: pair.start.substring(pair.start.lastIndexOf("/") + 1),
-            end: pair.end.substring(pair.end.lastIndexOf("/") + 1),
+          await log("debug", `Vidu Direct clip ${clipIdx + 1}/${subs.length} (${sub.kind}, scene ${sub.sceneIndex})`, {
+            images: sub.images.map((u) => u.substring(u.lastIndexOf("/") + 1)),
           });
 
           try {
-            const resp = await fetch("https://api.vidu.com/ent/v2/start-end2video", {
+            const resp = await fetch(`https://api.vidu.com/ent/v2/${endpoint}`, {
               method: "POST",
               headers: {
                 "Authorization": `Token ${VIDU_API_KEY}`,
@@ -1379,17 +1446,18 @@ Generate the timed text frames.`,
             viduTaskIds.push(taskId);
             await log("info", `Vidu Direct clip ${clipIdx + 1} submitted: task_id=${taskId}, credits=${result.credits || "?"}`);
 
-            const sceneForAsset = scenes.find(s => s.scene_index === pair.sceneIndex) || scenes[0];
+            const sceneForAsset = scenes.find(s => s.scene_index === sub.sceneIndex) || scenes[0];
             await supabase.from("assets").insert({
               supabase_path: `pending-vidu-direct/${runId}/clip-${clipIdx}`,
               type: "clip" as any, run_id: runId, scene_id: sceneForAsset.id,
               metadata: {
                 vidu_task_id: taskId,
                 clip_index: clipIdx,
-                scene_index: pair.sceneIndex,
+                scene_index: sub.sceneIndex,
                 status: "submitted",
                 generator: "vidu_direct",
                 model: viduModel,
+                frame_mode: sub.kind,
                 vidu_credits: result.credits ?? null,
               },
             });

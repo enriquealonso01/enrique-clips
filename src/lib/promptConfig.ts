@@ -32,6 +32,11 @@ export interface PromptConfigMotion {
   camera_rules: string[];
   motion_rules: string[];
   negative_prompt_extra: string;
+  // Opt-in: "single" feeds the video generator only a start frame per clip (Vidu
+  // img2video) instead of consecutive start→end pairs. Absent/"pair" = default.
+  frame_mode?: "pair" | "single";
+  // When frame_mode==="single", keep the FIRST clip a start→end pair. Default true.
+  first_clip_pair?: boolean;
 }
 
 export interface PromptConfigOverlaySlot {
@@ -83,6 +88,18 @@ export interface PromptConfigVoiceover {
   similarity_boost: number;
   style: number;
   use_speaker_boost: boolean;
+  // Opt-in narration mode. Absent/"per_overlay" = legacy (overlays read aloud).
+  // "story_script" = one continuous narration track from a generated script.
+  mode?: "per_overlay" | "story_script";
+  // Storyteller instructions for the narration script when mode==="story_script".
+  script_prompt?: string;
+}
+
+export interface PromptConfigSubtitles {
+  enabled: boolean;        // master toggle; absent/false = no subtitle pass
+  provider?: string;       // only "submagic" implemented
+  user_theme_id?: string;  // Submagic caption style; falls back to shared default
+  language?: string;
 }
 
 export interface PromptConfigAudio {
@@ -110,6 +127,7 @@ export interface PromptConfig {
   metadata: PromptConfigMetadata;
   audio: PromptConfigAudio;
   voiceover: PromptConfigVoiceover;
+  subtitles?: PromptConfigSubtitles;
   pipeline: PromptConfigPipeline;
   memory: PromptConfigMemory;
 }

@@ -33,6 +33,13 @@ export interface PromptConfigMotion {
   camera_rules: string[];
   motion_rules: string[];
   negative_prompt_extra: string;
+  // Opt-in (watch-restoration etc.): "single" feeds the video generator only a
+  // start frame (Vidu img2video) per clip instead of consecutive start→end pairs.
+  // Absent/"pair" = default behavior (start-end2video). See run-pipeline kling step.
+  frame_mode?: "pair" | "single";
+  // When frame_mode==="single", keep the FIRST clip a start→end pair (e.g. empty
+  // bench → hands+watch); remaining clips are single-frame. Defaults to true.
+  first_clip_pair?: boolean;
 }
 
 export interface PromptConfigOverlaySlot {
@@ -92,6 +99,24 @@ export interface PromptConfigVoiceover {
   similarity_boost: number;
   style: number;
   use_speaker_boost: boolean;
+  // Opt-in narration mode. Absent/"per_overlay" = legacy behavior (each overlay
+  // with voiceover_enabled is read aloud). "story_script" = generate one
+  // continuous narration script (run-pipeline plan step) and synthesize a single
+  // full-length track (finalize-video) mixed over ducked SFX/music.
+  mode?: "per_overlay" | "story_script";
+  // Storyteller instructions used by the plan step to write the narration script
+  // when mode==="story_script".
+  script_prompt?: string;
+}
+
+export interface PromptConfigSubtitles {
+  // Master toggle. Absent/false = no subtitle pass (every current channel).
+  enabled: boolean;
+  // Captioning provider. Only "submagic" is implemented.
+  provider?: string;
+  // Submagic caption style ("userThemeId"). Falls back to the shared default.
+  user_theme_id?: string;
+  language?: string;
 }
 
 export interface PromptConfigAudio {
@@ -119,6 +144,7 @@ export interface PromptConfig {
   metadata: PromptConfigMetadata;
   audio: PromptConfigAudio;
   voiceover: PromptConfigVoiceover;
+  subtitles?: PromptConfigSubtitles;
   pipeline: PromptConfigPipeline;
   memory: PromptConfigMemory;
 }
