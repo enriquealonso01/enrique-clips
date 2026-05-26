@@ -174,7 +174,7 @@
       },
       {
         "style": "engagement",
-        "end_pct": 23,
+        "end_pct": 27,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
         "font_size": 28,
@@ -182,11 +182,11 @@
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nTHIS IS ONLY THE START\nIT GETS BIGGER FAST\nTHEY WERE JUST GETTING STARTED\nLOOK HOW FAST THIS CHANGES\nTHIS PART CHANGES EVERYTHING\nTHE REAL WORK STARTS HERE\nIT STILL DOESN'T LOOK REAL\nNOW THE BUILD TAKES OFF\nYOU HAVEN'T SEEN THE HARD PART YET"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: YOU ARE WATCHING THE EASY PART | IT BARELY LOOKS LIKE ANYTHING YET | NOBODY WOULD RECOGNIZE IT THIS EARLY | THE INSANE PART IS STILL COMING | KEEP WATCHING IT GETS UNREAL | YOU WOULD NEVER GUESS IT FROM HERE | WAIT UNTIL THE REAL SHAPE APPEARS | THIS IS NOTHING COMPARED TO WHATS COMING"
       },
       {
         "style": "engagement",
-        "end_pct": 43,
+        "end_pct": 47,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
         "font_size": 28,
@@ -194,11 +194,11 @@
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nNOW IT STARTS TO RISE\nTHIS TOOK YEARS OF LABOR\nTHEY WERE NOWHERE NEAR DONE\nTHIS IS WHERE THE SCALE HITS\nTHE HARDEST PART STARTS HERE\nNOW THE STRUCTURE GETS REAL\nTHIS BUILD KEPT GROWING\nTHIS IS WHERE IT GETS HEAVY\nTHE WHOLE SITE CHANGES HERE"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: THIS IS WHERE IT GETS DANGEROUS | THIS BROKE THE PEOPLE WHO BUILT IT | NOW YOU SEE THE REAL SCALE | THEY WERE STILL NOWHERE NEAR DONE | HOW DID THEY EVEN LIFT THAT | NO MACHINES AND IT KEEPS RISING | THIS IS WHERE MOST WOULD QUIT | EVERY PIECE OF THIS BY HAND"
       },
       {
         "style": "engagement",
-        "end_pct": 63,
+        "end_pct": 67,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
         "font_size": 28,
@@ -206,7 +206,7 @@
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nNOW YOU CAN SEE IT\nTHIS IS WHERE IT BECOMES ICONIC\nIT FINALLY STARTS LOOKING FAMILIAR\nNOW THE SHAPE LOCKS IN\nTHIS IS THE TURNING POINT\nYOU CAN FEEL THE SCALE NOW\nTHIS IS WHERE IT ALL COMES TOGETHER\nNOW IT LOOKS IMPOSSIBLE\nIT'S FINALLY TAKING FORM"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: STARTING TO LOOK FAMILIAR YET | NOW YOU MIGHT KNOW WHAT IT IS | THIS IS THE MOMENT IT CLICKS | YOU HAVE SEEN THIS SHAPE BEFORE | RECOGNIZE IT YET KEEP WATCHING | THIS IS WHERE IT BECOMES UNMISTAKABLE | ALMOST EVERYONE KNOWS IT BY NOW | THE SHAPE IS GIVING IT AWAY"
       },
       {
         "style": "engagement",
@@ -218,7 +218,7 @@
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nWAIT FOR THE FINAL FORM\nTHIS REVEAL IS WORTH IT\nNOW IT BECOMES LEGENDARY\nDON'T SCROLL NOW\nTHIS IS THE PAYOFF\nHERE COMES THE FINISHED BUILD\nYOU NEED TO SEE THE END\nTHE FINAL SHAPE IS INSANE\nWATCH THE LAST SECONDS"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: DO NOT SCROLL THE REVEAL IS NEXT | THE LAST FEW SECONDS HIT HARD | THIS IS THE PART YOU STAYED FOR | ONE MORE STEP AND ITS DONE | YOU CAME THIS FAR FINISH IT | WAIT FOR THE FULL REVEAL | THIS ENDING GIVES PEOPLE CHILLS | THE FINISHED FORM IS WORTH IT"
       },
       {
         "style": "engagement",
@@ -230,7 +230,7 @@
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
         "overlay_type": "text",
-        "content_prompt": "Select ONE CTA and output it exactly in ALL CAPS:\nWHAT SHOULD I BUILD NEXT\nWHICH LANDMARK NEXT\nWANT PART 2\nNAME THE NEXT BUILD\nWHICH ONE SHOULD RISE NEXT\nDROP THE NEXT LANDMARK\nWHAT SHOULD I REBUILD NEXT\nWHICH SITE SHOULD I START WITH"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: DID YOU GUESS IT RIGHT | NAME THE NEXT ONE TO BUILD | WHICH LANDMARK SHOULD RISE NEXT | WOULD YOU VISIT THIS IN PERSON | COULD YOU BUILD THIS WITHOUT MACHINES | RATE THIS BUILD ONE TO TEN | SEND THIS TO A HISTORY BUFF | WHAT SHOULD I BUILD NEXT"
       }
     ],
     "ending": {
