@@ -3003,22 +3003,27 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
     if (skipPublish) {
       // skip publish entirely
     } else {
-    // ── Subtitles via Submagic (opt-in: subtitles.enabled) ──
+    // ── Subtitles (opt-in: subtitles.enabled) — provider-routed ──
     // Runs after the audio-merged final video exists and BEFORE publish, so the
-    // captioned cut is what gets posted. Offloaded to the subtitles-submagic
-    // function (Submagic's transcribe+export poll is long); that function stores
-    // captioned_video_path, sets current_step="publish", and re-invokes us.
-    // Gated + fail-soft: on Submagic failure it sets subtitles_failed and we
+    // captioned cut is what gets posted. Offloaded to a provider function
+    // (subtitles-opusclip | subtitles-submagic) whose render poll is long; that
+    // function stores captioned_video_path, sets current_step="publish", and
+    // re-invokes us. Provider = subtitles.provider (default "submagic"), so the
+    // captioner is swappable from config alone with no redeploy.
+    // Gated + fail-soft: on provider failure it sets subtitles_failed and we
     // publish uncaptioned. Every current channel has no subtitles block → skipped.
     const pubMeta0 = (run.generated_metadata as any) || {};
-    const subsEnabled = ((project as any).prompt_config_json || {}).subtitles?.enabled === true;
+    const subsCfg = ((project as any).prompt_config_json || {}).subtitles || {};
+    const subsEnabled = subsCfg.enabled === true;
     if (subsEnabled && !pubMeta0.captioned_video_path && !pubMeta0.subtitles_failed) {
       const { data: fvForSubs } = await supabase
         .from("assets").select("id").eq("run_id", runId).eq("type", "final_video").limit(1);
       if (fvForSubs && fvForSubs.length > 0) {
-        if (!pubMeta0.submagic_dispatched) {
-          await updateRun({ current_step: "publish", generated_metadata: { ...pubMeta0, submagic_dispatched: true } });
-          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/subtitles-submagic`, {
+        const subsProvider = String(subsCfg.provider || "submagic").toLowerCase();
+        const subsFn = subsProvider === "opusclip" ? "subtitles-opusclip" : "subtitles-submagic";
+        if (!pubMeta0.subtitles_dispatched) {
+          await updateRun({ current_step: "publish", generated_metadata: { ...pubMeta0, subtitles_dispatched: true } });
+          fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/${subsFn}`, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
@@ -3026,9 +3031,9 @@ Generate metadata for these platforms: ${platformsToGenerate.join(", ")}`,
             },
             body: JSON.stringify({ run_id: runId }),
           }).catch(() => {});
-          await log("info", "Subtitles enabled — dispatched final video to Submagic; pausing publish until the captioned cut is ready.");
+          await log("info", `Subtitles enabled — dispatched final video to ${subsProvider}; pausing publish until the captioned cut is ready.`);
         } else {
-          await log("info", "Awaiting Submagic captioned video before publish.");
+          await log("info", `Awaiting ${subsProvider} captioned video before publish.`);
         }
         return json({ status: "awaiting_subtitles", run_id: runId });
       }

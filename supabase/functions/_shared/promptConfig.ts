@@ -112,11 +112,21 @@ export interface PromptConfigVoiceover {
 export interface PromptConfigSubtitles {
   // Master toggle. Absent/false = no subtitle pass (every current channel).
   enabled: boolean;
-  // Captioning provider. Only "submagic" is implemented.
+  // Captioning provider: "submagic" or "opusclip". Default "submagic".
   provider?: string;
   // Submagic caption style ("userThemeId"). Falls back to the shared default.
   user_theme_id?: string;
   language?: string;
+  // OpusClip caption styling (used when provider==="opusclip"). All optional —
+  // subtitles-opusclip applies sensible defaults. Set brand_template_id to apply
+  // a preset OpusClip brand template instead of the individual caption fields.
+  opusclip?: {
+    caption_style?: string;
+    caption_position?: string;
+    caption_animation?: string;
+    highlight_color?: string;
+    brand_template_id?: string | null;
+  };
 }
 
 export interface PromptConfigAudio {

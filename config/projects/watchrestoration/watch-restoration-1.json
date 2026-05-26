@@ -109,9 +109,15 @@
   },
   "subtitles": {
     "enabled": true,
-    "provider": "submagic",
-    "user_theme_id": "8ef61dce-7589-48ff-b269-8623a3a5179e",
-    "language": "en"
+    "provider": "opusclip",
+    "language": "en",
+    "opusclip": {
+      "caption_style": "one-line",
+      "caption_position": "auto",
+      "caption_animation": "pop",
+      "highlight_color": "#04f827",
+      "brand_template_id": null
+    }
   },
   "pipeline": {
     "use_legacy_fallbacks": true
