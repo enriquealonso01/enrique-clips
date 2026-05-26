@@ -876,7 +876,11 @@ export type Database = {
         | "thumbnail"
       log_level: "debug" | "info" | "warn" | "error"
       posting_frequency: "manual" | "interval_hours" | "cron"
-      project_lifecycle: "testing" | "awaiting_monetization" | "monetized"
+      project_lifecycle:
+        | "testing"
+        | "awaiting_monetization"
+        | "monetized"
+        | "killed"
       publish_job_status:
         | "not_started"
         | "submitted"
@@ -1082,7 +1086,12 @@ export const Constants = {
       ],
       log_level: ["debug", "info", "warn", "error"],
       posting_frequency: ["manual", "interval_hours", "cron"],
-      project_lifecycle: ["testing", "awaiting_monetization", "monetized"],
+      project_lifecycle: [
+        "testing",
+        "awaiting_monetization",
+        "monetized",
+        "killed",
+      ],
       publish_job_status: [
         "not_started",
         "submitted",

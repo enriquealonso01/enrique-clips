@@ -4,12 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-export type LifecycleStatus = "testing" | "awaiting_monetization" | "monetized";
+export type LifecycleStatus = "testing" | "awaiting_monetization" | "monetized" | "killed";
 
 export const LIFECYCLE_OPTIONS: { value: LifecycleStatus; label: string }[] = [
   { value: "testing", label: "Testing" },
   { value: "awaiting_monetization", label: "Awaiting Monetization" },
   { value: "monetized", label: "Monetized" },
+  { value: "killed", label: "Killed" },
 ];
 
 export function lifecycleLabel(status: string | null | undefined): string {
@@ -20,6 +21,7 @@ const badgeStyles: Record<LifecycleStatus, string> = {
   testing: "bg-muted text-foreground",
   awaiting_monetization: "bg-warning text-warning-foreground",
   monetized: "bg-success text-success-foreground",
+  killed: "bg-destructive text-destructive-foreground",
 };
 
 export function LifecycleBadge({ status }: { status: string | null | undefined }) {
