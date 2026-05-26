@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
 import { LifecycleBadge, ReviewDueIcon, reviewDueInfo } from "@/components/LifecycleStatus";
-import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical, Copy } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical, Copy, Folder } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
@@ -28,10 +29,31 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
+// Longest common prefix of the project titles in a folder, trimmed of trailing
+// separators/numbers-spacing — gives "Secret Backyard Builds" from "... 1/2/3".
+function commonTitlePrefix(titles: string[]): string {
+  if (titles.length === 0) return "";
+  let prefix = titles[0];
+  for (let i = 1; i < titles.length; i++) {
+    const t = titles[i];
+    let j = 0;
+    while (j < prefix.length && j < t.length && prefix[j] === t[j]) j++;
+    prefix = prefix.slice(0, j);
+    if (!prefix) break;
+  }
+  return prefix.replace(/[\s\-–—#:.]+$/, "").trim();
+}
+
+function folderLabel(profileUsername: string, projects: { title: string }[]): string {
+  const prefix = commonTitlePrefix(projects.map((p) => p.title));
+  return prefix.length >= 3 ? prefix : profileUsername;
+}
+
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [view, setView] = useState<"active" | "archived">("active");
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ["projects"],
@@ -203,6 +225,25 @@ export default function ProjectsPage() {
     return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading projects...</div>;
   }
 
+  // Auto-group projects that share an Upload-Post profile (a channel). A channel
+  // with 2+ project rows folds into a collapsible folder; single-project channels
+  // (and projects with no profile) stay as flat top-level cards.
+  const visibleProjects = filteredProjects ?? [];
+  const profileGroups = new Map<string, typeof visibleProjects>();
+  for (const p of visibleProjects) {
+    if (!p.uploadpost_profile_username) continue;
+    const arr = profileGroups.get(p.uploadpost_profile_username);
+    if (arr) arr.push(p);
+    else profileGroups.set(p.uploadpost_profile_username, [p]);
+  }
+  const folders = Array.from(profileGroups.entries())
+    .filter(([, list]) => list.length >= 2)
+    .map(([key, list]) => ({ key, label: folderLabel(key, list), projects: list }));
+  const folderedIds = new Set(folders.flatMap((f) => f.projects.map((p) => p.id)));
+  const ungroupedProjects = visibleProjects.filter((p) => !folderedIds.has(p.id));
+  const toggleFolder = (key: string) =>
+    setOpenFolders((s) => ({ ...s, [key]: !s[key] }));
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -242,8 +283,9 @@ export default function ProjectsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredProjects?.map((project) => {
+        <div className="space-y-4">
+          {(() => {
+            const renderProjectCard = (project: NonNullable<typeof projects>[number]) => {
             const latestRun = getLatestRun(project.id);
             const canPause = latestRun?.status === "running";
             const canResume = latestRun?.status === "paused";
@@ -438,7 +480,44 @@ export default function ProjectsPage() {
                 </CardContent>
               </Card>
             );
-          })}
+            };
+            return (
+              <>
+                {ungroupedProjects.length > 0 && (
+                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+                    {ungroupedProjects.map(renderProjectCard)}
+                  </div>
+                )}
+                {folders.map((folder) => (
+                  <Collapsible
+                    key={folder.key}
+                    open={!!openFolders[folder.key]}
+                    onOpenChange={() => toggleFolder(folder.key)}
+                  >
+                    <Card>
+                      <CollapsibleTrigger asChild>
+                        <button className="w-full flex items-center justify-between gap-2 p-4 text-left hover:bg-muted/50 transition-colors">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span className="font-semibold truncate">{folder.label}</span>
+                            <span className="text-sm text-muted-foreground shrink-0">{folder.projects.length}</span>
+                          </div>
+                          <ChevronDown
+                            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${openFolders[folder.key] ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 p-4 pt-0">
+                          {folder.projects.map(renderProjectCard)}
+                        </div>
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>
