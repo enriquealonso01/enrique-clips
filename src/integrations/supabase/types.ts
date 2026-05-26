@@ -254,6 +254,7 @@ export type Database = {
           kling_model_name: string
           kling_sound: boolean
           last_run_at: string | null
+          lifecycle_status: Database["public"]["Enums"]["project_lifecycle"]
           negative_prompt: string | null
           pika_model: string
           pika_resolution: string
@@ -271,6 +272,7 @@ export type Database = {
           series_rules: string | null
           teaser_intro_config: Json
           teaser_intro_enabled: boolean
+          testing_due_date: string | null
           timezone: string
           title: string
           updated_at: string
@@ -292,6 +294,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           last_run_at?: string | null
+          lifecycle_status?: Database["public"]["Enums"]["project_lifecycle"]
           negative_prompt?: string | null
           pika_model?: string
           pika_resolution?: string
@@ -309,6 +312,7 @@ export type Database = {
           series_rules?: string | null
           teaser_intro_config?: Json
           teaser_intro_enabled?: boolean
+          testing_due_date?: string | null
           timezone?: string
           title?: string
           updated_at?: string
@@ -330,6 +334,7 @@ export type Database = {
           kling_model_name?: string
           kling_sound?: boolean
           last_run_at?: string | null
+          lifecycle_status?: Database["public"]["Enums"]["project_lifecycle"]
           negative_prompt?: string | null
           pika_model?: string
           pika_resolution?: string
@@ -347,6 +352,7 @@ export type Database = {
           series_rules?: string | null
           teaser_intro_config?: Json
           teaser_intro_enabled?: boolean
+          testing_due_date?: string | null
           timezone?: string
           title?: string
           updated_at?: string
@@ -870,6 +876,7 @@ export type Database = {
         | "thumbnail"
       log_level: "debug" | "info" | "warn" | "error"
       posting_frequency: "manual" | "interval_hours" | "cron"
+      project_lifecycle: "testing" | "awaiting_monetization" | "monetized"
       publish_job_status:
         | "not_started"
         | "submitted"
@@ -1075,6 +1082,7 @@ export const Constants = {
       ],
       log_level: ["debug", "info", "warn", "error"],
       posting_frequency: ["manual", "interval_hours", "cron"],
+      project_lifecycle: ["testing", "awaiting_monetization", "monetized"],
       publish_job_status: [
         "not_started",
         "submitted",

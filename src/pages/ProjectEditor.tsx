@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StatusBadge } from "@/components/StatusBadge";
+import { LIFECYCLE_OPTIONS, reviewDueInfo } from "@/components/LifecycleStatus";
 import { ArrowLeft, Save, RefreshCw, AlertTriangle, ImageIcon, ChevronDown, Loader2, Send } from "lucide-react";
 import { TrackSelector } from "@/components/TrackSelector";
 import { OverlayEditor } from "@/components/OverlayEditor";
@@ -224,6 +225,50 @@ export default function ProjectEditor() {
 
         {/* Series Tab */}
         <TabsContent value="series" className="space-y-4 mt-4">
+          {/* Lifecycle / kill-review */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Lifecycle</CardTitle>
+              <CardDescription>
+                Testing → Awaiting Monetization → Monetized. Give a channel in testing a review date; if it hasn't cleared the bar by then, kill it (archive).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select value={(form.lifecycle_status as string) || "testing"} onValueChange={(v) => update("lifecycle_status", v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {LIFECYCLE_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {((form.lifecycle_status as string) || "testing") === "testing" && (
+                  <div className="space-y-2">
+                    <Label>Review due date</Label>
+                    <Input
+                      type="date"
+                      value={(form.testing_due_date as string) || ""}
+                      onChange={(e) => update("testing_due_date", e.target.value || null)}
+                    />
+                  </div>
+                )}
+              </div>
+              {((form.lifecycle_status as string) || "testing") === "testing" && (() => {
+                const info = reviewDueInfo(form.testing_due_date as string | null);
+                const alert = info.state === "overdue" || info.state === "today";
+                return (
+                  <p className={`text-xs ${alert ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                    {info.message}.
+                  </p>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Series Configuration</CardTitle>

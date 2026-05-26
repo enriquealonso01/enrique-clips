@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusBadge } from "@/components/StatusBadge";
+import { LifecycleBadge, ReviewDueIcon, reviewDueInfo } from "@/components/LifecycleStatus";
 import { Plus, Play, Pause, Square, ChevronDown, Upload, UploadCloud, Archive, ArchiveRestore, MoreVertical, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useNavigate } from "react-router-dom";
@@ -133,7 +134,7 @@ export default function ProjectsPage() {
         .single();
       if (srcErr) throw srcErr;
 
-      const { id, created_at, updated_at, last_run_at, ...rest } = src;
+      const { id, created_at, updated_at, last_run_at, lifecycle_status, testing_due_date, ...rest } = src;
       const { data: newProject, error: insertErr } = await supabase
         .from("projects")
         .insert({ ...rest, title: `${src.title} (Copy)`, is_enabled: false })
@@ -255,9 +256,14 @@ export default function ProjectsPage() {
                 onClick={() => navigate(`/projects/${project.id}`)}
               >
                 <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg truncate">{project.title}</CardTitle>
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CardTitle className="text-lg truncate">{project.title}</CardTitle>
+                      {project.lifecycle_status === "testing" && (
+                        <ReviewDueIcon dueDate={project.testing_due_date} />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
                       {!project.is_archived && (
                         <Switch
                           checked={project.is_enabled}
@@ -310,6 +316,22 @@ export default function ProjectsPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Status</span>
+                    <LifecycleBadge status={project.lifecycle_status} />
+                  </div>
+                  {project.lifecycle_status === "testing" && (() => {
+                    const info = reviewDueInfo(project.testing_due_date);
+                    const alert = info.state === "overdue" || info.state === "today";
+                    return (
+                      <div className="flex items-start justify-between gap-2 text-sm">
+                        <span className="text-muted-foreground shrink-0">Review</span>
+                        <span className={alert ? "text-destructive font-medium text-right" : "text-muted-foreground text-right"}>
+                          {info.message}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Last Run</span>
                     {latestRun ? <StatusBadge status={latestRun.status} /> : <span className="text-muted-foreground">—</span>}
