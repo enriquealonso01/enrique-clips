@@ -42,6 +42,12 @@
       "title": "Secret Backyard Builds 3",
       "profile_username": "secretBackyardBuilds",
       "path": "config/projects/secretBackyardBuilds/secret-backyard-builds-3.json"
+    },
+    {
+      "project_id": "0cf531fe-c4b5-49b3-a6fe-5e82e7240f4e",
+      "title": "History of Builds",
+      "profile_username": "historyofbuilds",
+      "path": "config/projects/historyofbuilds/history-of-builds.json"
     }
   ]
 }

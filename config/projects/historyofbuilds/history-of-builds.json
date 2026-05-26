@@ -1,0 +1,339 @@
+{
+  "audio": {
+    "prompt": "Audio must contain ONLY realistic diegetic environmental and construction sounds that match the exact historical era, materials, workforce, weather, and on-screen actions. No music, no soundtrack, no cinematic score, no trailer sound design. If the build is ancient, use era-appropriate sounds such as stone dragging, ropes under tension, hammering, chiseling, wooden scaffolding creaks, carts, animals, crowd labor, wind, dust, water, and distant settlement ambience. If the build is medieval or early modern, use believable hand tools, quarry work, timber framing, pulleys, lime work, masonry impacts, wagon movement, shouted labor, and environmental ambience appropriate to the period. If the build is industrial-era, use period-correct steam, metal work, cranes, riveting, carts, rail, or other historically correct machinery only if that technology truly belongs to that year range. Sound must always match the visible construction method and historical period exactly.",
+    "enabled": true,
+    "strategy": "sfx_only"
+  },
+  "global": {
+    "rules": [
+      "Between consecutive keyframes, the construction state must advance clearly and measurably. New masonry, framing, scaffolding, roofing, or structural sections must be visibly added from one keyframe to the next.",
+      "Consecutive keyframes must never depict the same build state or a near-duplicate build state. If the structure looks almost the same, the keyframe is invalid.",
+      "All movable elements must change position between consecutive keyframes: workers, animals, carts, cranes, ropes, scaffolding activity, materials, debris, tools, and transport loads must not remain frozen in the same place.",
+      "Never preserve people, animals, carts, loads, tools, or temporary construction elements in identical positions from one keyframe to the next.",
+      "Temporary construction elements such as carts, ramps, rope lines, hoists, ladders, stacked stone, timber piles, and work platforms should evolve naturally between keyframes rather than remaining static.",
+      "Construction progress must always be visibly caused by active labor. Walls, arches, roofs, towers, cladding, ornament, and structural mass must only advance when workers, animals, or period-correct mechanisms are visibly performing the work.",
+      "Nothing may advance by magic between keyframes. If something is more complete in the next keyframe, visible labor and material flow must explain that progress.",
+      "Each keyframe must show a materially different moment of the same construction process, not a frozen restaging of the same moment.",
+      "The output must be vertical 9:16 and visually upright, never sideways.",
+      "The drone is in continuous motion in EVERY single clip. There is never a static, locked, fixed, motionless, or tripod-style shot anywhere in the video, including the opening scene. The camera is always smoothly flying.",
+      "The camera must use a wide variety of exotic and dramatic angles while always moving — not only standard exterior aerial views. Include moving angles such as: pushing in low across the empty site, flying low through an archway or corridor under construction, rising up the face of a growing wall, skimming along a half-built wall at scaffold height, sweeping under a partially built arch or vault, orbiting a tower or dome, descending into a courtyard or nave, and peering down through an unfinished roof opening. Every angle must feel like a moving drone captured it.",
+      "The structure must be a real, world-famous historical landmark that a general US / American audience instantly recognizes when finished — either a major United States landmark or a globally iconic structure that Americans know on sight.",
+      "Start with the real exact location where the landmark was actually built.",
+      "The first scene and the initial consistency image must show the actual construction site itself before the landmark exists, not a different scenic area nearby and not an unrelated establishing shot.",
+      "The opening view must already be centered on the exact future footprint of the landmark.",
+      "Do not begin with a generic landscape, unrelated city view, nearby river view, different hill, different field, or any other location that is not the precise build site.",
+      "Every scene must show clear visible construction progress.",
+      "Each scene must have a strongly different start state and end state.",
+      "Construction progress must be visibly caused by human labor, animals, or historically correct machines actually doing the work.",
+      "Nothing may appear instantly or magically.",
+      "Construction must be strictly additive. Structures built in a previous scene must remain and be built upon in subsequent scenes. Nothing that has been built may disappear, regress, or be un-built. This is the most critical rule: if a wall, tower, arch, dome, scaffold, ramp, or any permanent structural element exists in keyframe N, it MUST still exist in keyframe N+1 and all subsequent keyframes. Violation of this rule makes the video invalid.",
+      "The final scene must depict the landmark in its fully completed state, free of all scaffolding, construction debris, temporary ramps, and active labor, presenting the magnificent final structure as a finished monument.",
+      "Many workers are allowed when appropriate, and crowd labor should feel believable for the scale and era.",
+      "All workers, clothing, tools, materials, transport methods, scaffolding, and construction techniques must match the actual historical period.",
+      "Any machinery must be strictly limited to technology that truly existed during the structure's real construction years.",
+      "Never use modern construction vehicles, modern PPE, modern cranes, helicopters, excavators, bulldozers, concrete pumps, dump trucks, or present-day site equipment unless the structure is genuinely from a modern era that used them.",
+      "Preserve architectural style accuracy for the real structure and era.",
+      "Preserve geographic and environmental plausibility for the true location.",
+      "The structure must remain recognizable as the real famous landmark by the final scene.",
+      "The surrounding landscape or city context must remain coherent across scenes.",
+      "Do not transform into a different structure halfway through.",
+      "Do not change to a different site or different geography after the first scene.",
+      "Show believable build stages such as surveying, groundwork, quarrying, hauling, foundations, wall raising, scaffolding growth, structural completion, roofing, finishing, and ornament when appropriate.",
+      "Large-scale progress across the whole construction site matters more than individual worker close detail.",
+      "No fantasy architecture, no speculative sci-fi additions, no magical effects.",
+      "No montage shots, no split screens, no multiple camera angles inside one clip.",
+      "No text, numbers, captions, subtitles, logos, watermarks, labels, or any drawn/written/painted text inside generated frames. The video generation model must NEVER draw, write, paint, etch, or render any letters, words, numbers, or symbols onto the image. Any text visible in the generated frame makes it invalid.",
+      "Choose a landmark that is instantly recognizable to a US / American audience, and always prefer the most recognizable option that has not been used before. Never choose an obscure structure the average American would not recognize. Recognizing the finished landmark is the entire payoff.",
+      "Every frame of every scene must show active visible labor: workers hauling, lifting, chiseling, hammering, stacking, or moving materials. There must never be a moment where the construction site appears idle or static.",
+      "Construction machinery and workforce appropriate to the era must always be visibly in motion: carts rolling, cranes turning, ropes pulling, scaffolds being climbed, animals hauling loads. The site must feel alive with coordinated activity at all times.",
+      "Between any two consecutive frames, there must be obvious measurable structural change: new wall sections risen, new scaffold levels added, new materials deposited, new architectural elements placed. Stagnant or near-duplicate frames are never acceptable.",
+      "ABSOLUTELY NO REGRESSION: If a structure, wall, tower, dome, roof, scaffold, ramp, or any built element is visible in one keyframe, it must remain visible and intact in ALL subsequent keyframes. Structures must never be torn down, removed, reduced, or made to disappear between keyframes. The only exception is scaffolding and temporary construction aids being removed in the FINAL scene to reveal the clean finished landmark.",
+      "Camera angle transitions between scenes must always feel like a single drone continuously flying to a new vantage point. There must be NO hard cuts or instant angle jumps. Every transition must feel like the drone is smoothly repositioning — banking, climbing, descending, orbiting, or threading through the structure — to reach the next viewpoint. The timelapse construction progress must continue uninterrupted during these drone repositioning movements."
+    ],
+    "style_notes": "Ultra-photorealistic historical aerial documentary realism, shot entirely by a single drone in continuous flight. Every video should feel like a real drone witnessing the true construction of a famous landmark across time — believable labor, historically correct materials and tools, era-correct machinery only when relevant, realistic urban or natural surroundings, and massive large-scale transformation. The drone is ALWAYS moving: it pushes in across the empty site, flies through partially built interiors, skims along walls at scaffold height, rises up tower faces, peers down through unfinished roofs, sweeps under arches, and orbits the structure — never a static, locked, or tripod shot, not even at the opening. Angle changes are smooth flights to the next position, never hard cuts, and the construction keeps advancing during every move. Premium documentary realism, not fantasy, not stylized CGI, not game-like. One continuous accelerated historical build captured by one tireless, ever-moving drone.",
+    "content_type": "transformation",
+    "concept_prompt": "Create ultra-realistic historical construction timelapse videos for the channel HistoryOfBuilds. Each video documents ONE famous real-world landmark being built from its empty pre-build site through the full construction process until the finished, instantly recognizable landmark stands complete.\n\nChoose landmarks that a general US / American audience will instantly recognize when finished: major United States landmarks (such as the Statue of Liberty, Golden Gate Bridge, Empire State Building, Hoover Dam, Mount Rushmore, Gateway Arch, US Capitol, Lincoln Memorial, Brooklyn Bridge, Washington Monument, Chrysler Building) and globally iconic structures Americans know on sight (such as the Eiffel Tower, Colosseum, Great Pyramid of Giza, Leaning Tower of Pisa, Big Ben, Notre-Dame, Christ the Redeemer, Taj Mahal, Great Wall of China, Parthenon, Sagrada Familia, Stonehenge). Always prefer the most recognizable landmark available, and never repeat one. Recognizing the finished structure is the entire payoff.\n\nThe whole video is captured by a single drone in continuous flight that is ALWAYS moving — pushing in, flying through, tracking along, rising, descending, and orbiting. There is no static or locked-off shot anywhere, including the opening. As the structure rises the drone exploits it: through archways, along scaffold-height walls, up tower faces, over unfinished roofs, inside courtyards. Every angle change is a smooth flight to the next position, never a hard cut, and the construction keeps advancing during the move.\n\nEvery video begins on the exact empty real footprint before the structure exists, opening with a fast drone push-in as the first workers and tools appear, then progresses through clear, large, fast, additive steps until the landmark is complete.\n\nHistorical accuracy is mandatory: all tools, materials, machines, scaffolding, transport, clothing, workforce, and methods must belong to the real era the landmark was built in. Construction is always visibly caused by workers, crews, animals, or period-correct machines — nothing appears by magic, and no modern equipment appears unless the real construction years used it.\n\nConstruction is strictly additive: once any structural element is built it remains in every later scene; nothing ever disappears or regresses. The final result is the clean, complete, recognizable landmark. No frame may contain any embedded text, letters, numbers, labels, logos, or watermarks.",
+    "negative_prompt": "static camera, locked-off camera, fixed camera, motionless camera, tripod shot, barely moving camera, frozen camera, modern excavator, bulldozer, concrete pump truck, dump truck, tower crane, mobile crane, helicopter, drone visible in frame, modern safety vest, hard hat in ancient era, neon colors, modern city skyline in ancient scene, present-day roads in ancient scene, present-day tourists, fantasy castle, sci-fi building, CGI look, video game render, cartoon, anime, stylized art, magical appearance, floating stones, impossible physics, warped geometry, morphing, melting, blurry, low quality, extra limbs, deformed faces, duplicated workers, near-empty site with no visible labor, structure appearing instantly, wrong historical era, wrong tools, wrong clothing, wrong machinery, wrong architectural style, split screen, collage, text, subtitle, logo, watermark, written words, drawn text, painted letters, etched numbers, any text in frame, structure disappearing, wall removed, tower gone, regression, demolished section, reduced structure, building shrinking, hard cut, jump cut, instant angle change, camera teleportation"
+  },
+  "keyframes": {
+    "prompt_template": "Generate a high-quality {aspect_ratio} photorealistic vertical image for this scene's END frame. This is keyframe K{scene_index} of {total_scenes}.\n\n=== MOVING DRONE CAMERA ANGLE ===\nThis keyframe must use the specific moving drone angle assigned to this scene. The drone captures the construction from creative and dramatic vantage points while in continuous flight — pushing in across the site, flying low through archways, rising up walls and towers, skimming along scaffolding, sweeping under arches, orbiting features, descending into courtyards, or peering down through unfinished roofs. The angle must feel like a real moving drone captured it from this specific position. Never a static, locked, or tripod-style framing. Maintain perfect continuity of the construction state regardless of angle.\n\n=== CONSTRUCTION CONTINUITY ===\nCRITICAL: Each keyframe must show the entire construction site at a more advanced state than the last. The build process must be STRICTLY ADDITIVE — every wall, tower, arch, dome, roof, column, and foundation that existed in any prior keyframe MUST still be present and visible. Nothing built may disappear, shrink, or regress. If any previously completed structural element is missing, this keyframe is INVALID. Progress must be logical and clear.\n\n=== ANTI-SPLIT-SCREEN ===\nABSOLUTELY FORBIDDEN: divided frames, split screens, multi-panel layouts, before/after comparisons, stacked images, side-by-side views, triptychs, diptychs, collages, montages, film strips. The ENTIRE canvas must be ONE seamless photorealistic scene from ONE camera position. If the image contains any horizontal or vertical dividing lines creating separate panels, it is WRONG.\n\n=== NO TEXT IN GENERATED FRAMES ===\nABSOLUTELY FORBIDDEN: Any text, letters, words, numbers, symbols, labels, captions, titles, signs, inscriptions, or written content drawn, painted, etched, or rendered anywhere in the generated image. The image must contain ZERO text of any kind. If any text appears in the generated frame, it is INVALID.\n\n=== ALWAYS ACTIVE CONSTRUCTION ===\nEvery keyframe (except the final one) must show ACTIVE construction labor. Workers hauling stone, climbing scaffolds, operating cranes, chiseling, hammering, laying bricks, pulling ropes, driving carts. The site must feel alive. NEVER an idle or empty site.\n\n=== GLOBAL CONCEPT ===\n{concept_prompt}\n\n=== STYLE BIBLE ===\n{style_bible}\n\n=== SCENE END FRAME GOAL ===\n{end_keyframe_prompt}\n\n=== COMPOSITION RULES ===\n{composition_rules}\n\n=== CONTINUITY RULES ===\n{continuity_rules}\n\n=== GLOBAL RULES ===\n{global_rules}\n\nEvery new keyframe must represent a later, more advanced construction moment with obvious visual progress. The structure, scaffolding, and material placement must clearly evolve from the previous keyframe. No near-duplicate scenes are allowed. Workers, animals, carts, ropes, cranes, tools, and temporary construction materials must all shift naturally to new positions between keyframes. Never leave movable elements frozen in the same place as the prior keyframe. If any architectural element becomes more complete, visible labor must explain the change. ALL previously built permanent structures must remain intact.\n\nSINGLE UNDIVIDED photorealistic image. ONE moving drone camera angle per keyframe. Active construction labor throughout. No text, captions, logos, labels, watermarks, or any written content in the generated image.",
+    "continuity_rules": [
+      "Construction must be strictly additive. Every permanent structural element (wall, tower, arch, dome, roof, column, foundation) completed in a previous keyframe must persist and be visible in all subsequent keyframes. Nothing may disappear, shrink, or regress.",
+      "If a wall was 10 meters tall in keyframe N, it must be at least 10 meters tall in keyframe N+1. If a tower existed in keyframe N, it must exist in keyframe N+1. Violation of this rule makes the keyframe invalid.",
+      "The drone uses a different moving angle for each scene. Despite the angle change, all previously built structures must remain visible and consistent.",
+      "No object may appear that was not present or under construction in the previous keyframe unless it is being visibly introduced through active labor, delivery, lifting, hauling, or placement.",
+      "Preserve historical era consistency.",
+      "Keep architecture faithful to the same real landmark throughout.",
+      "Each keyframe must show a clearly more advanced construction state than the previous one. Structural differences must be obvious at a glance.",
+      "Consecutive keyframes must never be near-duplicates in layout, labor placement, or construction state.",
+      "Workers, animals, carts, cranes, ropes, scaffolds, tools, and temporary materials must not remain frozen in identical positions between consecutive keyframes.",
+      "Movable elements must always shift naturally between keyframes so the sequence feels like different moments in time, not a copied still with minor edits.",
+      "The completed landmark must be recognizable by the final keyframe.",
+      "Active construction labor must be visible in EVERY keyframe without exception, until the final reveal scene which must be clean and finished.",
+      "If a wall, tower, arch, roof, scaffold level, or decorative section becomes more complete, workers or lifting systems must be visibly responsible for that advancement.",
+      "Do not preserve the exact same animal, person, cart, bundle, ladder, or temporary object in the same position from one keyframe to the next.",
+      "The surrounding landscape, terrain, and site anchor features must remain consistent and recognizable across all keyframes regardless of drone angle changes.",
+      "ABSOLUTELY NO TEXT may be drawn, written, painted, or rendered in any generated keyframe image. Zero letters, words, numbers, or symbols.",
+      "Transitions between keyframes must feel like the drone smoothly flying to the next position. The construction state must advance continuously — no freezing or pausing during angle transitions."
+    ],
+    "single_shot_only": true,
+    "composition_rules": [
+      "The ENTIRE canvas must be ONE SINGLE CONTINUOUS SCENE — never divided, split, stacked, or showing multiple views.",
+      "ABSOLUTELY FORBIDDEN: split screens, multi-panel layouts, before/after comparisons, stacked images, side-by-side views, triptychs, diptychs, collages, montages, film strips, or any composition dividing the frame into sections. Any horizontal or vertical line creating separate panels means the image is WRONG.",
+      "Use a vertical 9:16 composition.",
+      "Use the specific moving drone angle assigned to this scene. The drone captures from creative vantage points while in flight — push-ins across the site, interior fly-throughs, scaffold-height passes, rises up walls and towers, sweeps under arches, tight orbits around features, descents into courtyards, and dramatic aerial approaches. Never a static, locked, or tripod-style framing.",
+      "Workers, crews, carts, animals, scaffolds, cranes, ramps, and materials must be actively working in EVERY keyframe except the final reveal shot.",
+      "The landmark should grow readably scene by scene, with all previously built elements persisting across angle changes.",
+      "Show enough site context to communicate scale and place.",
+      "ABSOLUTELY NO TEXT, letters, words, numbers, or symbols may appear anywhere in the generated image."
+    ]
+  },
+  "memory": {
+    "enabled": true,
+    "instruction": "Do not repeat any landmark, building, or structure from previous videos. Choose only world-famous landmarks that are instantly recognizable to a general US / American audience — major US landmarks and globally iconic structures Americans know on sight. Always prefer the most recognizable option that has not been used yet, and ensure variety across videos.",
+    "lookback_count": 30
+  },
+  "metadata": {
+    "title_prompt": "Generate a highly clickable short-form video title about watching a famous, instantly recognizable real landmark get built from nothing to completion. Include the exact landmark name. Emphasize awe, realism, and historical construction. Maximum 100 characters.",
+    "hashtag_prompt": "Generate 8 to 12 hashtags for a viral short about a famous historical construction timelapse. Mix architecture, history, engineering, famous landmarks, and short-form discovery hashtags.",
+    "description_prompt": "Generate an engaging short description for a historical construction timelapse showing a famous, instantly recognizable real landmark being built from the empty site to completion. Mention the exact landmark name, the historical realism, and the passing years. Add a light CTA. Maximum 500 characters."
+  },
+  "motion": {
+    "camera_rules": [
+      "The entire video must feel as if shot by a single drone flying continuously around and through the construction site. The drone is ALWAYS moving and uses exotic, dramatic angles: low push-ins across the site, fly-throughs inside partially built structures, scaffold-height passes along walls, rises up tower faces, sweeps under arches, descents into rising courtyards or naves, peers down through unfinished roofs, and tight orbits around features. Not a single shot is static — variety, motion, and surprise are essential.",
+      "Transitions between camera angles must ALWAYS feel like the drone is smoothly flying from one vantage point to the next. The drone banks, climbs, descends, orbits, threads through openings, or sweeps around corners to reach each new angle. There must be NO hard cuts, NO instant angle jumps, and NO camera teleportation. Every angle change must show continuous drone motion.",
+      "CRITICAL: The timelapse construction progress must continue uninterrupted during drone repositioning movements. While the drone flies from one angle to the next, workers keep working, walls keep rising, scaffolding keeps growing, and materials keep moving. The timelapse never pauses or freezes for a camera move. Construction and camera movement happen simultaneously.",
+      "Within each scene clip, the drone performs one continuous smooth movement — a push-in, fly-through, rising crane move, descending approach, tracking glide, or orbit — that lasts the whole clip while the timelapse construction continues underneath.",
+      "No handheld feel, vibration, shake, wobble, or jitter. The drone movement must be perfectly smooth and controlled at all times, but it must always be moving — never static or locked off."
+    ],
+    "motion_rules": [
+      "Motion must feel like real accelerated historical construction footage captured by a continuously flying drone.",
+      "Visible progress must be caused by labor and logistics, not magical appearance.",
+      "Workers may be numerous when appropriate to the scale and era.",
+      "Animals may be used only when historically appropriate.",
+      "Machines may be used only when historically appropriate.",
+      "Show believable repeated actions such as hauling, carving, lifting, stacking, setting stone, erecting scaffolds, moving carts, operating cranes, working ramps, roofing, or finishing details depending on the era.",
+      "The dominant visual effect must be macro change across the full construction site.",
+      "Avoid random busy motion with little visible progress.",
+      "Avoid morphing, teleportation, melting, or impossible structural jumps.",
+      "Respect gravity, load-bearing logic, and realistic historical engineering.",
+      "Keep worker movement and crowd flow believable from the drone viewpoint.",
+      "Surrounding context may evolve naturally over years, but the build itself must remain the main visible event.",
+      "No person, animal, cart, crane arm, rope line, scaffold crew, material pile, or temporary object should appear locked in the exact same position across consecutive moments.",
+      "Construction motion must create visible state change. A clip is invalid if the site looks almost unchanged from start to end.",
+      "Structural growth must be obvious within each clip: new wall height, new scaffold levels, new placed materials, or newly completed sections must appear through visible work.",
+      "Nothing may become more complete unless workers, animals, or period-correct lifting systems are visibly causing that progress.",
+      "CRITICAL ADDITIVE RULE: All permanent structural elements visible at the end of one clip must still be present at the start of the next clip. Walls, towers, arches, domes, roofs, and completed sections must NEVER disappear, shrink, or regress between clips. Construction is one-directional: it only adds, never removes permanent structure. The only removal allowed is scaffolding and temporary aids in the final reveal scene.",
+      "CRITICAL CONTINUOUS TIMELAPSE RULE: The timelapse construction progress must NEVER pause, freeze, or stop during camera repositioning. While the drone flies from one angle to the next, the construction continues at full timelapse speed. Workers keep working, walls keep rising, materials keep moving. Camera movement and construction progress are simultaneous and independent — the camera moving does not interrupt the build.",
+      "Transitions between scenes must show the drone smoothly flying to a new vantage point while construction continues. No hard cuts or instant angle jumps are allowed."
+    ],
+    "prompt_template": "{kling_prompt}\n\nFollow all camera and motion rules. The clip must feel like real accelerated historical construction footage captured by a single continuously flying drone that is always moving. The drone uses exotic angles — not only high exterior aerials — including push-ins across the site, fly-throughs inside partially built structures, scaffold-height passes, rises up walls, views from inside looking out, peering down through unfinished roofs, and sweeping under arches. There is no static or locked-off shot. Transitions between angles must feel like the drone smoothly flying to the next position — never a hard cut or instant jump. CRITICAL: The timelapse construction progress must continue uninterrupted even while the drone repositions. Construction and camera movement happen simultaneously — the build never pauses for a camera move. Construction progress must be visibly caused by workers, animals, carts, cranes, pulleys, ramps, ships, scaffolds, or other historically correct systems actually doing the work. Large-scale environmental transformation across the full site is the main event. Use only raw era-appropriate diegetic sound matching the visible labor and environment. No music. No magical changes. Respect gravity, material weight, crowd logistics, and real engineering. CRITICAL: All structures built in previous scenes must remain intact. Nothing may disappear or regress. Construction is strictly additive. No text, words, letters, numbers, or symbols may appear drawn or written in the generated frames.",
+    "negative_prompt_extra": "static camera, locked camera, fixed camera, motionless camera, tripod shot, barely moving camera, camera holds still, camera shake, camera vibration, camera wobble, camera drift, camera oscillation, handheld motion, unstable frame, jitter, hard cut, jump cut, instant angle change, camera teleportation, abrupt camera transition, construction pausing during camera move, timelapse freezing during transition, static construction during angle change, micro-pan, breathing camera, floating camera, shaky footage, morphing, flicker, warping, unstable geometry, text, watermark, logo, subtitles, written text, drawn letters, painted words, etched text, any text in generated frame, modern machinery in ancient scene, incorrect era tools, magical structure appearance, floating materials, low-progress motion, slow motion, idle workers, empty site, quiet construction, near-static scene, frozen workers, frozen animals, frozen carts, repeated object positions, identical scaffold layout, near-duplicate frames, static labor placement, unchanged material piles, copied keyframe composition, same animal same spot, same worker same spot, same cart same spot, no visible build progress, magically completed structure, structure disappearing, wall removed, building shrinking, regression, demolished section, tower gone, arch missing, completed work vanishing"
+  },
+  "overlays": {
+    "items": [
+      {
+        "style": "minimal",
+        "end_pct": 100,
+        "z_index": 2,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "top_right",
+        "font_size": 30,
+        "start_pct": 10,
+        "font_color": "#FFFFFF",
+        "sort_order": 1,
+        "content_mode": "ai_sequence",
+        "overlay_type": "text",
+        "content_prompt": "Create a year-progress overlay for the construction timeline of the exact chosen landmark. Show historically appropriate year progression from the real construction start year to the real main completion year being depicted. Keep the sequence simple, readable, and evenly spread across the full video duration. Use the format: YEAR [year]. If the real build spans a range of years or decades, progress through meaningful milestone years that match the visual stages of construction. Output uppercase text only."
+      },
+      {
+        "style": "minimal",
+        "end_pct": 100,
+        "z_index": 2,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "top_left",
+        "font_size": 24,
+        "start_pct": 10,
+        "font_color": "#FFFFFF",
+        "sort_order": 3,
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Generate exactly TWO lines of text for this overlay. Line 1: the exact name of the landmark being built in ALL CAPS (e.g. EIFFEL TOWER). Line 2: the real historical location in Title Case (e.g. Paris, France). Separate the two lines with a newline character. Output ONLY these two lines, nothing else. No quotes, no emojis, no extra punctuation."
+      },
+      {
+        "style": "engagement",
+        "end_pct": 10,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 0,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: THIS DIRT BECOMES A PLACE YOU KNOW | YEARS OF WORK IN THIRTY SECONDS | MEN DIED BUILDING THIS | THE FINAL SHAPE WILL GIVE YOU CHILLS"
+      },
+      {
+        "style": "engagement",
+        "end_pct": 23,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 20,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nTHIS IS ONLY THE START\nIT GETS BIGGER FAST\nTHEY WERE JUST GETTING STARTED\nLOOK HOW FAST THIS CHANGES\nTHIS PART CHANGES EVERYTHING\nTHE REAL WORK STARTS HERE\nIT STILL DOESN'T LOOK REAL\nNOW THE BUILD TAKES OFF\nYOU HAVEN'T SEEN THE HARD PART YET"
+      },
+      {
+        "style": "engagement",
+        "end_pct": 43,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 40,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nNOW IT STARTS TO RISE\nTHIS TOOK YEARS OF LABOR\nTHEY WERE NOWHERE NEAR DONE\nTHIS IS WHERE THE SCALE HITS\nTHE HARDEST PART STARTS HERE\nNOW THE STRUCTURE GETS REAL\nTHIS BUILD KEPT GROWING\nTHIS IS WHERE IT GETS HEAVY\nTHE WHOLE SITE CHANGES HERE"
+      },
+      {
+        "style": "engagement",
+        "end_pct": 63,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 60,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nNOW YOU CAN SEE IT\nTHIS IS WHERE IT BECOMES ICONIC\nIT FINALLY STARTS LOOKING FAMILIAR\nNOW THE SHAPE LOCKS IN\nTHIS IS THE TURNING POINT\nYOU CAN FEEL THE SCALE NOW\nTHIS IS WHERE IT ALL COMES TOGETHER\nNOW IT LOOKS IMPOSSIBLE\nIT'S FINALLY TAKING FORM"
+      },
+      {
+        "style": "engagement",
+        "end_pct": 90,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 80,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Select ONE line and output it exactly in ALL CAPS:\nWAIT FOR THE FINAL FORM\nTHIS REVEAL IS WORTH IT\nNOW IT BECOMES LEGENDARY\nDON'T SCROLL NOW\nTHIS IS THE PAYOFF\nHERE COMES THE FINISHED BUILD\nYOU NEED TO SEE THE END\nTHE FINAL SHAPE IS INSANE\nWATCH THE LAST SECONDS"
+      },
+      {
+        "style": "engagement",
+        "end_pct": 100,
+        "bg_color": "rgba(0,0,0,0)",
+        "position": "center",
+        "font_size": 28,
+        "start_pct": 90,
+        "font_color": "#FFFFFF",
+        "content_mode": "ai_generated",
+        "overlay_type": "text",
+        "content_prompt": "Select ONE CTA and output it exactly in ALL CAPS:\nWHAT SHOULD I BUILD NEXT\nWHICH LANDMARK NEXT\nWANT PART 2\nNAME THE NEXT BUILD\nWHICH ONE SHOULD RISE NEXT\nDROP THE NEXT LANDMARK\nWHAT SHOULD I REBUILD NEXT\nWHICH SITE SHOULD I START WITH"
+      }
+    ],
+    "ending": {
+      "enabled": false
+    },
+    "opening": {
+      "enabled": false
+    }
+  },
+  "pipeline": {
+    "use_legacy_fallbacks": true
+  },
+  "planning": {
+    "end_state_rules": [
+      "The final scene must show the completed landmark in its finished state.",
+      "All temporary construction elements like scaffolding, ramps, cranes, and material piles must be removed.",
+      "The site should be clean and present the structure as a magnificent, finished monument.",
+      "The final scene should not show active labor, but rather the completed work.",
+      "The final drone angle should be a dramatic reveal — a sweeping rising orbit or slow pull-back that showcases the completed landmark from a cinematic vantage point."
+    ],
+    "start_state_rules": [
+      "The opening state shows the exact real place before the landmark exists — the true footprint, terrain, and surroundings.",
+      "The initial consistency image (K0) must show this same exact empty site, framed cinematically for a drone push-in with a strong leading composition, never a flat motionless wide shot.",
+      "No part of the finished structure may already be present — the ground is empty or only just being marked out.",
+      "The real surrounding context (city block, hillside, riverbank, harbor, plateau, island) should be plausible for the true location and recognizable enough to ground the reveal.",
+      "The opening must already be framed on the exact future construction footprint.",
+      "Construction activity must begin within the opening scene.",
+      "Do not start from a nearby unrelated scenic location or generic landscape."
+    ],
+    "viral_pacing_rules": [
+      "There are only a few seconds per scene — each scene must deliver ONE large, instantly-readable jump in construction across the whole site.",
+      "Never a low-progress scene with only minor worker motion; every scene must look dramatically more built than the last.",
+      "Front-load unmistakable change: by the first third of the video the structure must already be clearly rising.",
+      "Use satisfying macro milestones — foundations emerging, walls climbing, towers/domes/spans rising, rooflines closing, ornament completing.",
+      "Reserve a strong final payoff where the landmark becomes fully recognizable and is revealed clean.",
+      "The drone's continuous motion carries the energy — closer, faster-feeling moves during intense build phases, wider sweeping moves for major milestones and the final reveal."
+    ],
+    "planner_system_prompt": "You are a historical construction documentary director creating highly viral, historically credible short-form timelapse videos for the channel HistoryOfBuilds. Each video shows ONE famous real-world landmark being built from an empty site to the finished, instantly recognizable structure, captured entirely by a single drone that is ALWAYS moving.\n\nSUBJECT SELECTION — RECOGNIZABLE TO A US AUDIENCE: Choose a real, world-famous landmark that a general American / US audience would instantly recognize when finished. This includes major United States landmarks (e.g. Statue of Liberty, Golden Gate Bridge, Empire State Building, Hoover Dam, Mount Rushmore, Gateway Arch, US Capitol, Lincoln Memorial, Brooklyn Bridge, Washington Monument, Chrysler Building) AND globally iconic structures that Americans know on sight (e.g. Eiffel Tower, Colosseum, Great Pyramid of Giza, Leaning Tower of Pisa, Big Ben, Notre-Dame, Christ the Redeemer, Taj Mahal, Great Wall of China, Parthenon, Sagrada Familia, Stonehenge). PREFER the most famous, most recognizable landmark you can that has not already been used (see series memory). Recognizing the finished landmark is the entire payoff — never choose an obscure structure the average American would not recognize. Do not choose randomly; choose for maximum recognizability while avoiding repeats.\n\nHISTORICAL FIDELITY: Before planning scenes, lock the real era, location, terrain, architecture, materials, workforce scale, transport, scaffolding and lifting methods, animals, and the level of machinery that genuinely existed when this landmark was built. Every visible action must be something that civilization and era could truly perform. Never use modern equipment (cranes, excavators, trucks, concrete pumps, helicopters, hard hats, safety vests) unless the landmark's real construction years genuinely used them.\n\nTHE CAMERA IS ALWAYS MOVING (most important visual rule): The entire video is shot by one drone in continuous flight. Every single scene's kling_prompt MUST describe one smooth, continuous drone movement that lasts the whole clip — a push-in, fly-through, low tracking glide, rising crane move, descending approach, or orbit. NEVER write 'static', 'locked', 'fixed', 'holds', 'steady', 'tripod', or 'barely moves'. There is no motionless shot anywhere in this video, including the opening. As the structure rises, exploit it: fly through archways and openings, skim along walls at scaffold height, rise up a tower face, orbit a dome, peer down through an unfinished roof, sweep inside a courtyard. Vary the angle dramatically scene to scene.\n\nCONSTRUCTION IS STRICTLY ADDITIVE — NOTHING EVER VANISHES: This channel's worst failure is a structure that builds then un-builds. When you write each scene's end_keyframe_prompt, explicitly state that the frame contains EVERY permanent structure built in all previous scenes (walls, towers, arches, domes, roofs, columns, foundations) still standing and intact, and that the ONLY change is NEW construction added on top by visible labor. Phrase it as: 'already standing from earlier scenes: [...]; newly added this scene by visible workers: [...]'. The only thing ever removed is scaffolding and temporary aids, and only in the final reveal.\n\nBIG, FAST, LEGIBLE STEPS: There are {scene_count} short scenes. Each scene must be ONE large, instantly-readable jump in construction — not a tiny change. Across all scenes the site goes from empty ground to the finished landmark in clear, escalating leaps. Every scene must look dramatically more built than the one before. Never two scenes that look nearly the same.\n\nTHE OPENING IS A ZOOM-IN HOOK: Scene 1 is a fast, smooth drone PUSH-IN (or descending fly-in) onto the exact empty real footprint where the landmark will rise. It is NOT a calm static establishing aerial. Within scene 1 the first signs of work appear fast — surveyors, a lone worker, stakes, ropes, the first carts and tools — so the frame is alive with motion, not an empty motionless landscape. The empty site that the viewer knows will become something legendary IS the hook.\n\nEVERY transition between scenes must feel like the drone smoothly flying to its next vantage point — no hard cuts, no instant angle jumps — while the construction keeps advancing during the move.\n\nThe finished landmark in the last scene must be clean (no scaffolding, no debris, no active labor) and clearly recognizable as the real famous structure.",
+    "first_scene_hook_rules": [
+      "Scene 1 is a fast cinematic drone push-in or descending fly-in onto the exact real empty footprint where the famous landmark will be built — never a slow or static establishing aerial.",
+      "Biological motion must enter within scene 1: a lone worker, surveyors, the first carts, animals, stakes, ropes, or tools, so the opening frame is alive with movement, not an empty motionless landscape.",
+      "The empty site itself is the hook — bare ground the viewer will watch become an instantly recognizable landmark.",
+      "Construction must visibly begin before scene 1 ends.",
+      "The site context should make the real location subtly recognizable even before the structure exists.",
+      "The initial consistency image (K0) and scene 1 must both be framed on the exact future footprint, not a nearby scenic view.",
+      "The opening must be readable at a glance in a vertical feed, with no text baked into the generated frame."
+    ],
+    "scene_progression_rules": [
+      "Progression is linear and strictly additive. Each scene shows the entire site at a clearly more advanced state than the previous one. New structure is added; existing structure is built upon. Nothing is ever removed, shrunk, or un-built.",
+      "CRITICAL: every permanent structural element visible in scene N must still be visible and intact in scene N+1 and every later scene. Walls, towers, arches, domes, roofs, columns, and foundations persist across all scenes regardless of the changing drone angle. If any previously built element disappears, the sequence is invalid.",
+      "With this many short scenes the change between consecutive scenes is moderate — big enough to read instantly as progress, small enough that no built structure ever disappears and the model never has to invent a regression to bridge two frames.",
+      "Each scene uses a different, dramatic, moving drone angle, but all previously built structure stays consistent and recognizable.",
+      "Every scene-to-scene transition feels like the drone smoothly flying to a new vantage point with the construction continuing during the move — no hard cuts or instant angle jumps.",
+      "The structure must grow logically — no skipping to impossible states without the intermediate structural logic.",
+      "The final scene must show the fully completed landmark, clean of all scaffolding and temporary construction elements, as a magnificent recognizable monument."
+    ],
+    "behavior_assignment_rules": [
+      "Scene 1 (empty site) MUST use cinematic_action: a single fast smooth drone push-in or descending fly-in onto the exact empty footprint as the first workers, stakes, carts, and tools appear. Never environment_idle, never a static aerial.",
+      "All middle build scenes alternate between exploration (continuous forward drone flight that tracks or threads through the rising structure) and cinematic_action (one bold drone move — orbit, dolly, crane-up, or fly-through — around the biggest change of that scene). Choose whichever best showcases that scene's structural milestone.",
+      "The final scene MUST use reveal: a sweeping rising orbit or slow pull-back that unveils the finished, recognizable landmark with no scaffolding and no active labor.",
+      "NEVER use timelapse_build or environment_idle for any scene — both lock the camera in place, which is forbidden on this channel.",
+      "Regardless of the assigned behavior, EVERY scene's kling_prompt must combine (a) one continuous smooth drone movement lasting the whole clip with (b) dense, simultaneous construction activity across the entire site and obvious structural growth. Moving camera AND busy build, together, in every single clip.",
+      "Set activity_density to high for every build scene; use low only for the final reveal scene."
+    ],
+    "creative_variation_system": {
+      "description": "Keep the same proven format — empty site to finished landmark by one continuously-moving drone — and vary the specific landmark each time. Choose only world-famous landmarks instantly recognizable to a US / American audience: major US landmarks and globally iconic structures Americans know on sight. Always prefer the most recognizable option, and never repeat a landmark (see memory).",
+      "hook_variations": [
+        "{name} BUILT IN 30 SECONDS",
+        "WATCH {name} RISE IN 30 SECONDS",
+        "{name} FROM EMPTY DIRT TO LEGEND"
+      ],
+      "landmark_categories": [
+        "american skyscraper",
+        "american suspension bridge",
+        "american monument",
+        "presidential memorial",
+        "national monument",
+        "colossal statue",
+        "famous dam",
+        "iconic clock tower",
+        "world wonder",
+        "ancient pyramid",
+        "roman amphitheater",
+        "gothic cathedral",
+        "famous basilica",
+        "iconic tower",
+        "leaning tower",
+        "triumphal arch",
+        "famous palace",
+        "world heritage temple",
+        "great wall or fortification",
+        "famous lighthouse",
+        "iconic stadium or arena",
+        "famous observation tower",
+        "historic government building",
+        "famous opera house",
+        "megalithic monument"
+      ]
+    },
+    "planner_user_prompt_template": "Create a {scene_count}-scene plan for this concept:\n\n{concept_prompt}\n\nFirst, choose ONE real, world-famous landmark that a general US / American audience would instantly recognize when finished — a major United States landmark or a globally iconic structure Americans know on sight. PREFER the most recognizable option that has not been used before (see series memory); never pick an obscure structure. Recognizing the finished landmark is the whole payoff.\n\nThen lock:\n- exact landmark name\n- real location and terrain context\n- approximate historical start and end years of the build phase shown\n- correct civilization or era and architectural style\n- historically accurate workforce, transport, lifting, scaffolding, tools, animals, and the level of machinery that truly existed then\n- 3 to 5 permanent site anchor features (hills, river, coastline, city edge) that stay visible across the whole sequence\n- the exact footprint where the landmark will rise\n\nPlan a UNIQUE, continuously-moving drone shot for EACH scene (push-in, fly-through, low tracking glide, rising crane, descending approach, orbit). No scene may be static, locked, or barely moving. As the structure rises, move through and around it. For every scene specify: (1) the drone's continuous move and position, (2) how the drone flies from the previous scene's position to this one (smooth, no hard cut), (3) that construction keeps advancing during the move.\n\nBuild the scene plan as a clear, additive arc from empty site to finished landmark, adapting these milestones to the specific landmark and scene count:\n1. the exact empty real footprint — a fast drone push-in as the first workers, stakes, carts, and tools appear\n2. survey and layout — marking out the plan, crews and materials arriving\n3. groundwork and foundations — digging, trenching, first foundation courses\n4. lower structure rising — first walls, columns, or base levels going up with scaffolding\n5. major massing — the bulk of the structure climbing, scaffolding expanding\n6. the signature form emerging — towers, dome, arches, or spans that start to make it recognizable\n7. upper structure and spanning — upper levels, roof framing, the form locking in\n8. roofing, skin and cladding — closing and surfacing the structure\n9. detail and ornament, scaffolding beginning to come down — near complete\n10. the finished landmark — clean, no scaffolding, dramatic rising or pull-back reveal, instantly recognizable\n\nCRITICAL ADDITIVE RULE: every permanent structure built in a scene MUST still be present and intact in all later scenes. For each scene's end_keyframe_prompt, explicitly note what is 'already standing from earlier scenes' and what is 'newly added this scene by visible labor'. Nothing built may ever disappear or regress; only scaffolding and temporary aids are removed, and only in the final reveal.\n\nThe drone is always moving, construction is always busy and visibly caused by period-correct labor, nothing appears by magic, and no modern equipment appears unless the real era used it. The first scene and the anchor image must both be the exact empty footprint. The final scene must reveal the completed, recognizable landmark, clean and magnificent. No text, letters, or numbers may appear inside any generated frame."
+  },
+  "version": 1,
+  "voiceover": {
+    "enabled": false
+  }
+}
