@@ -429,6 +429,27 @@ export default function ProjectEditor() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle>Keyframe Image Generation</CardTitle>
+              <CardDescription>Which AI backend generates the per-scene keyframe images</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <Label>Fal AI image creator</Label>
+                  <p className="text-xs text-muted-foreground">
+                    On: fal.ai Gemini 2.5 Flash Image (Nano Banana). Off: Google Gemini direct (default).
+                  </p>
+                </div>
+                <Switch
+                  checked={form.use_fal_image || false}
+                  onCheckedChange={(v) => update("use_fal_image", v)}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Kling Settings */}
           {((form as any).video_generator || "kling") === "kling" && (
             <Card>

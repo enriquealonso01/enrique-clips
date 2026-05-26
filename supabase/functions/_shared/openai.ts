@@ -33,6 +33,14 @@ const IMAGE_TIMEOUT_MS = 90_000;
 const IMAGE_RETRY_DELAY_MS = 5_000;
 const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
+// fal.ai image backend — opt-in alternate keyframe provider (per-project toggle).
+// Serves Gemini 2.5 Flash Image ("Nano Banana"): /edit is image-to-image (K1+
+// chaining), the base model is text-to-image (K0).
+const FAL_BASE = "https://fal.run";
+const FAL_IMAGE_MODEL = "fal-ai/gemini-25-flash-image";       // text-to-image (K0)
+const FAL_EDIT_MODEL = "fal-ai/gemini-25-flash-image/edit";   // image-to-image (K1+)
+const FAL_SAFETY_TOLERANCE = "4";                             // 1=strict … 6=permissive (fal default)
+
 /** Returns true if the model should be routed through OpenAI API */
 function isOpenAIModel(model: string): boolean {
   return model.startsWith("gpt-") || model.startsWith("openai/");
@@ -96,6 +104,12 @@ function getGeminiImageApiKey(): string {
 function getGeminiImageApiKeyBackup(): string | null {
   const backup = Deno.env.get("GOOGLE_AI_IMAGE_API_KEY_BACKUP");
   return backup || null;
+}
+
+function getFalKey(): string {
+  const key = Deno.env.get("FAL_KEY");
+  if (!key) throw new Error("FAL_KEY is not configured");
+  return key;
 }
 
 function getOpenAIApiKey(): string {
@@ -573,6 +587,18 @@ export function getImageServiceTier(): string | null {
   return _imageServiceTier;
 }
 
+// ── Image provider (Google direct vs fal.ai) ─────────────
+// Module-level toggle set per request from the project's `use_fal_image` flag.
+// Default "google" leaves the existing Gemini-direct path untouched.
+let _imageProvider: "google" | "fal" = "google";
+export function setImageProvider(provider: "google" | "fal" | null) {
+  _imageProvider = provider === "fal" ? "fal" : "google";
+  console.log(`[AI] Image provider set to: ${_imageProvider}`);
+}
+export function getImageProvider(): "google" | "fal" {
+  return _imageProvider;
+}
+
 export interface CallImageResult {
   b64_json: string;
   revised_prompt?: string;
@@ -604,7 +630,97 @@ function qualityToResolution(quality?: string): string {
   return "2K";
 }
 
+// fal.ai image generation. Mirrors callImage's return contract and error
+// semantics (timeout/5xx → Image503RetryableError) so the pipeline's existing
+// re-chain/retry logic works identically regardless of provider.
+async function falImageRequest(opts: CallImageOptions): Promise<CallImageResult> {
+  const endpoint = opts.endpoint || "image";
+  const start = Date.now();
+
+  // Image-to-image (chaining) when a reference frame is present; text-to-image for K0.
+  // fal accepts http(s) URLs or data URIs in image_urls — our chaining passes public
+  // R2 URLs, so no base64 round-trip is needed.
+  const imageUrls = opts.referenceImage ? [opts.referenceImage] : [];
+  const useEdit = imageUrls.length > 0;
+  const model = useEdit ? FAL_EDIT_MODEL : FAL_IMAGE_MODEL;
+
+  const body: Record<string, unknown> = {
+    prompt: opts.prompt,
+    num_images: 1,
+    aspect_ratio: sizeToAspectRatio(opts.size),
+    output_format: "png",
+    sync_mode: true, // return the image inline as a data URI (no extra fetch)
+  };
+  if (useEdit) {
+    body.image_urls = imageUrls;
+    body.safety_tolerance = FAL_SAFETY_TOLERANCE;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${FAL_BASE}/${model}`, {
+      method: "POST",
+      headers: { "Authorization": `Key ${getFalKey()}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      // Reuse GeminiApiError so the 5xx/timeout classification below is shared.
+      throw new GeminiApiError(resp.status, errText.substring(0, 500));
+    }
+
+    const data = await resp.json();
+    const imgUrl: string | undefined = data?.images?.[0]?.url;
+    if (!imgUrl) {
+      const desc = typeof data?.description === "string" && data.description ? `: ${data.description.substring(0, 200)}` : "";
+      throw new Error(`No image in fal response${desc}`);
+    }
+
+    // sync_mode returns a data URI; fall back to downloading a hosted URL.
+    let b64: string;
+    const dataUriMatch = imgUrl.match(/^data:[^;]+;base64,(.+)$/s);
+    if (dataUriMatch) {
+      b64 = dataUriMatch[1];
+    } else {
+      const imgResp = await fetch(imgUrl, { signal: AbortSignal.timeout(20_000) });
+      if (!imgResp.ok) throw new Error(`Failed to download fal image: ${imgResp.status}`);
+      const bytes = new Uint8Array(await imgResp.arrayBuffer());
+      const CHUNK = 32768;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+      }
+      b64 = btoa(binary);
+    }
+
+    const latency = Date.now() - start;
+    logUsage({ endpoint: `${endpoint}_fal`, model, success: true, latency_ms: latency });
+    return { b64_json: b64, revised_prompt: undefined, cost_usd: 0.039 }; // fal flat rate
+  } catch (err) {
+    const latency = Date.now() - start;
+    const isTimeout = (err as any)?.name === "AbortError" ||
+                      (err instanceof Error && err.message.includes("timed out"));
+    const is5xx = err instanceof GeminiApiError && err.status >= 500;
+    if (is5xx || isTimeout) {
+      const reason = isTimeout ? "timeout" : String((err as GeminiApiError).status);
+      console.warn(`[AI] fal image ${reason} after ${(latency / 1000).toFixed(1)}s. Waiting ${IMAGE_RETRY_DELAY_MS / 1000}s before re-chain...`);
+      logUsage({ endpoint: `${endpoint}_fal_${reason}`, model, success: false, latency_ms: latency, error: reason });
+      await sleep(IMAGE_RETRY_DELAY_MS);
+      throw new Image503RetryableError(1, reason);
+    }
+    logUsage({ endpoint: `${endpoint}_fal`, model, success: false, latency_ms: latency, error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function callImage(opts: CallImageOptions): Promise<CallImageResult> {
+  if (_imageProvider === "fal") {
+    return await falImageRequest(opts);
+  }
   const model = opts.model || MODELS.IMAGE_DRAFT;
   const endpoint = opts.endpoint || "image";
   const start = Date.now();

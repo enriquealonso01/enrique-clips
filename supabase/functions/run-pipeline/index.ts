@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { fal } from "https://esm.sh/@fal-ai/client@1";
 import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
-import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError, setImageServiceTier } from "../_shared/openai.ts";
+import { callAI, summarizeMessages, summarizeAIResponse as summarizeResp, Image503RetryableError, setImageServiceTier, setImageProvider } from "../_shared/openai.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -357,6 +357,10 @@ Deno.serve(async (req) => {
       await updateRun({ status: "failed", error_message: "Project not found" });
       return json({ error: "Project not found" }, 404);
     }
+
+    // Route keyframe image generation through fal.ai when the project opts in,
+    // otherwise keep the default Google Gemini-direct path.
+    setImageProvider((project as any).use_fal_image ? "fal" : "google");
 
     const step = run.current_step;
 

@@ -279,6 +279,7 @@ export type Database = {
           uploadpost_api_key_configured: boolean
           uploadpost_api_key_encrypted: string | null
           uploadpost_profile_username: string | null
+          use_fal_image: boolean
           video_generator: Database["public"]["Enums"]["video_generator"]
         }
         Insert: {
@@ -319,6 +320,7 @@ export type Database = {
           uploadpost_api_key_configured?: boolean
           uploadpost_api_key_encrypted?: string | null
           uploadpost_profile_username?: string | null
+          use_fal_image?: boolean
           video_generator?: Database["public"]["Enums"]["video_generator"]
         }
         Update: {
@@ -359,6 +361,7 @@ export type Database = {
           uploadpost_api_key_configured?: boolean
           uploadpost_api_key_encrypted?: string | null
           uploadpost_profile_username?: string | null
+          use_fal_image?: boolean
           video_generator?: Database["public"]["Enums"]["video_generator"]
         }
         Relationships: [
