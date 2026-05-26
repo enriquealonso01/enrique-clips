@@ -439,7 +439,7 @@ export default function ProjectEditor() {
                 <div className="space-y-0.5">
                   <Label>Fal AI image creator</Label>
                   <p className="text-xs text-muted-foreground">
-                    On: fal.ai Gemini 2.5 Flash Image (Nano Banana). Off: Google Gemini direct (default).
+                    On: fal.ai Gemini 3.1 Flash Image (Nano Banana 2), 2K. Off: Google Gemini direct (default).
                   </p>
                 </div>
                 <Switch

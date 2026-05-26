@@ -34,12 +34,15 @@ const IMAGE_RETRY_DELAY_MS = 5_000;
 const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
 // fal.ai image backend — opt-in alternate keyframe provider (per-project toggle).
-// Serves Gemini 2.5 Flash Image ("Nano Banana"): /edit is image-to-image (K1+
-// chaining), the base model is text-to-image (K0).
+// Serves Gemini 3.1 Flash Image Preview ("Nano Banana 2") — the SAME model family
+// as the Google-direct path, on fal's infra: /edit is image-to-image (K1+ chaining),
+// the base model is text-to-image (K0).
 const FAL_BASE = "https://fal.run";
-const FAL_IMAGE_MODEL = "fal-ai/gemini-25-flash-image";       // text-to-image (K0)
-const FAL_EDIT_MODEL = "fal-ai/gemini-25-flash-image/edit";   // image-to-image (K1+)
+const FAL_IMAGE_MODEL = "fal-ai/gemini-3.1-flash-image-preview";       // text-to-image (K0)
+const FAL_EDIT_MODEL = "fal-ai/gemini-3.1-flash-image-preview/edit";   // image-to-image (K1+)
 const FAL_SAFETY_TOLERANCE = "4";                             // 1=strict … 6=permissive (fal default)
+const FAL_RESOLUTION = "2K";                                  // 0.5K/1K/2K/4K — matches the Google-direct 2K
+const FAL_IMAGE_COST_USD = 0.12;                              // 2K billed at 1.5× the $0.08 base rate
 
 /** Returns true if the model should be routed through OpenAI API */
 function isOpenAIModel(model: string): boolean {
@@ -649,11 +652,12 @@ async function falImageRequest(opts: CallImageOptions): Promise<CallImageResult>
     num_images: 1,
     aspect_ratio: sizeToAspectRatio(opts.size),
     output_format: "png",
+    resolution: FAL_RESOLUTION,
+    safety_tolerance: FAL_SAFETY_TOLERANCE,
     sync_mode: true, // return the image inline as a data URI (no extra fetch)
   };
   if (useEdit) {
     body.image_urls = imageUrls;
-    body.safety_tolerance = FAL_SAFETY_TOLERANCE;
   }
 
   const controller = new AbortController();
@@ -697,7 +701,7 @@ async function falImageRequest(opts: CallImageOptions): Promise<CallImageResult>
 
     const latency = Date.now() - start;
     logUsage({ endpoint: `${endpoint}_fal`, model, success: true, latency_ms: latency });
-    return { b64_json: b64, revised_prompt: undefined, cost_usd: 0.039 }; // fal flat rate
+    return { b64_json: b64, revised_prompt: undefined, cost_usd: FAL_IMAGE_COST_USD };
   } catch (err) {
     const latency = Date.now() - start;
     const isTimeout = (err as any)?.name === "AbortError" ||
