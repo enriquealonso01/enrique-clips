@@ -1,6 +1,12 @@
 {
-  "generated_at": "2026-05-21T16:58:05.245Z",
+  "generated_at": "2026-05-26T09:36:24.218Z",
   "projects": [
+    {
+      "project_id": "c8fe0d20-768d-4841-8c8e-f9840df36454",
+      "title": "Untitled Project",
+      "profile_username": "_unassigned",
+      "path": "config/projects/_unassigned/untitled-project.json"
+    },
     {
       "project_id": "e0d67485-eff8-4c7e-a002-40b6bf66bce3",
       "title": "Dream Backyard Daily",
