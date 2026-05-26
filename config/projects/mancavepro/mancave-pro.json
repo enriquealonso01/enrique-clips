@@ -111,7 +111,7 @@
     "items": [
       {
         "style": "minimal",
-        "end_pct": 40,
+        "end_pct": 0,
         "z_index": 2,
         "bg_color": "rgba(0,0,0,0)",
         "position": "top_center",
