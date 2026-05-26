@@ -26,10 +26,15 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // Kept under the ~150s edge wall-clock limit so a slow text call aborts (and the
 // pipeline fails cleanly) instead of the whole function being killed mid-call.
 const DEFAULT_TIMEOUT_MS = 120_000;
-// Recovery budget (IMAGE_TIMEOUT_MS + IMAGE_RETRY_DELAY_MS) must stay well under the
-// edge-function wall-clock limit (~150s). If it doesn't, a stalled image call gets the
-// whole function killed mid-retry — before it can re-chain — leaving the run orphaned.
-const IMAGE_TIMEOUT_MS = 90_000;
+// The binding limit is Supabase's 150s REQUEST IDLE TIMEOUT: this fn sends a single
+// response at the very end, so the whole invocation counts as "idle" and gets a 504 at
+// 150s. The 400s wall-clock does NOT apply (we don't stream). Worst-case invocation =
+// reference-image fetch + IMAGE_TIMEOUT_MS + IMAGE_RETRY_DELAY_MS + re-chain overhead,
+// and that sum must stay under 150s or a stalled image call gets the whole function 504'd
+// mid-retry — before it can re-chain — orphaning the run. 120s + ~15s overhead ≈ 135s
+// (~15s margin). Do NOT raise further without streaming a heartbeat response (unlocks the
+// 400s wall-clock) or moving image gen to fal's async queue API.
+const IMAGE_TIMEOUT_MS = 120_000;
 const IMAGE_RETRY_DELAY_MS = 5_000;
 const IMAGE_MAX_TOTAL_WAIT_MS = 30 * 60 * 1000;
 
