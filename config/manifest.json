@@ -48,6 +48,12 @@
       "title": "History of Builds",
       "profile_username": "historyofbuilds",
       "path": "config/projects/historyofbuilds/history-of-builds.json"
+    },
+    {
+      "project_id": "8b57c3cd-93f9-4427-aa71-6e594233099f",
+      "title": "Secret Quarters",
+      "profile_username": "secretquarters",
+      "path": "config/projects/secretquarters/secret-quarters.json"
     }
   ]
 }
