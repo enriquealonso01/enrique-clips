@@ -146,8 +146,9 @@ function compileKeyframePrompt(opts: {
 
   // 5. Minimal constraints (no audio rules, no repeated negatives)
   const constraints = [
+    "ONE single continuous photograph — NO split screen, NO triptych, NO multi-panel, NO grid, NO storyboard, NO before-and-after, NO collage, NO side-by-side",
     "No text, watermarks, or logos",
-    "Match reference image framing and palette exactly",
+    "Match reference image camera angle and palette only — do NOT replicate any panel, grid, or triptych layout from the reference image",
   ];
   if (sceneIndex > 1) {
     constraints.push("Maintain spatial continuity with previous keyframe");
@@ -156,6 +157,7 @@ function compileKeyframePrompt(opts: {
   // Build the compiled prompt
   const prompt = [
     `Generate a ${aspectRatio} image — keyframe K${sceneIndex} of ${totalScenes}.`,
+    `CRITICAL FORMAT: Output ONE single continuous photograph from ONE camera at ONE moment. Do NOT produce a triptych, split screen, multi-panel image, side-by-side comparison, grid, storyboard, comic strip, before-and-after, or any layout that contains more than one image inside it.`,
     ``,
     `IDENTITY: ${identityBlock}`,
     ``,
