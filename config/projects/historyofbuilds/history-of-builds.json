@@ -180,7 +180,7 @@
           "accent_color": "#F7C204",
           "stroke_width": 3
         },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: RIGHT NOW THIS IS EMPTY DIRT | YEARS OF WORK IN THIRTY SECONDS | WATCH HISTORY GET BUILT FROM NOTHING | THE FINAL SHAPE WILL GIVE YOU CHILLS | STARTS AS DIRT ENDS AS HISTORY | BUILT BY HAND LONG BEFORE MACHINES | NONE OF THIS EXISTS YET | KEEP WATCHING THE WHOLE THING RISE"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: RIGHT NOW THIS IS EMPTY DIRT | YEARS OF WORK IN THIRTY SECONDS | WATCH HISTORY GET BUILT FROM NOTHING | THE FINAL SHAPE WILL GIVE YOU CHILLS | STARTS AS DIRT ENDS AS HISTORY | BUILT BY HAND LONG BEFORE MACHINES | KEEP WATCHING THE WHOLE THING RISE"
       },
       {
         "style": "minimal",
