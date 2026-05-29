@@ -89,8 +89,17 @@ function compileKeyframePrompt(opts: {
   landmarkEra?: string;
   topicSummary?: string;
   startStateRules?: string[];
+  /**
+   * Per-project opt-in: when true, the "Match reference image framing and palette
+   * exactly" constraint is replaced with one that locks palette/lighting/structure
+   * but explicitly allows the camera vantage to differ. Required for moving-drone
+   * channels (History of Builds) where the SHOT must change between consecutive
+   * keyframes for Vidu interpolation to produce real camera motion.
+   * Default (undefined / false) preserves the legacy frame-matching behavior.
+   */
+  allowFramingDrift?: boolean;
 }): CompiledKeyframePrompt {
-  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary, startStateRules } = opts;
+  const { sceneIndex, totalScenes, aspectRatio, scene, prevScene, styleBible, conceptPrompt, landmarkName, landmarkLocation, landmarkEra, topicSummary, startStateRules, allowFramingDrift } = opts;
 
   // 1. Identity lock — compress style bible to core visual anchors
   const identityParts: string[] = [];
@@ -147,10 +156,26 @@ function compileKeyframePrompt(opts: {
   // 5. Minimal constraints (no audio rules, no repeated negatives)
   const constraints = [
     "No text, watermarks, or logos",
-    "Match reference image framing and palette exactly",
+    "No visible drone, quadcopter, helicopter, or aircraft in the generated image — the drone is only the implied unseen camera viewpoint, never an object drawn into the frame",
   ];
-  if (sceneIndex > 1) {
-    constraints.push("Maintain spatial continuity with previous keyframe");
+  if (allowFramingDrift) {
+    // Camera-motion mode (per-project opt-in via motion.allow_framing_drift):
+    // lock everything that defines the scene's IDENTITY, but free the camera so
+    // consecutive keyframes can be framed from different vantages (Vidu needs the
+    // shot to change between keyframes for the interpolated clip to show motion).
+    constraints.push(
+      "Keep the same palette, lighting, era, identity, and EVERY built structural element from the reference image exactly preserved (same footprint, same dimensions, same orientation, same position in world space) — only the camera vantage / angle / distance / height MAY differ from the reference; never replace the structure with a different version or restart the build at a different size or location"
+    );
+    if (sceneIndex > 1) {
+      constraints.push(
+        "Maintain LOCATION and STRUCTURE continuity with the previous keyframe: same site, every previously built element preserved at its exact prior position and dimensions; the camera viewpoint may change but the construction state and structural identity must NOT regress or swap to a different version of the structure"
+      );
+    }
+  } else {
+    constraints.push("Match reference image framing and palette exactly");
+    if (sceneIndex > 1) {
+      constraints.push("Maintain spatial continuity with previous keyframe");
+    }
   }
 
   // Build the compiled prompt
@@ -1057,6 +1082,7 @@ Generate the timed text frames.`,
           landmarkEra: metadata.landmark_era || "",
           topicSummary: run.topic_summary || "",
           startStateRules,
+          allowFramingDrift: resolvedConfig?.motion?.allow_framing_drift === true,
         });
         await log("debug", `Compiled K0 prompt: ${k0Compiled.debugSummary}`);
 
@@ -1176,6 +1202,7 @@ Generate the timed text frames.`,
             landmarkLocation: metadata.landmark_location || "",
             landmarkEra: metadata.landmark_era || "",
             topicSummary: run.topic_summary || "",
+            allowFramingDrift: resolvedConfig?.motion?.allow_framing_drift === true,
           });
           await log("debug", `Compiled keyframe prompt: ${compiled.debugSummary}`);
 

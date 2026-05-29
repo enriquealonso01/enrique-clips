@@ -109,31 +109,38 @@ function getTargetVideoDimensions(aspectRatio: string, resolution: string): { wi
 
 // Wrap text to fit within ~70% of a 9:16 frame width
 // Estimates chars per line based on font size vs frame width (assumes 540p baseline width = 304px for 9:16)
-function wrapOverlayText(text: string, fontSize: number, scale = 1, charFactor = 0.52): string {
+function wrapOverlayText(text: string, fontSize: number, scale = 1, charFactor = 0.52, preserveNewlines = false): string {
   const frameWidth = Math.round(304 * scale); // 9:16 at 540p height
   const maxWidth = frameWidth * 0.85; // allow text to use up to 85% of frame width
   // Approximate per-char width as charFactor * fontSize. Anton (condensed) ≈ 0.52; wider
   // display faces (e.g. Montserrat Black, all-caps) need ~0.62 or lines overflow the column.
   const charWidth = fontSize * charFactor;
   const maxChars = Math.max(12, Math.floor(maxWidth / charWidth));
-  
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let currentLine = "";
-  
-  for (const word of words) {
-    if (currentLine.length === 0) {
-      currentLine = word;
-    } else if ((currentLine + " " + word).length <= maxChars) {
-      currentLine += " " + word;
-    } else {
-      lines.push(currentLine);
-      currentLine = word;
+
+  // When preserveNewlines is true, respect explicit \n in the input (split on
+  // newlines first, then width-wrap each segment independently). Default false
+  // = legacy behavior (newlines treated as whitespace and collapsed by the wrap).
+  const segments = preserveNewlines ? text.split("\n") : [text];
+  const allLines: string[] = [];
+
+  for (const segment of segments) {
+    const words = segment.split(/\s+/);
+    let currentLine = "";
+
+    for (const word of words) {
+      if (currentLine.length === 0) {
+        currentLine = word;
+      } else if ((currentLine + " " + word).length <= maxChars) {
+        currentLine += " " + word;
+      } else {
+        allLines.push(currentLine);
+        currentLine = word;
+      }
     }
+    if (currentLine) allLines.push(currentLine);
   }
-  if (currentLine) lines.push(currentLine);
-  
-  return lines.join("\n");
+
+  return allLines.join("\n");
 }
 
 function escapeFFmpegDrawtextText(text: string): string {
@@ -2242,12 +2249,15 @@ Deno.serve(async (req) => {
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 // Wider faces (Montserrat etc.) need a larger per-char estimate than Anton (0.52).
                 const wrapCharFactor = (sc.font_family && !/anton/i.test(sc.font_family)) ? 0.62 : 0.52;
-                const wrappedText = wrapOverlayText(rawText, fontSize, resScale, wrapCharFactor);
+                const wrappedText = wrapOverlayText(rawText, fontSize, resScale, wrapCharFactor, !!sc.preserve_newlines);
                 const lines = wrappedText.split("\n");
                 const fontColor = textOv.font_color || "#FFFFFF";
-                // Accent (keyword) color: when set, colors the lower half of the wrapped lines.
+                // Accent color: per-line, controlled by style_config.accent_lines.
+                //   "bottom" (default, legacy) — accent the lower half of the wrapped lines.
+                //   "top"                       — accent the upper half (e.g. NAME gold above place white).
+                //   "all"                       — accent every line.
                 const accentColor = (typeof sc.accent_color === "string" && sc.accent_color) ? sc.accent_color : null;
-                const accentFromLine = accentColor ? Math.floor(lines.length / 2) : lines.length;
+                const accentLinesMode = (sc.accent_lines === "top" || sc.accent_lines === "all") ? sc.accent_lines : "bottom";
                 // Optional subtle drop shadow.
                 const shadowOffset = Math.max(2, Math.round(fontSize * 0.08));
                 const shadowStr = sc.shadow
@@ -2306,8 +2316,18 @@ Deno.serve(async (req) => {
                     ? `${baseYExpr}+${yOffset}`
                     : `${baseYExpr}+${yOffset}`;
                   const outLabel = `v${filterIdx}`;
-                  // Lower half of the wrapped lines uses the accent (keyword) color when set.
-                  const lineColor = (accentColor && lineIdx >= accentFromLine) ? accentColor : fontColor;
+                  // Per-line accent color (mode = "top" | "bottom" (legacy) | "all").
+                  let isAccentLine = false;
+                  if (accentColor) {
+                    if (accentLinesMode === "all") {
+                      isAccentLine = true;
+                    } else if (accentLinesMode === "top") {
+                      isAccentLine = lineIdx < Math.ceil(lines.length / 2);
+                    } else { // "bottom" (legacy default)
+                      isAccentLine = lineIdx >= Math.floor(lines.length / 2);
+                    }
+                  }
+                  const lineColor = isAccentLine ? accentColor : fontColor;
 
                   filterParts.push(
                     `[${currentVideoLabel}]drawtext=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':text=${lineText}:${fontFileRef}:fontsize=${fontSize}:fontcolor=${lineColor}:borderw=${borderW}:bordercolor=black${shadowStr}:x=${xExpr}:y=${yExpr}:box=1:boxcolor=${boxColor}:boxborderw=${scaledBoxBorder}[${outLabel}]`
