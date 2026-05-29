@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.poll-vidu-direct]
 verify_jwt = false
+
+[functions.finalize-video]
+verify_jwt = true
