@@ -133,7 +133,7 @@
           "top_pct": 20,
           "stroke_width": 3
         },
-        "content_prompt": "Read the Scenes provided as context (their titles and descriptions). Identify the ONE specific luxury backyard feature or concept being built this episode (for example: sundial lounge, onsen soaking garden, speakeasy bar, mini golf course, reflection pool, fog garden, hammock canopy). Output ONLY the word SECRET followed by that build named in 1 to 3 words, in ALL CAPS, with no emojis, no hashtags, no punctuation, no quotes, and no extra words. For example: SECRET SUNDIAL LOUNGE or SECRET ONSEN GARDEN. Never output a generic word like BACKYARD or YARD on its own; always name the specific feature being built."
+        "content_prompt": "Choose RANDOMLY ONE approved opening hook from the list below and return it verbatim in ALL CAPS only. Do not rewrite it. Do not add punctuation. Do not add emojis or hashtags. Do not add quotes or extra words. Approved overlays: 47 HOURS OF WORK COMPRESSED INTO 30 SECONDS | EMPTY YARD TO LUXURY IN 6 SCENES | POV YOU GOOGLED DREAM BACKYARD ONE TOO MANY TIMES | POV THE NEIGHBORS KEEP ASKING WHO YOU HIRED | IF YOU OWN A YARD YOU CAN BUILD THIS | TIRED OF YOUR PLAIN YARD WATCH THIS | BUILT FOR UNDER 4000 DOLLARS | 7 STEPS FROM EMPTY GRASS TO RESORT BACKYARD | FROM BORING LAWN TO THE BACKYARD EVERYONE SAVES | WHAT YOUR YARD COULD LOOK LIKE BY SUNDAY | THIS PATCHY YARD BECOMES THE NEIGHBORHOOD FAVORITE | WHAT CONTRACTORS CHARGE 50K TO BUILD | THE BACKYARD BUILD THAT WENT VIRAL THIS WEEK | DO NOT HIRE A LANDSCAPER UNTIL YOU WATCH THIS | NEVER PAY FULL PRICE FOR A BACKYARD AGAIN"
       },
       {
         "style": "minimal",
