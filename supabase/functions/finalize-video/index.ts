@@ -2245,6 +2245,12 @@ Deno.serve(async (req) => {
                 const sc = (textOv.style_config && typeof textOv.style_config === "object") ? textOv.style_config : {};
                 let rawText = (textOv.content_text || "");
                 if (!rawText.trim()) continue; // skip empty text overlays
+                // Normalize the literal two-character escape sequence `\n` (backslash + n)
+                // into a real ASCII 0x0A newline. Models sometimes emit `"YEAR\\n1887"`
+                // verbatim instead of a real line break — without this, the FFmpeg
+                // escaper strips the backslash and we render "YEARn1887" on one line.
+                // No-op for overlays whose content_text never contains that pair.
+                rawText = rawText.replace(/\\n/g, "\n");
                 if (sc.uppercase) rawText = rawText.toUpperCase();
                 const fontSize = Math.round((textOv.font_size || 48) * resScale);
                 // Wider faces (Montserrat etc.) need a larger per-char estimate than Anton (0.52).
@@ -2265,6 +2271,107 @@ Deno.serve(async (req) => {
                   : "";
                 const startSec = (textOv.start_pct / 100) * videoDurationSec;
                 const endSec = (textOv.end_pct / 100) * videoDurationSec;
+
+                // ── SNAPCHAT PRESET ──────────────────────────────────────────────
+                // Opt-in via style_config.style_preset === "snapchat". Replaces
+                // the text-tight box+stroke+shadow style with a semi-transparent
+                // band (drawbox) + white centered text (drawtext, no border, no
+                // shadow). Vertical centering uses FFmpeg's runtime text_h so
+                // the visible glyphs land in the middle of the band instead of
+                // upper-aligned (the bbox-top gotcha). Existing overlays without
+                // style_preset are unaffected — they fall through to the legacy
+                // code below.
+                if (sc.style_preset === "snapchat") {
+                  const bandAlpha = (typeof sc.band_alpha === "number")
+                    ? Math.max(0, Math.min(1, sc.band_alpha)) : 0.70;
+                  const bandColor = sc.band_color || "black";
+                  const bandWidthPct = (typeof sc.band_width_pct === "number")
+                    ? Math.max(10, Math.min(100, sc.band_width_pct)) : 100;
+                  const padVFactor = (typeof sc.pad_v_factor === "number")
+                    ? sc.pad_v_factor : 0.10;
+                  const lineGapPx = (typeof sc.line_gap_px === "number")
+                    ? Math.max(0, Math.round(sc.line_gap_px)) : 0;
+
+                  // Band sizing — uses an estimate of text_h since FFmpeg's
+                  // runtime text_h isn't usable in drawbox y/h. ~1.18x fontsize
+                  // approximates the rendered bbox height for Public Sans /
+                  // Inter / Arial Regular at common sizes.
+                  const estTextH = Math.round(fontSize * 1.18);
+                  const n = lines.length;
+                  const visibleBlockH = n * estTextH + Math.max(0, n - 1) * lineGapPx;
+                  const sBarPadV = Math.max(6, Math.round(fontSize * padVFactor));
+                  const sBh = visibleBlockH + 2 * sBarPadV;
+
+                  // Vertical band placement reuses textOv.position semantics:
+                  // top_* → near top (sc.top_pct overrides), center → vertical
+                  // center, bottom_* → near bottom. Horizontal alignment is
+                  // irrelevant for the band (always centered or full-width).
+                  const sPad = Math.round(20 * resScale);
+                  const sTopPad = Math.round(160 * resScale);
+                  const sPos = textOv.position || "bottom_center";
+                  let sBarCenterY: number;
+                  if (sPos.startsWith("top")) {
+                    const topY = (typeof sc.top_pct === "number")
+                      ? Math.round((sc.top_pct / 100) * targetVideoHeight)
+                      : sTopPad;
+                    sBarCenterY = topY + Math.round(sBh / 2);
+                  } else if (sPos === "center") {
+                    sBarCenterY = Math.round(targetVideoHeight / 2);
+                  } else {
+                    sBarCenterY = targetVideoHeight - Math.round(sBh / 2) - sPad;
+                  }
+                  const sBy = Math.round(sBarCenterY - sBh / 2);
+
+                  // Band horizontal extent
+                  let sBandX = 0;
+                  let sBandW: number | string = "iw";
+                  if (bandWidthPct < 100) {
+                    const bw = Math.round(targetVideoWidth * bandWidthPct / 100);
+                    sBandX = Math.round((targetVideoWidth - bw) / 2);
+                    sBandW = bw;
+                  }
+
+                  // 1) drawbox — the band
+                  const bandOutLabel = `v${filterIdx}`;
+                  filterParts.push(
+                    `[${currentVideoLabel}]drawbox=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':x=${sBandX}:y=${sBy}:w=${sBandW}:h=${sBh}:color=${bandColor}@${bandAlpha}:t=fill[${bandOutLabel}]`
+                  );
+                  currentVideoLabel = bandOutLabel;
+                  filterIdx++;
+
+                  // 2) per-line drawtext (white, no border, no shadow, no box)
+                  // Vertical centering uses runtime text_h so visible glyphs
+                  // land at the band's vertical center, not at the bbox top.
+                  //   n=1:  y = (by + bh/2) - text_h/2
+                  //   n=2:  line 0 y = (by + bh/2) - text_h - gap/2
+                  //         line 1 y = (by + bh/2) + gap/2
+                  //   n≥3:  symmetric stacking around the band center
+                  const sCenterExpr = `${sBy} + ${sBh}/2`;
+                  const sFontFileRef = `fontfile={{in_font}}`;
+                  for (let li = 0; li < lines.length; li++) {
+                    const sLineText = escapeFFmpegDrawtextText(lines[li]);
+                    const sOutLabel = `v${filterIdx}`;
+                    let sYExpr: string;
+                    if (n === 1) {
+                      sYExpr = `(${sCenterExpr}) - text_h/2`;
+                    } else if (n === 2) {
+                      const halfGap = Math.floor(lineGapPx / 2);
+                      sYExpr = (li === 0)
+                        ? `(${sCenterExpr}) - text_h - ${halfGap}`
+                        : `(${sCenterExpr}) + ${halfGap}`;
+                    } else {
+                      const off = li - (n - 1) / 2;
+                      sYExpr = `(${sCenterExpr}) - text_h/2 + (${off})*(text_h + ${lineGapPx})`;
+                    }
+                    filterParts.push(
+                      `[${currentVideoLabel}]drawtext=enable='between(t\\,${startSec.toFixed(1)}\\,${endSec.toFixed(1)})':text=${sLineText}:${sFontFileRef}:fontsize=${fontSize}:fontcolor=white:x=(w-text_w)/2:y=${sYExpr}:borderw=0[${sOutLabel}]`
+                    );
+                    currentVideoLabel = sOutLabel;
+                    filterIdx++;
+                  }
+                  continue; // skip legacy text-tight-box rendering for this overlay
+                }
+                // ── END SNAPCHAT PRESET ──────────────────────────────────────────
 
                 // Build drawtext with background box
                 const bgColor = textOv.bg_color || "rgba(0,0,0,0.5)";
@@ -2287,7 +2394,14 @@ Deno.serve(async (req) => {
 
                 // Calculate total block height for vertical positioning
                 const totalBlockHeight = lines.length * lineHeight;
-                const pad = Math.round(20 * resScale);
+                // Edge padding for side-anchored positions (left/right corners).
+                // Default = 20 (legacy). style_config.padding_x overrides per-overlay,
+                // useful for clearing platform mobile UI safe-areas — e.g. Facebook
+                // Reels' right-side action column eats ~80px at 1080p, cropping the
+                // outermost letter of top_right overlays.
+                const pad = (typeof sc.padding_x === "number")
+                  ? Math.max(0, Math.round(sc.padding_x * resScale))
+                  : Math.round(20 * resScale);
                 const topPad = Math.round(160 * resScale);
 
                 // Determine base Y from position

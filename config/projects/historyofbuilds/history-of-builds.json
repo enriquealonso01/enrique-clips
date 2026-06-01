@@ -49,12 +49,13 @@
       "Between any two consecutive frames, there must be obvious measurable structural change: new wall sections risen, new scaffold levels added, new materials deposited, new architectural elements placed. Stagnant or near-duplicate frames are never acceptable.",
       "ABSOLUTELY NO REGRESSION: If a structure, wall, tower, dome, roof, scaffold, ramp, or any built element is visible in one keyframe, it must remain visible and intact in ALL subsequent keyframes. Structures must never be torn down, removed, reduced, or made to disappear between keyframes. The only exception is scaffolding and temporary construction aids being removed in the FINAL scene to reveal the clean finished landmark.",
       "Camera angle transitions between scenes must always feel like a single drone continuously flying to a new vantage point. There must be NO hard cuts or instant angle jumps. Every transition must feel like the drone is smoothly repositioning — banking, climbing, descending, orbiting, or threading through the structure — to reach the next viewpoint. The timelapse construction progress must continue uninterrupted during these drone repositioning movements.",
-      "ARCHITECTURAL FIDELITY: render the landmark with the real structure's accurate shape, proportions, and defining features at every stage, and reproduce its exact instantly-recognizable silhouette when finished. Never invent a dome, cupola, or extra towers the real landmark does not have, and never produce a generic or hybrid version — recognizing the accurate finished landmark is the entire payoff."
+      "ARCHITECTURAL FIDELITY: render the landmark with the real structure's accurate shape, proportions, and defining features at every stage, and reproduce its exact instantly-recognizable silhouette when finished. Never invent a dome, cupola, or extra towers the real landmark does not have, and never produce a generic or hybrid version — recognizing the accurate finished landmark is the entire payoff.",
+      "MODERN PHOTOGRAPHIC LOOK — IDENTICAL ACROSS EVERY EPISODE: every frame of every video on this channel uses the SAME modern 4K documentary cinematography look — vivid contemporary colors, natural daylight white balance, sharp modern lens detail, clean modern color science. The historical CONTENT is depicted in its real era (period clothing, tools, materials), but the CAMERA / FILM / IMAGE QUALITY is always MODERN, as if a present-day Netflix-quality 4K drone documentary captured it today. Absolutely NO sepia, vintage, aged, faded, yellowed, brown-toned, hand-tinted, daguerreotype, painterly, illustrated, or period-photograph aesthetics, regardless of how old the landmark is. The visual signature must be identical from one episode to the next so the channel feels like one consistent series."
     ],
-    "style_notes": "Ultra-photorealistic historical aerial documentary realism, shot entirely by a single drone in continuous flight. Every video should feel like a real drone witnessing the true construction of a famous landmark across time — believable labor, historically correct materials and tools, era-correct machinery only when relevant, realistic urban or natural surroundings, and massive large-scale transformation. The drone is ALWAYS moving: it pushes in across the empty site, flies through partially built interiors, skims along walls at scaffold height, rises up tower faces, peers down through unfinished roofs, sweeps under arches, and orbits the structure — never a static, locked, or tripod shot, not even at the opening. Angle changes are smooth flights to the next position, never hard cuts, and the construction keeps advancing during every move. Premium documentary realism, not fantasy, not stylized CGI, not game-like. One continuous accelerated historical build captured by one tireless, ever-moving drone. The drone NEVER holds two consecutive shots from the same camera position — every scene is composed from a markedly different drone vantage (angle, height, distance, side) than the previous one. The camera's own position is part of what changes between shots; without that shift the camera reads as frozen even when the text says it is moving.",
+    "style_notes": "MODERN HIGH-END DOCUMENTARY CINEMATOGRAPHY — 4K cinema-grade aerial documentary photography with vivid contemporary colors, natural daylight white balance, sharp modern lens detail, deep clear shadows, and a clean modern color science. The CONTENT depicts historical construction in its real era, but the CAMERA, LENS, FILM STOCK, and IMAGE QUALITY are MODERN — like a present-day Netflix documentary shot today by a 4K drone, NEVER a sepia / vintage / aged-photograph / old-film / hand-tinted-photo / period-photography look. No yellowed, brown, faded, scratched, monochrome, washed-out, dusty-LUT, or 19th-century-photograph aesthetics. The image style stays IDENTICAL across every episode of the channel (same modern documentary color, contrast, sharpness, and lens character), regardless of which historical era the build is from. Ultra-photorealistic historical aerial documentary realism, shot entirely by a single drone in continuous flight. Every video should feel like a real drone witnessing the true construction of a famous landmark across time — believable labor, historically correct materials and tools, era-correct machinery only when relevant, realistic urban or natural surroundings, and massive large-scale transformation. The drone is ALWAYS moving: it pushes in across the empty site, flies through partially built interiors, skims along walls at scaffold height, rises up tower faces, peers down through unfinished roofs, sweeps under arches, and orbits the structure — never a static, locked, or tripod shot, not even at the opening. Angle changes are smooth flights to the next position, never hard cuts, and the construction keeps advancing during every move. Premium documentary realism, not fantasy, not stylized CGI, not game-like. One continuous accelerated historical build captured by one tireless, ever-moving drone. The drone NEVER holds two consecutive shots from the same camera position — every scene is composed from a markedly different drone vantage (angle, height, distance, side) than the previous one. The camera's own position is part of what changes between shots; without that shift the camera reads as frozen even when the text says it is moving.",
     "content_type": "transformation",
     "concept_prompt": "Create ultra-realistic historical construction timelapse videos for the channel HistoryOfBuilds. Each video documents ONE famous real-world landmark being built from its empty pre-build site through the full construction process until the finished, instantly recognizable landmark stands complete.\n\nChoose landmarks that a general US / American audience will instantly recognize when finished: major United States landmarks (such as the Statue of Liberty, Golden Gate Bridge, Empire State Building, Hoover Dam, Mount Rushmore, Gateway Arch, US Capitol, Lincoln Memorial, Brooklyn Bridge, Washington Monument, Chrysler Building) and globally iconic structures Americans know on sight (such as the Eiffel Tower, Colosseum, Great Pyramid of Giza, Leaning Tower of Pisa, Big Ben, Notre-Dame, Christ the Redeemer, Taj Mahal, Great Wall of China, Parthenon, Sagrada Familia, Stonehenge). Always prefer the most recognizable landmark available, and never repeat one. Recognizing the finished structure is the entire payoff.\n\nThe whole video is captured by a single drone in continuous flight that is ALWAYS moving — pushing in, flying through, tracking along, rising, descending, and orbiting. There is no static or locked-off shot anywhere, including the opening. As the structure rises the drone exploits it: through archways, along scaffold-height walls, up tower faces, over unfinished roofs, inside courtyards. Every angle change is a smooth flight to the next position, never a hard cut, and the construction keeps advancing during the move.\n\nEvery video begins on the exact empty real footprint before the structure exists, opening with a fast drone push-in as the first workers and tools appear, then progresses through clear, large, fast, additive steps until the landmark is complete.\n\nHistorical accuracy is mandatory: all tools, materials, machines, scaffolding, transport, clothing, workforce, and methods must belong to the real era the landmark was built in. Construction is always visibly caused by workers, crews, animals, or period-correct machines — nothing appears by magic, and no modern equipment appears unless the real construction years used it.\n\nConstruction is strictly additive: once any structural element is built it remains in every later scene; nothing ever disappears or regresses. The final result is the clean, complete, recognizable landmark. No frame may contain any embedded text, letters, numbers, labels, logos, or watermarks.",
-    "negative_prompt": "static camera, locked-off camera, fixed camera, motionless camera, tripod shot, barely moving camera, frozen camera, modern excavator, bulldozer, concrete pump truck, dump truck, tower crane, mobile crane, helicopter, drone visible in frame, modern safety vest, hard hat in ancient era, neon colors, modern city skyline in ancient scene, present-day roads in ancient scene, present-day tourists, fantasy castle, sci-fi building, CGI look, video game render, cartoon, anime, stylized art, magical appearance, floating stones, impossible physics, warped geometry, morphing, melting, blurry, low quality, extra limbs, deformed faces, duplicated workers, near-empty site with no visible labor, structure appearing instantly, wrong historical era, wrong tools, wrong clothing, wrong machinery, wrong architectural style, split screen, collage, text, subtitle, logo, watermark, written words, drawn text, painted letters, etched numbers, any text in frame, structure disappearing, wall removed, tower gone, regression, demolished section, reduced structure, building shrinking, hard cut, jump cut, instant angle change, camera teleportation, inaccurate landmark, wrong silhouette, wrong proportions, unwanted dome, invented dome, cupola, extra towers, generic building, approximate landmark, hybrid structure, stylized landmark, landmark not matching the real one, visible drone in frame, drone in shot, drone visible from below, quadcopter visible, helicopter in frame, aircraft in frame, RC drone visible, camera equipment visible in frame, gimbal visible, structure replaced mid-build, swapped to a different version of the structure, restarted build at a different scale, footprint changes mid-build"
+    "negative_prompt": "static camera, locked-off camera, fixed camera, motionless camera, tripod shot, barely moving camera, frozen camera, modern excavator, bulldozer, concrete pump truck, dump truck, tower crane, mobile crane, helicopter, drone visible in frame, modern safety vest, hard hat in ancient era, neon colors, modern city skyline in ancient scene, present-day roads in ancient scene, present-day tourists, fantasy castle, sci-fi building, CGI look, video game render, cartoon, anime, stylized art, magical appearance, floating stones, impossible physics, warped geometry, morphing, melting, blurry, low quality, extra limbs, deformed faces, duplicated workers, near-empty site with no visible labor, structure appearing instantly, wrong historical era, wrong tools, wrong clothing, wrong machinery, wrong architectural style, split screen, collage, text, subtitle, logo, watermark, written words, drawn text, painted letters, etched numbers, any text in frame, structure disappearing, wall removed, tower gone, regression, demolished section, reduced structure, building shrinking, hard cut, jump cut, instant angle change, camera teleportation, inaccurate landmark, wrong silhouette, wrong proportions, unwanted dome, invented dome, cupola, extra towers, generic building, approximate landmark, hybrid structure, stylized landmark, landmark not matching the real one, visible drone in frame, drone in shot, drone visible from below, quadcopter visible, helicopter in frame, aircraft in frame, RC drone visible, camera equipment visible in frame, gimbal visible, structure replaced mid-build, swapped to a different version of the structure, restarted build at a different scale, footprint changes mid-build, sepia, sepia tone, sepia tint, vintage photo, vintage photograph, vintage film, vintage look, vintage aesthetic, aged photograph, aged photo, aged film, old photograph, old photo, old-photo look, old camera, old film, antique photograph, antique photo, daguerreotype, ambrotype, tintype, hand-tinted photograph, period photograph, period-photography style, 19th century photograph, black and white photograph, monochrome aged film, sun-faded image, yellowed image, brown-toned image, faded colors, washed-out colors, dusty color grade, film grain heavy, grainy film, scratches on film, light leaks, halation, painterly look, illustrated look, painted illustration"
   },
   "keyframes": {
     "prompt_template": "Generate a high-quality {aspect_ratio} photorealistic vertical image for this scene's END frame. This is keyframe K{scene_index} of {total_scenes}.\n\n=== MOVING DRONE CAMERA ANGLE ===\nThis keyframe must use the specific moving drone angle assigned to this scene. The drone captures the construction from creative and dramatic vantage points while in continuous flight — pushing in across the site, flying low through archways, rising up walls and towers, skimming along scaffolding, sweeping under arches, orbiting features, descending into courtyards, or peering down through unfinished roofs. The angle must feel like a real moving drone captured it from this specific position. Never a static, locked, or tripod-style framing. Maintain perfect continuity of the construction state regardless of angle.\n\n=== CONSTRUCTION CONTINUITY ===\nCRITICAL: Each keyframe must show the entire construction site at a more advanced state than the last. The build process must be STRICTLY ADDITIVE — every wall, tower, arch, dome, roof, column, and foundation that existed in any prior keyframe MUST still be present and visible. Nothing built may disappear, shrink, or regress. If any previously completed structural element is missing, this keyframe is INVALID. Progress must be logical and clear.\n\n=== ANTI-SPLIT-SCREEN ===\nABSOLUTELY FORBIDDEN: divided frames, split screens, multi-panel layouts, before/after comparisons, stacked images, side-by-side views, triptychs, diptychs, collages, montages, film strips. The ENTIRE canvas must be ONE seamless photorealistic scene from ONE camera position. If the image contains any horizontal or vertical dividing lines creating separate panels, it is WRONG.\n\n=== NO TEXT IN GENERATED FRAMES ===\nABSOLUTELY FORBIDDEN: Any text, letters, words, numbers, symbols, labels, captions, titles, signs, inscriptions, or written content drawn, painted, etched, or rendered anywhere in the generated image. The image must contain ZERO text of any kind. If any text appears in the generated frame, it is INVALID.\n\n=== ALWAYS ACTIVE CONSTRUCTION ===\nEvery keyframe (except the final one) must show ACTIVE construction labor. Workers hauling stone, climbing scaffolds, operating cranes, chiseling, hammering, laying bricks, pulling ropes, driving carts. The site must feel alive. NEVER an idle or empty site.\n\n=== GLOBAL CONCEPT ===\n{concept_prompt}\n\n=== STYLE BIBLE ===\n{style_bible}\n\n=== SCENE END FRAME GOAL ===\n{end_keyframe_prompt}\n\n=== COMPOSITION RULES ===\n{composition_rules}\n\n=== CONTINUITY RULES ===\n{continuity_rules}\n\n=== GLOBAL RULES ===\n{global_rules}\n\nEvery new keyframe must represent a later, more advanced construction moment with obvious visual progress. The structure, scaffolding, and material placement must clearly evolve from the previous keyframe. No near-duplicate scenes are allowed. Workers, animals, carts, ropes, cranes, tools, and temporary construction materials must all shift naturally to new positions between keyframes. Never leave movable elements frozen in the same place as the prior keyframe. If any architectural element becomes more complete, visible labor must explain the change. ALL previously built permanent structures must remain intact.\n\nSINGLE UNDIVIDED photorealistic image. ONE moving drone camera angle per keyframe. Active construction labor throughout. No text, captions, logos, labels, watermarks, or any written content in the generated image.",
@@ -101,6 +102,7 @@
   },
   "motion": {
     "allow_framing_drift": true,
+    "movement_amplitude": "large",
     "camera_rules": [
       "The entire video must feel as if shot by a single drone flying continuously around and through the construction site. The drone is ALWAYS moving and uses exotic, dramatic angles: low push-ins across the site, fly-throughs inside partially built structures, scaffold-height passes along walls, rises up tower faces, sweeps under arches, descents into rising courtyards or naves, peers down through unfinished roofs, and tight orbits around features. Not a single shot is static — variety, motion, and surprise are essential.",
       "Transitions between camera angles must ALWAYS feel like the drone is smoothly flying from one vantage point to the next. The drone banks, climbs, descends, orbits, threads through openings, or sweeps around corners to reach each new angle. There must be NO hard cuts, NO instant angle jumps, and NO camera teleportation. Every angle change must show continuous drone motion.",
@@ -152,9 +154,10 @@
           "font_family": "Montserrat-Black.ttf",
           "accent_color": "#F7C204",
           "stroke_width": 1,
-          "preserve_newlines": true
+          "preserve_newlines": true,
+          "padding_x": 80
         },
-        "content_prompt": "Create a year-progress overlay for the construction timeline of the exact chosen landmark. Show historically appropriate year progression from the real construction start year to the real main completion year being depicted. Keep the sequence simple, readable, and evenly spread across the full video duration. Each frame's text MUST be exactly TWO lines separated by a newline character: Line 1 is the literal word YEAR. Line 2 is the year value itself (for example 1887, or 2580 BCE, or 1937). The renderer will color Line 1 (YEAR) white and Line 2 (the year value) gold. If the real build spans a range of years or decades, progress through meaningful milestone years that match the visual stages of construction. Output uppercase text only — no quotes, no extra punctuation, no extra words."
+        "content_prompt": "Create a year-progress overlay for the construction timeline of the exact chosen landmark. Show historically appropriate year progression from the real construction start year to the real main completion year being depicted. Keep the sequence simple, readable, and evenly spread across the full video duration. CRITICAL FORMAT — each frame's `text` field MUST contain exactly TWO lines, separated by a REAL line break (i.e. an actual newline character, ASCII 0x0A — the character produced by pressing Enter). Do NOT output the two literal characters backslash and lowercase n in the text (writing 'YEAR\\n1887' as a single line with the two characters backslash and n in it will render as 'YEARn1887' and is INVALID). Line 1 is exactly the word YEAR. Line 2 is the year value itself (for example 1887, or 2580 BCE, or 1937). The renderer will color Line 1 (YEAR) white and Line 2 (the year value) gold. If the real build spans a range of years or decades, progress through meaningful milestone years that match the visual stages of construction. Output uppercase text only — no quotes, no extra punctuation, no extra words."
       },
       {
         "style": "minimal",
@@ -174,13 +177,14 @@
           "accent_color": "#F7C204",
           "stroke_width": 1,
           "preserve_newlines": true,
-          "accent_lines": "top"
+          "accent_lines": "top",
+          "padding_x": 80
         },
         "content_prompt": "Generate exactly TWO lines of text for this overlay. Line 1: the exact name of the landmark being built in ALL CAPS (for example EIFFEL TOWER, GREAT PYRAMID OF GIZA, GOLDEN GATE BRIDGE). Line 2: the real historical city and country in Title Case WITHOUT COMMAS (for example Paris France, Giza Egypt, San Francisco USA) — the renderer strips commas so omit them. Separate the two lines with a newline character. The renderer will color Line 1 (the landmark name) gold and Line 2 (city and country) white. Output ONLY these two lines, nothing else. No quotes, no emojis, no extra punctuation."
       },
       {
         "style": "minimal",
-        "end_pct": 10,
+        "end_pct": 20,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
         "font_size": 29,
@@ -198,90 +202,6 @@
           "stroke_width": 3
         },
         "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: RIGHT NOW THIS IS EMPTY DIRT | YEARS OF WORK IN THIRTY SECONDS | WATCH HISTORY GET BUILT FROM NOTHING | THE FINAL SHAPE WILL GIVE YOU CHILLS | STARTS AS DIRT ENDS AS HISTORY | BUILT BY HAND LONG BEFORE MACHINES | KEEP WATCHING THE WHOLE THING RISE"
-      },
-      {
-        "style": "minimal",
-        "end_pct": 27,
-        "bg_color": "rgba(0,0,0,0)",
-        "position": "center",
-        "font_size": 29,
-        "start_pct": 20,
-        "z_index": 2,
-        "font_color": "#FFFFFF",
-        "content_mode": "ai_generated",
-        "overlay_type": "text",
-        "style_config": {
-          "shadow": true,
-          "top_pct": 20,
-          "uppercase": true,
-          "font_family": "Montserrat-Black.ttf",
-          "accent_color": "#F7C204",
-          "stroke_width": 3
-        },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: ALL OF THIS BY HAND | NO CRANES NO TRUCKS JUST PEOPLE | THOUSANDS WORKED YEARS ON THIS | THE HARD PART IS JUST STARTING | IMAGINE THE PATIENCE THIS TOOK | EVERY STONE PLACED BY HAND | THIS TOOK LONGER THAN YOU THINK | KEEP WATCHING IT KEEPS GROWING"
-      },
-      {
-        "style": "minimal",
-        "end_pct": 47,
-        "bg_color": "rgba(0,0,0,0)",
-        "position": "center",
-        "font_size": 29,
-        "start_pct": 40,
-        "z_index": 2,
-        "font_color": "#FFFFFF",
-        "content_mode": "ai_generated",
-        "overlay_type": "text",
-        "style_config": {
-          "shadow": true,
-          "top_pct": 20,
-          "uppercase": true,
-          "font_family": "Montserrat-Black.ttf",
-          "accent_color": "#F7C204",
-          "stroke_width": 3
-        },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: HOW DID THEY LIFT ALL THIS | NO MACHINES AND IT KEEPS RISING | THIS BROKE THE PEOPLE WHO BUILT IT | EVERY PIECE MOVED BY HAND | THE SCALE IS GETTING INSANE | PEOPLE DIED MAKING THINGS LIKE THIS | THIS IS WHERE IT GETS DANGEROUS | IMAGINE DOING THIS WITHOUT MODERN TOOLS"
-      },
-      {
-        "style": "minimal",
-        "end_pct": 67,
-        "bg_color": "rgba(0,0,0,0)",
-        "position": "center",
-        "font_size": 29,
-        "start_pct": 60,
-        "z_index": 2,
-        "font_color": "#FFFFFF",
-        "content_mode": "ai_generated",
-        "overlay_type": "text",
-        "style_config": {
-          "shadow": true,
-          "top_pct": 20,
-          "uppercase": true,
-          "font_family": "Montserrat-Black.ttf",
-          "accent_color": "#F7C204",
-          "stroke_width": 3
-        },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: NOW YOU SEE THE REAL SCALE | LOOK HOW FAR IT HAS COME | CENTURIES OLD AND STILL STANDING | THE DETAIL ON THIS IS UNREAL | THEY BUILT THIS TO LAST FOREVER | COMING TOGETHER FASTER NOW | THE SCALE IS HARD TO BELIEVE | ALMOST EVERYTHING IS IN PLACE NOW"
-      },
-      {
-        "style": "minimal",
-        "end_pct": 90,
-        "bg_color": "rgba(0,0,0,0)",
-        "position": "center",
-        "font_size": 29,
-        "start_pct": 80,
-        "z_index": 2,
-        "font_color": "#FFFFFF",
-        "content_mode": "ai_generated",
-        "overlay_type": "text",
-        "style_config": {
-          "shadow": true,
-          "top_pct": 20,
-          "uppercase": true,
-          "font_family": "Montserrat-Black.ttf",
-          "accent_color": "#F7C204",
-          "stroke_width": 3
-        },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: DO NOT SCROLL THE REVEAL IS NEXT | THE LAST FEW SECONDS HIT HARD | WAIT FOR THE FINISHED FORM | ALMOST DONE STAY FOR IT | THE FINAL VIEW IS WORTH IT | THIS ENDING GIVES PEOPLE CHILLS | ONE MORE STEP AND ITS DONE | YOU CAME THIS FAR FINISH IT"
       },
       {
         "style": "minimal",
@@ -375,7 +295,8 @@
       "Set activity_density to high for every build scene; use low only for the final reveal scene.",
       "AUDIO IN EVERY KLING_PROMPT: every scene's kling_prompt must explicitly end with an audio instruction stating the clip contains ONLY natural diegetic construction and environmental sounds appropriate to the era (tools, stone, timber, ropes, carts, animals, crowd labor, wind, water) and ABSOLUTELY NO music, no musical score, no soundtrack, and no cinematic underscore of any kind.",
       "CAMERA MOVEMENT COMES FROM A CHANGED SHOT — THIS OVERRIDES ANY 'MATCH REFERENCE FRAMING' GUIDELINE: each clip is interpolated between the previous keyframe and this scene's keyframe, so camera motion exists ONLY when the two frames are composed from clearly different camera positions. Each scene's end_keyframe_prompt MUST OPEN with an explicit, concrete CAMERA VANTAGE statement — for example 'Aerial view from 40m up at 45 degrees over the south side', 'Looking straight down from above through the unfinished roof opening at the floor below', 'Side-tracking view at scaffold height past the north face', 'Orbiting view at mid-height around the rising east tower' — that is clearly different from the previous keyframe's vantage. Change angle, distance, height, AND/OR side. CRITICAL — DO NOT WRITE THE WORDS 'DRONE', 'QUADCOPTER', 'HELICOPTER', OR 'AIRCRAFT' in the end_keyframe_prompt or scene_title: the image model will literally render a visible drone/aircraft in the frame if those words appear. The drone is the implied unseen camera viewpoint, never an object in the shot. Describe the camera vantage (angle, height, distance, side, lens behavior) without naming the equipment. If two consecutive keyframes sit in the same spot the camera will not move and the clip will look frozen. Lock palette, lighting, era, identity, and ALL previously built structure to match the prior keyframe; vary ONLY the camera position. The 'match reference framing' guideline applies to palette / lighting / built-structure consistency — NOT to camera position, which MUST change every scene.",
-      "SCENE TITLES MUST NAME THE CAMERA VANTAGE: each scene_title is quoted verbatim inside a per-keyframe progression instruction ('Previous scene showed: <title>. This scene advances to: <title>.'), so every scene_title MUST include the camera vantage in the title itself — e.g. 'Foundations rising — low-pushing aerial view across the site from the west', 'Lower walls climbing — orbiting view from the southeast at mid-height', 'Spire framing — view ascending up the south face'. Do NOT use the word 'drone' (or 'quadcopter' / 'helicopter' / 'aircraft') in the title; the image model would render a visible drone. Use camera/view/aerial/looking/tracking/orbiting language. This puts a camera-change instruction directly into the keyframe-to-keyframe delta and helps the image model interpret each new frame as a new camera position."
+      "SCENE TITLES MUST NAME THE CAMERA VANTAGE: each scene_title is quoted verbatim inside a per-keyframe progression instruction ('Previous scene showed: <title>. This scene advances to: <title>.'), so every scene_title MUST include the camera vantage in the title itself — e.g. 'Foundations rising — low-pushing aerial view across the site from the west', 'Lower walls climbing — orbiting view from the southeast at mid-height', 'Spire framing — view ascending up the south face'. Do NOT use the word 'drone' (or 'quadcopter' / 'helicopter' / 'aircraft') in the title; the image model would render a visible drone. Use camera/view/aerial/looking/tracking/orbiting language. This puts a camera-change instruction directly into the keyframe-to-keyframe delta and helps the image model interpret each new frame as a new camera position.",
+      "VANTAGE MUST CHANGE STARTING FROM SCENE 1 — NOT JUST LATER SCENES: the image model defaults to copying the K0 framing for early build scenes (e.g. it renders K1, K2, K3 from the same high-aerial wide that K0 used, just adding workers/foundation) because nothing in the prompt explicitly demands an EARLY shift. Counter this: assign DRAMATICALLY DIFFERENT camera vantages to scenes 1, 2, and 3 — for example if K0 is a high-wide aerial, scene 1 might descend to a low-angle close-in push across the ground, scene 2 might be a scaffold-height side-track, scene 3 might be a tight orbit at mid-height. Do not let scenes 1-3 share the high-wide aerial of K0; force a different drone position in EVERY single one of the first three scenes. This is the most common failure mode on this channel — the camera 'stays in the same place' for the first half of the video — and it MUST be eliminated by writing genuinely distinct vantages for every early scene."
     ],
     "creative_variation_system": {
       "description": "Keep the same proven format — empty site to finished landmark by one continuously-moving drone — and vary the specific landmark each time. Choose only world-famous landmarks instantly recognizable to a US / American audience: major US landmarks and globally iconic structures Americans know on sight. Always prefer the most recognizable option, and never repeat a landmark (see memory).",

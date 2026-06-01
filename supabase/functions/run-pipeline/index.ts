@@ -1436,6 +1436,16 @@ Generate the timed text frames.`,
           // Vidu: start-end2video accepts [start,end]; img2video accepts [start].
           const endpoint = sub.kind === "single" ? "img2video" : "start-end2video";
 
+          // Per-project Vidu motion strength override: when motion.movement_amplitude
+          // is set on the resolved config (one of "auto" / "small" / "medium" / "large"),
+          // it replaces the default "auto". History of Builds uses "large" to push the
+          // interpolated camera motion harder (Vidu's "auto" tends to settle on subtle
+          // moves even when keyframes differ). Default behavior for every other channel
+          // is unchanged.
+          const viduMovementAmplitude = (typeof resolvedConfig?.motion?.movement_amplitude === "string"
+            && resolvedConfig.motion.movement_amplitude.trim())
+            ? resolvedConfig.motion.movement_amplitude.trim()
+            : "auto";
           const viduBody: Record<string, any> = {
             model: viduModel,
             images: sub.images,
@@ -1443,7 +1453,7 @@ Generate the timed text frames.`,
             duration: clipDuration,
             resolution: viduResolution,
             audio: enableAudio,
-            movement_amplitude: "auto",
+            movement_amplitude: viduMovementAmplitude,
             off_peak: true,
           };
 
