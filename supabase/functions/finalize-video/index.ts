@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 import { MODELS, callText } from "../_shared/openai.ts";
+import { renderSnapPng } from "../_shared/snapOverlay.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1710,6 +1711,69 @@ Deno.serve(async (req) => {
           const clipUrls: string[] = completedClips.map((clip: any) => mediaPublicUrl(clip.supabase_path));
           await log("info", `Prepared ${clipUrls.length} clip URLs for Rendi concat`);
 
+          // ── POV-hook prepend + snap PNG render — gated, opt-in ──
+          // When the run has a completed hook clip asset, prepend the clip
+          // URL to the concat list and render the variant's snap text into
+          // a transparent PNG that's overlaid on top of the hook portion of
+          // the final video (drawtext can't render color emojis; this PNG
+          // round-trip is the work-around).
+          let povHookDurSec = 0;
+          let snapOverlayPngUrl: string | null = null;
+          let snapOverlayText = "";
+          try {
+            if ((run as any).pov_hook_status === "completed" && (run as any).pov_hook_clip_asset_id) {
+              const { data: hookAsset } = await supabase
+                .from("assets")
+                .select("supabase_path, metadata")
+                .eq("id", (run as any).pov_hook_clip_asset_id)
+                .single();
+              if (hookAsset?.supabase_path && (hookAsset.metadata as any)?.status === "completed") {
+                const hookUrl = mediaPublicUrl(hookAsset.supabase_path);
+                const hookDurFromMeta = Number((hookAsset.metadata as any)?.duration_sec) || 4;
+                povHookDurSec = Math.max(2, Math.min(8, hookDurFromMeta));
+
+                const metaForHook: any = (run.generated_metadata as any) || {};
+                const resolvedForHook: any = metaForHook.resolved_prompt_config || (project as any).prompt_config_json || {};
+                const povHookCfg: any = resolvedForHook.pov_hook;
+                const variants: any[] = Array.isArray(povHookCfg?.variants) ? povHookCfg.variants : [];
+                const variant = (run as any).pov_hook_variant_index != null ? variants[(run as any).pov_hook_variant_index] : null;
+                snapOverlayText = (variant?.snap_overlay?.text || "").toString();
+
+                if (snapOverlayText.trim()) {
+                  try {
+                    const fontSize = Math.round(Number(variant?.snap_overlay?.font_size_px) || 64);
+                    const bandAlpha = typeof variant?.snap_overlay?.band_alpha === "number"
+                      ? variant.snap_overlay.band_alpha : 0.55;
+                    const { png } = await renderSnapPng({ text: snapOverlayText, fontSize, bandAlpha });
+                    const snapPath = `overlays/snap/${runId}.png`;
+                    const { error: snapUpErr } = await supabase.storage
+                      .from("project-assets")
+                      .upload(snapPath, png, { contentType: "image/png", upsert: true });
+                    if (!snapUpErr) {
+                      snapOverlayPngUrl = supabase.storage.from("project-assets").getPublicUrl(snapPath).data.publicUrl;
+                      await log("info", `Snap PNG rendered + uploaded (${png.length} B): "${snapOverlayText.substring(0, 60)}"`);
+                    } else {
+                      await log("warn", `Snap PNG upload failed (continuing without snap overlay): ${snapUpErr.message}`);
+                    }
+                  } catch (snapErr) {
+                    await log("warn", `Snap PNG render failed (continuing without snap overlay): ${(snapErr as Error).message}`);
+                  }
+                }
+
+                // Prepend hook clip URL to clipUrls.
+                clipUrls.unshift(hookUrl);
+                await log("info", `POV-hook clip prepended (dur=${povHookDurSec}s). Total clips now: ${clipUrls.length}`);
+              } else {
+                await log("info", "POV-hook asset present but not completed — proceeding without hook.");
+              }
+            } else if ((run as any).pov_hook_status === "failed") {
+              await log("info", "POV-hook marked failed earlier in pipeline — proceeding without hook.");
+            }
+          } catch (povHookFinalErr) {
+            await log("warn", `POV-hook prepend block failed (non-fatal): ${(povHookFinalErr as Error).message}`);
+          }
+          const povHookEnabled = povHookDurSec > 0;
+
           // Check for tracks via project_tracks junction table (multi-track, random per run)
           const { data: randomTrackRow } = await supabase
             .rpc('get_random_project_track', { p_project_id: project.id })
@@ -1814,9 +1878,15 @@ Deno.serve(async (req) => {
           const totalTeaserDurationSec = teaserEnabled
             ? resolvedTeaserSegs.reduce((s, x) => s + x.durationSec, 0)
             : 0;
-          const videoDurationSec = teaserEnabled
+          const videoDurationSec = (teaserEnabled
             ? completedClips.length * baseClipDurationSec + totalTeaserDurationSec - teaserDissolveSec
-            : completedClips.length * baseClipDurationSec;
+            : completedClips.length * baseClipDurationSec) + povHookDurSec;
+          // Body-track timing reference. When the POV hook is prepended, every
+          // overlay pct (text + image) is interpreted as a percent of the
+          // construction body only, then offset forward by hook duration so
+          // a "0%" overlay starts at the moment the hook ends, not at t=0.
+          const bodyVideoStartSec = povHookDurSec;
+          const bodyVideoDurSec = Math.max(0.001, videoDurationSec - bodyVideoStartSec);
           if (teaserEnabled) {
             const segDesc = resolvedTeaserSegs
               .map((s, i) => `seg${i}: clip${s.clipIdx} [${s.startSec.toFixed(2)}–${s.endSec.toFixed(2)}s] (${s.durationSec.toFixed(2)}s)`)
@@ -1935,7 +2005,7 @@ Deno.serve(async (req) => {
                     continue;
                   }
 
-                  const startSec = (voOv.start_pct / 100) * videoDurationSec;
+                  const startSec = bodyVideoStartSec + (voOv.start_pct / 100) * bodyVideoDurSec;
                   const inputKey = `in_vo${vi}`;
                   voiceoverAudioPaths.push({ inputKey, startSec, storagePath: voPath });
                   await log("info", `VO clip ${vi} generated: ${(audioBuffer.length / 1024).toFixed(0)}KB, starts at ${startSec.toFixed(1)}s, text="${voText.substring(0, 50)}"`);
@@ -2039,6 +2109,13 @@ Deno.serve(async (req) => {
                 const key = `in_img${imgInputIdx}`;
                 inputFiles[key] = imgUrl.publicUrl;
                 imgInputIdx++;
+              }
+
+              // POV-hook snap PNG input (registered only when the hook fired
+              // AND the snap rendered/uploaded successfully — both checks
+              // happen at clip-prepend time above).
+              if (povHookEnabled && snapOverlayPngUrl) {
+                inputFiles["in_snap"] = snapOverlayPngUrl;
               }
 
               // Add audio input if selected
@@ -2206,11 +2283,33 @@ Deno.serve(async (req) => {
               let currentVideoLabel = concatVideoLabel;
               let filterIdx = 0;
 
+              // POV-hook snap overlay: applied OVER the hook portion of the
+              // concat (t = 0 → povHookDurSec) and removed at the splice point
+              // so the construction body starts clean. Sits before body
+              // image/text overlays in the chain so body overlays render on
+              // top if their windows accidentally overlap with the hook.
+              if (povHookEnabled && snapOverlayPngUrl) {
+                const snapInputIdx = getInputIndex("in_snap");
+                if (snapInputIdx >= 0) {
+                  const snapOutLabel = `v${filterIdx}`;
+                  // Position: horizontally centered, vertically anchored at
+                  // 18% from top of frame (snap.position_y_pct overridable).
+                  const snapTopPct = 0.18;
+                  const snapY = `H*${snapTopPct.toFixed(3)}-h/2`;
+                  filterParts.push(
+                    `[${currentVideoLabel}][${snapInputIdx}:v]overlay=enable='between(t\\,0\\,${povHookDurSec.toFixed(1)})':x=(W-w)/2:y=${snapY}[${snapOutLabel}]`,
+                  );
+                  currentVideoLabel = snapOutLabel;
+                  filterIdx++;
+                  await log("info", `Snap overlay filter applied over [0, ${povHookDurSec.toFixed(1)}s]`);
+                }
+              }
+
               // Image overlays: chain overlay filters
               for (let i = 0; i < imageOverlays.length; i++) {
                 const imgOv = imageOverlays[i];
-                const startSec = (imgOv.start_pct / 100) * videoDurationSec;
-                const endSec = (imgOv.end_pct / 100) * videoDurationSec;
+                const startSec = bodyVideoStartSec + (imgOv.start_pct / 100) * bodyVideoDurSec;
+                const endSec = bodyVideoStartSec + (imgOv.end_pct / 100) * bodyVideoDurSec;
                 const imageInputIdx = getInputIndex(`in_img${i}`);
                 const outLabel = `v${filterIdx}`;
                 const scaledImgLabel = `img_s${i}`;
@@ -2269,8 +2368,8 @@ Deno.serve(async (req) => {
                 const shadowStr = sc.shadow
                   ? `:shadowcolor=black@0.55:shadowx=${shadowOffset}:shadowy=${shadowOffset}`
                   : "";
-                const startSec = (textOv.start_pct / 100) * videoDurationSec;
-                const endSec = (textOv.end_pct / 100) * videoDurationSec;
+                const startSec = bodyVideoStartSec + (textOv.start_pct / 100) * bodyVideoDurSec;
+                const endSec = bodyVideoStartSec + (textOv.end_pct / 100) * bodyVideoDurSec;
 
                 // ── SNAPCHAT PRESET ──────────────────────────────────────────────
                 // Opt-in via style_config.style_preset === "snapchat". Replaces
@@ -2282,13 +2381,17 @@ Deno.serve(async (req) => {
                 // style_preset are unaffected — they fall through to the legacy
                 // code below.
                 if (sc.style_preset === "snapchat") {
+                  // Defaults locked from local + Rendi visual specimen review
+                  // 2026-06-01: Inter Regular @ effective 36 px (= config
+                  // font_size 18 × resScale 2), full-width band, α 0.55,
+                  // pad_v_factor 0.30, line gap 0. Mid-screen by default.
                   const bandAlpha = (typeof sc.band_alpha === "number")
-                    ? Math.max(0, Math.min(1, sc.band_alpha)) : 0.70;
+                    ? Math.max(0, Math.min(1, sc.band_alpha)) : 0.55;
                   const bandColor = sc.band_color || "black";
                   const bandWidthPct = (typeof sc.band_width_pct === "number")
                     ? Math.max(10, Math.min(100, sc.band_width_pct)) : 100;
                   const padVFactor = (typeof sc.pad_v_factor === "number")
-                    ? sc.pad_v_factor : 0.10;
+                    ? sc.pad_v_factor : 0.30;
                   const lineGapPx = (typeof sc.line_gap_px === "number")
                     ? Math.max(0, Math.round(sc.line_gap_px)) : 0;
 

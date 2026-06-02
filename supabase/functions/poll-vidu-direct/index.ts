@@ -171,7 +171,12 @@ Deno.serve(async (req) => {
                   cost_usd: clipCostUsd,
                   metadata: { ...meta, status: "completed", generator: "vidu_direct" },
                 }).eq("id", asset.id);
-                await log(runId, "info", `Vidu Direct video downloaded, stored, and verified: ${taskId}`);
+                // Mirror hook clip status onto the runs row so finalize-video
+                // can detect a ready-to-prepend hook with a single column read.
+                if (meta?.is_pov_hook === true) {
+                  await supabase.from("runs").update({ pov_hook_status: "completed" }).eq("id", runId);
+                }
+                await log(runId, "info", `Vidu Direct video downloaded, stored, and verified: ${taskId}${meta?.is_pov_hook ? " [POV hook]" : ""}`);
                 completedCount++;
               }
             } else {
@@ -179,13 +184,19 @@ Deno.serve(async (req) => {
               await supabase.from("assets").update({
                 metadata: { ...meta, status: "failed" },
               }).eq("id", asset.id);
+              if (meta?.is_pov_hook === true) {
+                await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+              }
               completedCount++;
             }
           } else if (taskState === "failed" || taskState === "cancelled") {
-            await log(runId, "error", `Vidu Direct task ${taskId} ${taskState}`, statusData);
+            await log(runId, "error", `Vidu Direct task ${taskId} ${taskState}${meta?.is_pov_hook ? " [POV hook]" : ""}`, statusData);
             await supabase.from("assets").update({
               metadata: { ...meta, status: "failed" },
             }).eq("id", asset.id);
+            if (meta?.is_pov_hook === true) {
+              await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+            }
             completedCount++;
           } else {
             allDone = false;

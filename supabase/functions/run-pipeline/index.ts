@@ -817,6 +817,66 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
         await log("warn", `JSON overlay sync failed: ${err.message} — continuing with manual overlays only.`);
       }
 
+      // ── 1d-2: POV-hook variant pick + response-body overlay injection ──
+      // Gated. Every channel without a `pov_hook.enabled` block in its
+      // prompt_config_json falls through this block unchanged.
+      try {
+        const povHookCfg: any = (resolvedConfig as any).pov_hook;
+        const variants: any[] = Array.isArray(povHookCfg?.variants) ? povHookCfg.variants : [];
+        if (povHookCfg?.enabled && variants.length > 0 && (run as any).pov_hook_variant_index == null) {
+          // Crypto-uniform variant pick (same pattern as the approved-overlays code-pick).
+          const rand = new Uint32Array(1);
+          crypto.getRandomValues(rand);
+          const variantIdx = rand[0] % variants.length;
+          const variant = variants[variantIdx];
+          await log("info", `POV hook enabled — picked variant ${variantIdx + 1}/${variants.length}: "${variant?.name || "(unnamed)"}"`);
+
+          await supabase.from("runs").update({
+            pov_hook_variant_index: variantIdx,
+            pov_hook_status: "variant_picked",
+          }).eq("id", runId);
+          (run as any).pov_hook_variant_index = variantIdx;
+
+          // Inject the variant's response_body_overlay as the first body overlay.
+          // SBB4 (the pilot) omits a standalone opening overlay from items[] so
+          // this becomes the de-facto hook punchline at construction-body start.
+          const respBody: any = variant?.response_body_overlay || null;
+          if (respBody && typeof respBody.text === "string" && respBody.text.trim()) {
+            const styleCfg = respBody.style_config || {
+              font_family: "Montserrat-Black.ttf",
+              uppercase: true,
+              accent_color: "#F7C204",
+              shadow: true,
+              top_pct: 20,
+              stroke_width: 3,
+            };
+            await supabase.from("overlays").insert({
+              project_id: project.id,
+              source: "json_config",
+              overlay_type: "text",
+              content_mode: "exact",
+              content_text: respBody.text,
+              content_prompt: null,
+              image_path: null,
+              position: respBody.position || "top_center",
+              style: respBody.style || "engagement",
+              start_pct: respBody.start_pct ?? 1,
+              end_pct: respBody.end_pct ?? 12,
+              font_size: respBody.font_size ?? 34,
+              font_color: respBody.font_color || "#FFFFFF",
+              bg_color: respBody.bg_color || "rgba(0,0,0,0)",
+              z_index: respBody.z_index ?? 3,
+              sort_order: -1, // sit BEFORE every items[] overlay
+              voiceover_enabled: false,
+              style_config: styleCfg,
+            });
+            await log("info", `POV hook response-body overlay inserted: "${respBody.text}"`);
+          }
+        }
+      } catch (povHookErr) {
+        await log("warn", `POV hook variant pick failed (non-fatal, continuing without hook): ${(povHookErr as Error).message}`);
+      }
+
       // ── 1e: AI overlay content generation ──
       // Time-budget guard before starting AI overlay calls
       if (Date.now() - planStartTime > 100_000) {
@@ -1062,6 +1122,104 @@ Generate the timed text frames.`,
       // ── K0: Generate starting-state keyframe if not yet created ──
       const resolvedConfig = metadata.resolved_prompt_config || {};
       const startStateRules = resolvedConfig?.planning?.start_state_rules || [];
+
+      // ── POV-hook keyframes (K0_hook + K1_hook) — gated, opt-in ──
+      // Generated OUTSIDE the main K0→Kn chain so they don't pollute the
+      // identity lineage of the construction body. Each is an independent
+      // Gemini call using the picked variant's keyframe_prompt_{start,end}.
+      // The character recipe is baked into the prompt strings by the config
+      // author so the hook worker visually matches the construction worker.
+      try {
+        const povHookCfg: any = (resolvedConfig as any).pov_hook;
+        const variants: any[] = Array.isArray(povHookCfg?.variants) ? povHookCfg.variants : [];
+        if (povHookCfg?.enabled && variants.length > 0 && (run as any).pov_hook_variant_index != null) {
+          const variant = variants[(run as any).pov_hook_variant_index];
+
+          const { data: existingHookAssets } = await supabase
+            .from("assets")
+            .select("id, metadata, supabase_path")
+            .eq("run_id", runId)
+            .eq("type", "keyframe")
+            .is("scene_id", null);
+          const hookK0 = (existingHookAssets || []).find((a: any) => (a.metadata as any)?.purpose === "pov_hook_k0");
+          const hookK1 = (existingHookAssets || []).find((a: any) => (a.metadata as any)?.purpose === "pov_hook_k1");
+
+          if (!hookK0 && variant?.keyframe_prompt_start) {
+            await log("info", "Generating POV-hook K0 (start frame)...");
+            try {
+              const k0HookResult = await callAI(
+                [{ role: "user", content: variant.keyframe_prompt_start }],
+                undefined, undefined,
+                "google/gemini-3.1-flash-image-preview",
+                ["image", "text"],
+              );
+              await extractAndUploadImage(
+                k0HookResult,
+                `${project.id}/keyframes/${runId}/pov-hook-k0`,
+                "keyframe",
+                { run_id: runId, scene_id: null, purpose: "pov_hook_k0", variant_index: (run as any).pov_hook_variant_index },
+                (k0HookResult as any)._image_cost_usd,
+              );
+              await log("info", "POV-hook K0 saved");
+            } catch (k0HookErr) {
+              if (k0HookErr instanceof Image503RetryableError) {
+                await log("warn", "POV-hook K0 got 503 — re-chaining.");
+                chainNextStep();
+                return json({ status: "pov_hook_k0_503_rechain", run_id: runId });
+              }
+              await log("warn", `POV-hook K0 failed (non-fatal — hook will be skipped): ${(k0HookErr as Error).message}`);
+              await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+            }
+          }
+
+          // Re-query in case we just generated K0.
+          const { data: hookAssets2 } = await supabase
+            .from("assets")
+            .select("id, supabase_path, metadata")
+            .eq("run_id", runId)
+            .eq("type", "keyframe")
+            .is("scene_id", null);
+          const freshHookK0 = (hookAssets2 || []).find((a: any) => (a.metadata as any)?.purpose === "pov_hook_k0");
+
+          if (!hookK1 && freshHookK0 && variant?.keyframe_prompt_end) {
+            await log("info", "Generating POV-hook K1 (end frame, chained from K0_hook)...");
+            try {
+              const k0HookUrl = mediaPublicUrl(freshHookK0.supabase_path);
+              const k1HookResult = await callAI(
+                [{
+                  role: "user",
+                  content: [
+                    { type: "text", text: variant.keyframe_prompt_end },
+                    { type: "image_url", image_url: { url: k0HookUrl } },
+                  ],
+                }],
+                undefined, undefined,
+                "google/gemini-3.1-flash-image-preview",
+                ["image", "text"],
+              );
+              await extractAndUploadImage(
+                k1HookResult,
+                `${project.id}/keyframes/${runId}/pov-hook-k1`,
+                "keyframe",
+                { run_id: runId, scene_id: null, purpose: "pov_hook_k1", variant_index: (run as any).pov_hook_variant_index },
+                (k1HookResult as any)._image_cost_usd,
+              );
+              await log("info", "POV-hook K1 saved");
+            } catch (k1HookErr) {
+              if (k1HookErr instanceof Image503RetryableError) {
+                await log("warn", "POV-hook K1 got 503 — re-chaining.");
+                chainNextStep();
+                return json({ status: "pov_hook_k1_503_rechain", run_id: runId });
+              }
+              await log("warn", `POV-hook K1 failed (non-fatal — hook will be skipped): ${(k1HookErr as Error).message}`);
+              await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+            }
+          }
+        }
+      } catch (povHookKfErr) {
+        await log("warn", `POV hook keyframes block error (non-fatal): ${(povHookKfErr as Error).message}`);
+      }
+
       const { data: existingK0 } = await supabase
         .from("assets")
         .select("supabase_path")
@@ -1519,6 +1677,103 @@ Generate the timed text frames.`,
           await log("error", "No Vidu Direct tasks submitted successfully");
           await updateRun({ status: "failed", error_message: "All Vidu Direct submissions failed" });
           return json({ error: "All submissions failed" }, 500);
+        }
+
+        // ── POV-hook Vidu pair submission — gated, opt-in ──
+        // Submitted after scene clips so they share the same off-peak credit
+        // pool. The hook clip is an independent asset (scene_id=null,
+        // metadata.is_pov_hook=true); the existing off-peak sweeper polls it
+        // by vidu_task_id like any other clip. A hook failure is non-fatal —
+        // finalize-video skips the prepend if the hook asset isn't ready.
+        try {
+          const povHookCfg: any = (resolvedConfig as any).pov_hook;
+          const variants: any[] = Array.isArray(povHookCfg?.variants) ? povHookCfg.variants : [];
+          if (
+            povHookCfg?.enabled &&
+            variants.length > 0 &&
+            (run as any).pov_hook_variant_index != null &&
+            !(run as any).pov_hook_provider_id &&
+            (run as any).pov_hook_status !== "failed"
+          ) {
+            const variant = variants[(run as any).pov_hook_variant_index];
+            const { data: hookKfAssets } = await supabase
+              .from("assets")
+              .select("id, supabase_path, metadata")
+              .eq("run_id", runId)
+              .eq("type", "keyframe")
+              .is("scene_id", null);
+            const hk0 = (hookKfAssets || []).find((a: any) => (a.metadata as any)?.purpose === "pov_hook_k0");
+            const hk1 = (hookKfAssets || []).find((a: any) => (a.metadata as any)?.purpose === "pov_hook_k1");
+
+            if (hk0 && hk1) {
+              const hookDuration = Math.max(2, Math.min(8, Math.round(Number(povHookCfg.duration_sec) || 4)));
+              const hookBody: Record<string, any> = {
+                model: viduModel,
+                images: [mediaPublicUrl(hk0.supabase_path), mediaPublicUrl(hk1.supabase_path)],
+                prompt: variant?.motion_prompt || "amateur phone selfie camera POV, slow zoom in, slight handheld wobble, no smooth glide",
+                duration: hookDuration,
+                resolution: viduResolution,
+                audio: enableAudio,
+                movement_amplitude: "auto",
+                off_peak: true,
+              };
+              try {
+                const hookResp = await fetch(`https://api.vidu.com/ent/v2/start-end2video`, {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Token ${VIDU_API_KEY}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(hookBody),
+                });
+                if (!hookResp.ok) {
+                  const errText = await hookResp.text();
+                  await log("warn", `POV-hook Vidu submit failed (non-fatal — finalize will skip hook): ${hookResp.status} ${errText.substring(0, 200)}`);
+                  await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+                } else {
+                  const hookResult = await hookResp.json();
+                  const hookTaskId = hookResult.task_id;
+                  if (hookTaskId) {
+                    const { data: hookAsset } = await supabase.from("assets").insert({
+                      supabase_path: `pending-vidu-direct/${runId}/pov-hook`,
+                      type: "clip" as any,
+                      run_id: runId,
+                      scene_id: null,
+                      metadata: {
+                        vidu_task_id: hookTaskId,
+                        status: "submitted",
+                        generator: "vidu_direct",
+                        model: viduModel,
+                        frame_mode: "pair",
+                        is_pov_hook: true,
+                        variant_index: (run as any).pov_hook_variant_index,
+                        duration_sec: hookDuration,
+                        vidu_credits: hookResult.credits ?? null,
+                      },
+                    }).select().single();
+                    viduTaskIds.push(hookTaskId);
+                    await supabase.from("runs").update({
+                      pov_hook_provider_id: hookTaskId,
+                      pov_hook_status: "polling",
+                      pov_hook_clip_asset_id: hookAsset?.id || null,
+                    }).eq("id", runId);
+                    await log("info", `POV-hook Vidu submitted: task_id=${hookTaskId}, duration=${hookDuration}s, variant=${(run as any).pov_hook_variant_index}`);
+                  } else {
+                    await log("warn", "POV-hook Vidu returned no task_id (non-fatal).");
+                    await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+                  }
+                }
+              } catch (submitErr) {
+                await log("warn", `POV-hook Vidu submit error (non-fatal): ${(submitErr as Error).message}`);
+                await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+              }
+            } else {
+              await log("warn", `POV-hook missing keyframes (k0=${!!hk0}, k1=${!!hk1}) — skipping hook clip submission.`);
+              await supabase.from("runs").update({ pov_hook_status: "failed" }).eq("id", runId);
+            }
+          }
+        } catch (povHookKlingErr) {
+          await log("warn", `POV-hook kling block error (non-fatal): ${(povHookKlingErr as Error).message}`);
         }
 
         // Off-peak mode: pause the run and let the scheduled sweeper handle completion
