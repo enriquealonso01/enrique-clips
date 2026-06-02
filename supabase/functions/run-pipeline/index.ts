@@ -857,7 +857,15 @@ ${resolvedConfig.planning.start_state_rules.map(r => `- ${r}`).join("\n")}${memo
               },
               {
                 role: "user",
-                content: `Series: ${conceptPrompt || project.title}${metadataState.narration_script?.summary ? `\nStory (craft a heart-tugging or 'wow' hook overlay around this): ${metadataState.narration_script.summary}` : ""}
+                content: `Series: ${conceptPrompt || project.title}${metadataState.narration_script?.summary ? `\nStory (craft a heart-tugging or 'wow' hook overlay around this): ${metadataState.narration_script.summary}` : ""}${metadataState.landmark_name ? `
+
+THIS EPISODE'S SUBJECT — USE THESE EXACT VALUES IF AN OVERLAY ASKS FOR THE LANDMARK NAME OR LOCATION (do not invent, do not default to any other landmark, do not pick from the channel concept's example list):
+- Landmark name (use VERBATIM where the overlay asks for it): ${metadataState.landmark_name}
+- Real location for this landmark (city and country): ${metadataState.landmark_location || "(unknown)"}
+- Era / construction years: ${metadataState.landmark_era || "(unknown)"}
+
+The Series concept above may list several example landmarks (e.g. Statue of Liberty, Eiffel Tower, Pyramid of Giza). IGNORE that example list — those are just illustrations of the channel theme. The chosen landmark for THIS specific episode is exactly the one named above, and any overlay text referencing "the landmark being built" must use that exact name and location.` : ""}
+
 Scenes: ${scenesForOverlay.map((s: any) => `${s.scene_title}: ${s.scene_description}`).join("\n")}
 
 Generate content for these overlays:
