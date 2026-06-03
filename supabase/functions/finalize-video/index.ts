@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { r2Upload, mediaPublicUrl } from "../_shared/r2.ts";
 import { buildResolvedPromptConfig, type PromptConfig } from "../_shared/promptConfig.ts";
 import { MODELS, callText } from "../_shared/openai.ts";
-import { renderSnapPng } from "../_shared/snapOverlay.ts";
+import { buildSnapCaptionFilter, KNOWN_EMOJIS } from "../_shared/snapOverlay.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1711,15 +1711,18 @@ Deno.serve(async (req) => {
           const clipUrls: string[] = completedClips.map((clip: any) => mediaPublicUrl(clip.supabase_path));
           await log("info", `Prepared ${clipUrls.length} clip URLs for Rendi concat`);
 
-          // ── POV-hook prepend + snap PNG render — gated, opt-in ──
+          // ── POV-hook prepend + snap caption setup — gated, opt-in ──
           // When the run has a completed hook clip asset, prepend the clip
-          // URL to the concat list and render the variant's snap text into
-          // a transparent PNG that's overlaid on top of the hook portion of
-          // the final video (drawtext can't render color emojis; this PNG
-          // round-trip is the work-around).
+          // URL to the concat list and stash the variant's snap_overlay
+          // config so the filter-graph stage below can call the layout
+          // helper. No PNG render — the snap is built entirely from
+          // ffmpeg primitives (drawbox + drawtext + overlay) inside Rendi.
           let povHookDurSec = 0;
-          let snapOverlayPngUrl: string | null = null;
           let snapOverlayText = "";
+          let snapOverlayFontSize = 48;
+          let snapOverlayPositionPct = 30;
+          let snapOverlayBandAlpha = 0.55;
+          let snapEmojiCodepoints: string[] = [];
           try {
             if ((run as any).pov_hook_status === "completed" && (run as any).pov_hook_clip_asset_id) {
               const { data: hookAsset } = await supabase
@@ -1738,26 +1741,24 @@ Deno.serve(async (req) => {
                 const variants: any[] = Array.isArray(povHookCfg?.variants) ? povHookCfg.variants : [];
                 const variant = (run as any).pov_hook_variant_index != null ? variants[(run as any).pov_hook_variant_index] : null;
                 snapOverlayText = (variant?.snap_overlay?.text || "").toString();
+                snapOverlayFontSize = Math.round(Number(variant?.snap_overlay?.font_size_px) || 48);
+                snapOverlayPositionPct = Number(variant?.snap_overlay?.position_y_pct);
+                if (!Number.isFinite(snapOverlayPositionPct)) snapOverlayPositionPct = 30;
+                snapOverlayBandAlpha = typeof variant?.snap_overlay?.band_alpha === "number"
+                  ? variant.snap_overlay.band_alpha : 0.55;
 
+                // Pre-scan codepoints needed so we can register `in_emoji_*`
+                // inputs before the filter graph asks for indices.
                 if (snapOverlayText.trim()) {
-                  try {
-                    const fontSize = Math.round(Number(variant?.snap_overlay?.font_size_px) || 64);
-                    const bandAlpha = typeof variant?.snap_overlay?.band_alpha === "number"
-                      ? variant.snap_overlay.band_alpha : 0.55;
-                    const { png } = await renderSnapPng({ text: snapOverlayText, fontSize, bandAlpha });
-                    const snapPath = `overlays/snap/${runId}.png`;
-                    const { error: snapUpErr } = await supabase.storage
-                      .from("project-assets")
-                      .upload(snapPath, png, { contentType: "image/png", upsert: true });
-                    if (!snapUpErr) {
-                      snapOverlayPngUrl = supabase.storage.from("project-assets").getPublicUrl(snapPath).data.publicUrl;
-                      await log("info", `Snap PNG rendered + uploaded (${png.length} B): "${snapOverlayText.substring(0, 60)}"`);
-                    } else {
-                      await log("warn", `Snap PNG upload failed (continuing without snap overlay): ${snapUpErr.message}`);
+                  const seen = new Set<string>();
+                  for (const ch of snapOverlayText) {
+                    const cp = (KNOWN_EMOJIS as Record<string, string>)[ch];
+                    if (cp && !seen.has(cp)) {
+                      seen.add(cp);
+                      snapEmojiCodepoints.push(cp);
                     }
-                  } catch (snapErr) {
-                    await log("warn", `Snap PNG render failed (continuing without snap overlay): ${(snapErr as Error).message}`);
                   }
+                  await log("info", `POV-hook snap text: "${snapOverlayText.substring(0, 80)}" (${snapEmojiCodepoints.length} unique emoji)`);
                 }
 
                 // Prepend hook clip URL to clipUrls.
@@ -2111,11 +2112,16 @@ Deno.serve(async (req) => {
                 imgInputIdx++;
               }
 
-              // POV-hook snap PNG input (registered only when the hook fired
-              // AND the snap rendered/uploaded successfully — both checks
-              // happen at clip-prepend time above).
-              if (povHookEnabled && snapOverlayPngUrl) {
-                inputFiles["in_snap"] = snapOverlayPngUrl;
+              // POV-hook snap caption inputs — Inter font + one Apple emoji
+              // PNG per unique codepoint in the snap text. Order matters:
+              // `mediaInputKeys` (derived from Object.keys(inputFiles)) is
+              // what getInputIndex() walks, and the layout helper looks up
+              // each emoji's index by `in_emoji_<codepoint>` key.
+              if (povHookEnabled && snapOverlayText.trim()) {
+                inputFiles["in_font_snap"] = mediaPublicUrl("fonts/Inter-Regular.ttf");
+                for (const cp of snapEmojiCodepoints) {
+                  inputFiles[`in_emoji_${cp}`] = mediaPublicUrl(`overlays/apple-emoji/${cp}.png`);
+                }
               }
 
               // Add audio input if selected
@@ -2283,25 +2289,43 @@ Deno.serve(async (req) => {
               let currentVideoLabel = concatVideoLabel;
               let filterIdx = 0;
 
-              // POV-hook snap overlay: applied OVER the hook portion of the
-              // concat (t = 0 → povHookDurSec) and removed at the splice point
-              // so the construction body starts clean. Sits before body
-              // image/text overlays in the chain so body overlays render on
-              // top if their windows accidentally overlap with the hook.
-              if (povHookEnabled && snapOverlayPngUrl) {
-                const snapInputIdx = getInputIndex("in_snap");
-                if (snapInputIdx >= 0) {
-                  const snapOutLabel = `v${filterIdx}`;
-                  // Position: horizontally centered, vertically anchored at
-                  // 18% from top of frame (snap.position_y_pct overridable).
-                  const snapTopPct = 0.18;
-                  const snapY = `H*${snapTopPct.toFixed(3)}-h/2`;
-                  filterParts.push(
-                    `[${currentVideoLabel}][${snapInputIdx}:v]overlay=enable='between(t\\,0\\,${povHookDurSec.toFixed(1)})':x=(W-w)/2:y=${snapY}[${snapOutLabel}]`,
-                  );
-                  currentVideoLabel = snapOutLabel;
-                  filterIdx++;
-                  await log("info", `Snap overlay filter applied over [0, ${povHookDurSec.toFixed(1)}s]`);
+              // POV-hook snap caption: full ffmpeg-primitives chain via the
+              // layout helper (drawbox band + per-text-run drawtext + per-
+              // emoji overlay), all gated on `between(t,0,hookDurSec)` so
+              // the snap appears only during the hook portion of the
+              // final video. Body image/text overlays render after this in
+              // the chain so they sit on top if the windows overlap.
+              if (povHookEnabled && snapOverlayText.trim()) {
+                const fontIdx = getInputIndex("in_font_snap");
+                if (fontIdx >= 0) {
+                  try {
+                    const snapLayout = await buildSnapCaptionFilter({
+                      text: snapOverlayText,
+                      fontSize: snapOverlayFontSize,
+                      frameW: targetVideoWidth,
+                      frameH: targetVideoHeight,
+                      positionPct: snapOverlayPositionPct,
+                      bandAlpha: snapOverlayBandAlpha,
+                      enableExpr: `between(t\\,0\\,${povHookDurSec.toFixed(1)})`,
+                      inputVideoLabel: currentVideoLabel,
+                      fontInputIndex: fontIdx,
+                      emojiInputIndex: (cp) => getInputIndex(`in_emoji_${cp}`),
+                      startIdx: filterIdx,
+                    });
+                    // Replace the helper's {{in_font_snap}} placeholder with
+                    // the actual Rendi input placeholder (keeps the helper
+                    // testable without Rendi at hand).
+                    for (const part of snapLayout.filterParts) {
+                      filterParts.push(part.replace(/\{\{in_font_snap\}\}/g, "{{in_font_snap}}"));
+                    }
+                    currentVideoLabel = snapLayout.outputVideoLabel;
+                    filterIdx += snapLayout.filterParts.length;
+                    await log("info", `Snap caption: ${snapLayout.filterParts.length} filter parts, fontSize=${snapLayout.fontSize} (req=${snapOverlayFontSize}), positionPct=${snapOverlayPositionPct}`);
+                  } catch (snapLayoutErr) {
+                    await log("warn", `Snap caption build failed (non-fatal — hook clip will play without overlay): ${(snapLayoutErr as Error).message}`);
+                  }
+                } else {
+                  await log("warn", "POV-hook snap caption: in_font_snap not registered — skipping.");
                 }
               }
 

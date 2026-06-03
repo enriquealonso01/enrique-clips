@@ -1,27 +1,29 @@
-// Snap-overlay PNG renderer (Deno / Supabase Edge).
+// Snap-caption ffmpeg-layout helper (Deno / Supabase Edge).
 //
-// Produces a transparent PNG of an iOS-style Snapchat overlay pill — rounded
-// translucent dark band + white Inter text + inline color emojis (Twemoji,
-// Twitter's open MIT-licensed set, used because Apple Color Emoji is not
-// licensed for redistribution). The PNG is composited onto the hook clip
-// in finalize-video via ffmpeg's `overlay` filter — drawtext can't render
-// color emojis, so we go through this PNG-overlay pipeline instead.
+// Builds the exact filter_complex fragments that finalize-video sends to
+// Rendi for a snap caption with inline iOS emojis. No PNG round-trip: text
+// is rendered by ffmpeg `drawtext`, color emojis by ffmpeg `overlay` of the
+// Apple Color Emoji PNGs (one per codepoint, sourced from Supabase Storage
+// at `overlays/apple-emoji/<codepoint>.png`).
 //
-// Approach: build an SVG string with the pill + text + <image> tags for
-// each emoji (Twemoji PNG bytes inlined as base64 data URIs so resvg never
-// needs to fetch anything at render time), then rasterize via resvg-js.
+// Per-run x positions are measured client-side with `opentype.js` over the
+// same Inter Regular TTF we ship to Rendi as `in_font_snap`. Same font +
+// same size = same advance widths as ffmpeg's drawtext renderer, so the
+// layout lands pixel-accurate without a measure pass on the Rendi side.
 //
-// The renderer fetches Inter + the Twemoji PNGs from jsdelivr on first
-// call and caches them in module state for subsequent renders in the same
-// instance. If a Twemoji codepoint isn't recognized, it falls through as
-// monochrome text (resvg's font fallback).
+// If a snap's text + emojis won't fit at the requested font size with the
+// configured side margin, the helper auto-shrinks the font in 2 px steps
+// until it fits (or hits `minFontSize`). All filter parts are wrapped with
+// the caller-supplied `enableExpr` so the snap appears only during the
+// hook window.
 
-import { Resvg } from "https://esm.sh/@resvg/resvg-js@2.6.2";
+// @deno-types="https://esm.sh/opentype.js@1.3.4/dist/opentype.d.ts"
+import opentype from "https://esm.sh/opentype.js@1.3.4";
 
-// Twemoji codepoints we currently use across the live POV-hook variants.
-// Adding new emojis to a variant requires adding their codepoint stem here.
-// Codepoint → Twemoji 72x72 PNG path on jsdelivr.
-const KNOWN_EMOJIS: Record<string, string> = {
+// Codepoints currently used across the live POV-hook variants. Adding a new
+// emoji to a variant requires (a) adding its stem here AND (b) uploading
+// the Apple PNG to Supabase Storage at overlays/apple-emoji/<stem>.png.
+export const KNOWN_EMOJIS: Record<string, string> = {
   "\u{1f480}": "1f480", // 💀 skull
   "\u{1f6a8}": "1f6a8", // 🚨 siren
   "\u{1f910}": "1f910", // 🤐 zipper-mouth
@@ -35,31 +37,18 @@ const KNOWN_EMOJIS: Record<string, string> = {
   "\u{1f622}": "1f622", // 😢
 };
 
-const TWEMOJI_BASE = "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72";
-const INTER_URL = "https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-400-normal.woff";
+// Inter Regular — the snap-caption text font. Cached at module scope across
+// invocations in the same edge function container.
+const INTER_URL = "https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-400-normal.ttf";
+let interFont: any = null;
 
-// Module-level caches — populated on first call, reused for the lifetime
-// of the edge function container.
-const emojiPngCache = new Map<string, string>(); // codepoint → base64 PNG
-let interFontBytes: Uint8Array | null = null;
-
-async function getEmojiDataUri(codepoint: string): Promise<string | null> {
-  if (emojiPngCache.has(codepoint)) return emojiPngCache.get(codepoint)!;
-  const resp = await fetch(`${TWEMOJI_BASE}/${codepoint}.png`);
-  if (!resp.ok) return null;
-  const bytes = new Uint8Array(await resp.arrayBuffer());
-  const b64 = btoa(String.fromCharCode(...bytes));
-  const uri = `data:image/png;base64,${b64}`;
-  emojiPngCache.set(codepoint, uri);
-  return uri;
-}
-
-async function getInterFontBytes(): Promise<Uint8Array> {
-  if (interFontBytes) return interFontBytes;
+async function getInterFont(): Promise<any> {
+  if (interFont) return interFont;
   const resp = await fetch(INTER_URL);
   if (!resp.ok) throw new Error(`Failed to fetch Inter font: ${resp.status}`);
-  interFontBytes = new Uint8Array(await resp.arrayBuffer());
-  return interFontBytes;
+  const buf = await resp.arrayBuffer();
+  interFont = (opentype as any).parse(buf);
+  return interFont;
 }
 
 type Run =
@@ -69,7 +58,6 @@ type Run =
 function splitRuns(text: string): Run[] {
   const runs: Run[] = [];
   let buf = "";
-  // Iterating the string by code points (for...of) handles surrogate pairs.
   for (const ch of text) {
     if (KNOWN_EMOJIS[ch]) {
       if (buf) { runs.push({ kind: "text", text: buf }); buf = ""; }
@@ -82,126 +70,191 @@ function splitRuns(text: string): Run[] {
   return runs;
 }
 
-function escapeSvgText(s: string): string {
+// Mirrors the existing escapeFFmpegDrawtextText() in finalize-video.
+// Apostrophes drop because ffmpeg's filter parser treats `'` as a quote
+// delimiter and the multi-level backslash escape is brittle.
+function escapeDrawtextValue(s: string): string {
   return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+    .replace(/['"\[\]]/g, "")
+    .replace(/,/g, "")
+    .replace(/%/g, "pct")
+    .replace(/\\/g, "")
+    .replace(/:/g, " -")
+    .replace(/ /g, "\\ ");
 }
 
-// Width estimate for an Inter Regular glyph at the given font size.
-// Inter's average advance is ~0.52 em for mixed lowercase, ~0.58 em for
-// uppercase. We use 0.52 for general text (matches our Pillow spike).
-function estimateTextWidth(text: string, fontSize: number): number {
-  return text.length * fontSize * 0.52;
-}
-
-export interface SnapRenderOpts {
+export interface SnapCaptionInput {
+  /** The snap text (may contain known emojis inline). */
   text: string;
-  /** PNG nominal font size in pixels. Default 64. */
+  /** Requested font size in pixels (auto-shrinks if too wide). Default 48. */
   fontSize?: number;
-  /** Background opacity 0..1. Default 0.55. */
+  /** Final video frame width in px. */
+  frameW: number;
+  /** Final video frame height in px. */
+  frameH: number;
+  /**
+   * Vertical position of the band CENTER, as a percent measured from the
+   * BOTTOM of the frame (0 = bottom, 100 = top). Matches the snap_overlay
+   * config convention. Default 30 (=70% from top).
+   */
+  positionPct?: number;
+  /** Band background opacity 0..1. Default 0.55. */
   bandAlpha?: number;
-  /** Corner radius as a fraction of pill height. Default 0.30. */
-  radiusFactor?: number;
-  /** Horizontal padding inside the pill, as a fraction of fontSize. Default 0.55. */
-  padHFactor?: number;
-  /** Vertical padding inside the pill, as a fraction of fontSize. Default 0.32. */
-  padVFactor?: number;
-  /** Emoji size relative to text size. Default 1.05. */
-  emojiScale?: number;
+  /** Pixel padding around each emoji slot. Default 8. */
+  emojiPad?: number;
+  /** Min horizontal margin from each frame edge. Default 40. */
+  sideMargin?: number;
+  /** Auto-shrink lower bound. Default 28. */
+  minFontSize?: number;
+  /**
+   * ffmpeg `enable=` expression so the snap appears only during the hook
+   * window. e.g. `between(t\\,0\\,4)` (commas already filter-escaped).
+   */
+  enableExpr: string;
+  /** Starting video label (the chain input). e.g. `concatv`. */
+  inputVideoLabel: string;
+  /** Index of the snap font input (Inter) in the Rendi -i input list. */
+  fontInputIndex: number;
+  /**
+   * Maps an emoji codepoint stem to its index in the Rendi -i input list.
+   * The caller is responsible for adding `in_emoji_<stem>` to inputFiles
+   * BEFORE invoking the layout helper so the indices line up.
+   */
+  emojiInputIndex: (codepoint: string) => number;
+  /**
+   * Starting filter-index for label naming. The helper emits labels
+   * `snap_v{startIdx}..snap_v{startIdx+N-1}` so they won't collide with
+   * the surrounding filter graph. Default 0.
+   */
+  startIdx?: number;
+}
+
+export interface SnapCaptionResult {
+  /** ffmpeg filter_complex fragments. Concatenate into the final graph. */
+  filterParts: string[];
+  /** The final output video label after the snap chain. */
+  outputVideoLabel: string;
+  /** Codepoint stems the caller MUST register as in_emoji_<stem> inputs. */
+  emojiCodepoints: string[];
+  /** Actual font size used (may be lower than requested due to auto-shrink). */
+  fontSize: number;
+  /** Band geometry, for callers that want to log / debug. */
+  bandY: number;
+  bandH: number;
 }
 
 /**
- * Render the snap-overlay pill as a transparent PNG.
- * Returns the PNG bytes (Uint8Array) and the rasterized dimensions.
+ * Build the snap-caption filter chain. Does NOT mutate inputFiles or run
+ * ffmpeg — pure layout/string-building. Caller splices `filterParts` into
+ * its filter_complex.
  */
-export async function renderSnapPng(
-  opts: SnapRenderOpts,
-): Promise<{ png: Uint8Array; width: number; height: number }> {
-  const fontSize = opts.fontSize ?? 64;
+export async function buildSnapCaptionFilter(
+  opts: SnapCaptionInput,
+): Promise<SnapCaptionResult> {
+  const requestedFontSize = opts.fontSize ?? 48;
+  const positionPct = opts.positionPct ?? 30;
   const bandAlpha = opts.bandAlpha ?? 0.55;
-  const radiusFactor = opts.radiusFactor ?? 0.30;
-  const padHFactor = opts.padHFactor ?? 0.55;
-  const padVFactor = opts.padVFactor ?? 0.32;
-  const emojiScale = opts.emojiScale ?? 1.05;
+  const emojiPad = opts.emojiPad ?? 8;
+  const sideMargin = opts.sideMargin ?? 40;
+  const minFontSize = opts.minFontSize ?? 28;
+  const startIdx = opts.startIdx ?? 0;
 
   const runs = splitRuns(opts.text);
-  const emojiSize = Math.round(fontSize * emojiScale);
+  const font = await getInterFont();
 
-  // Measure each run's width.
-  const widths = runs.map((r) =>
-    r.kind === "text" ? estimateTextWidth(r.text, fontSize) : emojiSize + 4
-  );
-  const contentW = widths.reduce((s, w) => s + w, 0);
+  // Auto-shrink so the composition fits inside frameW - 2*sideMargin.
+  const availableW = opts.frameW - 2 * sideMargin;
+  let fontSize = requestedFontSize;
+  let widths: number[] = [];
+  let totalW = 0;
+  let emojiSize = 0;
+  while (fontSize >= minFontSize) {
+    emojiSize = fontSize + 4;
+    widths = runs.map((r) =>
+      r.kind === "text"
+        ? Math.round(font.getAdvanceWidth(r.text, fontSize))
+        : emojiSize + emojiPad
+    );
+    totalW = widths.reduce((s, w) => s + w, 0);
+    if (totalW <= availableW) break;
+    fontSize -= 2;
+  }
+  if (fontSize < minFontSize) {
+    fontSize = minFontSize;
+    emojiSize = fontSize + 4;
+    widths = runs.map((r) =>
+      r.kind === "text"
+        ? Math.round(font.getAdvanceWidth(r.text, fontSize))
+        : emojiSize + emojiPad
+    );
+    totalW = widths.reduce((s, w) => s + w, 0);
+  }
 
-  const textH = Math.round(fontSize * 1.18);
-  const padH = Math.round(fontSize * padHFactor);
-  const padV = Math.round(fontSize * padVFactor);
-  const pillW = Math.round(contentW + 2 * padH);
-  const pillH = Math.round(textH + 2 * padV);
-
-  // Small transparent margin around the pill so the PNG doesn't clip the
-  // shadow / rounded corners on composition.
-  const margin = 12;
-  const svgW = pillW + 2 * margin;
-  const svgH = pillH + 2 * margin;
-  const radius = Math.round(pillH * radiusFactor);
-
-  // Pre-fetch all needed emoji data URIs in parallel.
-  const emojiUris = await Promise.all(
-    runs.map((r) => r.kind === "emoji" ? getEmojiDataUri(r.codepoint) : Promise.resolve(null)),
-  );
-
-  // Build SVG body.
-  const parts: string[] = [];
-  parts.push(
-    `<rect x="${margin}" y="${margin}" width="${pillW}" height="${pillH}" rx="${radius}" ry="${radius}" fill="rgba(0,0,0,${bandAlpha})"/>`,
-  );
-
-  let cursorX = margin + padH;
-  // Text baseline so the visible glyphs sit centered in the pill. Inter at
-  // 1em font-size has roughly 0.78em ascent — y is the baseline.
-  const baselineY = margin + padV + Math.round(textH * 0.78);
-  const emojiY = margin + padV + Math.round((textH - emojiSize) / 2);
-
-  for (let i = 0; i < runs.length; i++) {
-    const r = runs[i];
-    const w = widths[i];
-    if (r.kind === "text") {
-      const safe = escapeSvgText(r.text);
-      parts.push(
-        `<text x="${cursorX}" y="${baselineY}" font-family="Inter, sans-serif" font-size="${fontSize}" font-weight="400" fill="white" xml:space="preserve">${safe}</text>`,
-      );
-    } else {
-      const uri = emojiUris[i];
-      if (uri) {
-        parts.push(
-          `<image x="${cursorX + 2}" y="${emojiY}" width="${emojiSize}" height="${emojiSize}" href="${uri}"/>`,
-        );
-      }
-    }
+  // Absolute x positions, centered as a group inside the band.
+  const startX = Math.round((opts.frameW - totalW) / 2);
+  const positions: number[] = [];
+  let cursorX = startX;
+  for (const w of widths) {
+    positions.push(cursorX);
     cursorX += w;
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${parts.join("")}</svg>`;
+  // Band geometry — same logic as the existing snap preset.
+  const estTextH = Math.round(fontSize * 1.18);
+  const padV = Math.max(6, Math.round(fontSize * 0.30));
+  const bandH = estTextH + 2 * padV;
+  // positionPct convention: 0 = bottom, 100 = top. Convert to a top-down y.
+  const bandCenterY = Math.round(opts.frameH * (1 - positionPct / 100));
+  const bandY = bandCenterY - Math.round(bandH / 2);
 
-  const fontBytes = await getInterFontBytes();
-  const resvg = new Resvg(svg, {
-    background: "rgba(0,0,0,0)",
-    fitTo: { mode: "width", value: svgW },
-    font: {
-      fontBuffers: [fontBytes],
-      loadSystemFonts: false,
-      defaultFontFamily: "Inter",
-    },
-  });
-  const pngData = resvg.render();
-  const png = pngData.asPng();
-  const { width, height } = pngData;
-  pngData.free();
-  resvg.free();
-  return { png, width, height };
+  // Build filter parts.
+  const filterParts: string[] = [];
+  let idx = startIdx;
+  let current = opts.inputVideoLabel;
+
+  // 1) Band — full-width drawbox, time-gated to the hook window.
+  const bandLabel = `snap_v${idx++}`;
+  filterParts.push(
+    `[${current}]drawbox=enable='${opts.enableExpr}':x=0:y=${bandY}:w=iw:h=${bandH}:color=black@${bandAlpha}:t=fill[${bandLabel}]`,
+  );
+  current = bandLabel;
+
+  // 2) Per-run filters.
+  const emojiCodepoints: string[] = [];
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i];
+    const x = positions[i];
+    if (r.kind === "text") {
+      const safe = escapeDrawtextValue(r.text);
+      if (!safe) continue;
+      const yExpr = `${bandCenterY}-text_h/2`;
+      const out = `snap_v${idx++}`;
+      filterParts.push(
+        `[${current}]drawtext=enable='${opts.enableExpr}':fontfile={{in_font_snap}}:text=${safe}:fontsize=${fontSize}:fontcolor=white:x=${x}:y=${yExpr}:borderw=0[${out}]`,
+      );
+      current = out;
+    } else {
+      emojiCodepoints.push(r.codepoint);
+      const emojiInputIdx = opts.emojiInputIndex(r.codepoint);
+      const scaled = `snap_e${idx++}`;
+      filterParts.push(
+        `[${emojiInputIdx}:v]scale=${emojiSize}:${emojiSize}:flags=lanczos,format=rgba[${scaled}]`,
+      );
+      const out = `snap_v${idx++}`;
+      const emojiY = bandCenterY - Math.round(emojiSize / 2);
+      filterParts.push(
+        `[${current}][${scaled}]overlay=enable='${opts.enableExpr}':x=${x + Math.floor(emojiPad / 2)}:y=${emojiY}[${out}]`,
+      );
+      current = out;
+    }
+  }
+
+  return {
+    filterParts,
+    outputVideoLabel: current,
+    emojiCodepoints,
+    fontSize,
+    bandY,
+    bandH,
+  };
 }
