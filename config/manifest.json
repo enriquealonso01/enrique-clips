@@ -1,12 +1,6 @@
 {
-  "generated_at": "2026-05-26T09:36:24.218Z",
+  "generated_at": "2026-06-03T10:43:16.223Z",
   "projects": [
-    {
-      "project_id": "c8fe0d20-768d-4841-8c8e-f9840df36454",
-      "title": "Untitled Project",
-      "profile_username": "_unassigned",
-      "path": "config/projects/_unassigned/untitled-project.json"
-    },
     {
       "project_id": "e0d67485-eff8-4c7e-a002-40b6bf66bce3",
       "title": "Dream Backyard Daily",
@@ -14,16 +8,16 @@
       "path": "config/projects/dreambackyarddaily/dream-backyard-daily.json"
     },
     {
+      "project_id": "0cf531fe-c4b5-49b3-a6fe-5e82e7240f4e",
+      "title": "History of Builds",
+      "profile_username": "historyofbuilds",
+      "path": "config/projects/historyofbuilds/history-of-builds.json"
+    },
+    {
       "project_id": "4ecbc191-6c5c-467b-bcf4-9fdd0da2df7a",
       "title": "ManCave Pro",
       "profile_username": "mancavepro",
       "path": "config/projects/mancavepro/mancave-pro.json"
-    },
-    {
-      "project_id": "45f5e2cd-5e68-4600-be3d-fd7965ef1752",
-      "title": "Pool Rescue Lab",
-      "profile_username": "poolrescuelab",
-      "path": "config/projects/poolrescuelab/pool-rescue-lab.json"
     },
     {
       "project_id": "d0213ab1-e546-4881-affd-c3da5dfebc4f",
@@ -50,10 +44,10 @@
       "path": "config/projects/secretBackyardBuilds/secret-backyard-builds-4.json"
     },
     {
-      "project_id": "0cf531fe-c4b5-49b3-a6fe-5e82e7240f4e",
-      "title": "History of Builds",
-      "profile_username": "historyofbuilds",
-      "path": "config/projects/historyofbuilds/history-of-builds.json"
+      "project_id": "2ac7aed2-faca-4fc5-9e25-d8a895878a7e",
+      "title": "Secret Backyard Builds 4",
+      "profile_username": "secretBackyardBuilds",
+      "path": "config/projects/secretBackyardBuilds/secret-backyard-builds-4-2ac7aed2.json"
     },
     {
       "project_id": "8b57c3cd-93f9-4427-aa71-6e594233099f",
