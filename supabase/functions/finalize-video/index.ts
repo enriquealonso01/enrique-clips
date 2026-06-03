@@ -2138,8 +2138,13 @@ Deno.serve(async (req) => {
 
               // Resolve real ffmpeg input indexes from the sorted input key order used in inputArgs
               const sortedInputKeys = Object.keys(inputFiles).sort();
-              // Media inputs exclude font (font is referenced via fontfile=, not -i)
-              const mediaInputKeys = sortedInputKeys.filter((k) => k !== "in_font");
+              // Media inputs exclude font files — they're referenced via
+              // fontfile={{...}} in drawtext, never as a stream `-i` input.
+              // `in_font` covers the body-overlay font; `in_font_snap` the
+              // POV-hook snap-caption Inter font.
+              const mediaInputKeys = sortedInputKeys.filter(
+                (k) => k !== "in_font" && k !== "in_font_snap",
+              );
               const getInputIndex = (key: string): number => mediaInputKeys.indexOf(key);
 
               // Build concat filter: all clip inputs → single video stream
