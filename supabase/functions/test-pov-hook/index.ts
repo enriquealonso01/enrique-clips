@@ -383,9 +383,33 @@ async function handleCompose(supabase: any, body: any): Promise<Response> {
     }
   }
 
-  const inputArgs = mediaInputKeys.map((k) => `-i {{${k}}}`).join(" ");
+  // Font files are referenced inside drawtext via `fontfile={{key}}` — they
+  // must NOT be added as `-i` streams or ffmpeg tries to demux the TTF and
+  // dies with "Invalid data found when processing input". Rendi still
+  // downloads the file (since the key is in input_files) and substitutes
+  // the placeholder anywhere it appears in the command, including the
+  // fontfile= reference.
+  const streamInputKeys = mediaInputKeys.filter((k) => !k.startsWith("in_font"));
+  const inputArgs = streamInputKeys.map((k) => `-i {{${k}}}`).join(" ");
+  // The indices we computed via getInputIndex were over mediaInputKeys
+  // (which INCLUDED the font). After dropping fonts from -i, each stream
+  // input's ffmpeg index shifts. Re-issue the filter chain using the new
+  // stream-only index map.
+  const streamInputIdx: Record<string, number> = {};
+  streamInputKeys.forEach((k, i) => { streamInputIdx[k] = i; });
+  const fixedFilterParts = filterParts.map((p) => {
+    return p.replace(/\[(\d+):v\]/g, (_, oldIdxStr) => {
+      const oldIdx = parseInt(oldIdxStr, 10);
+      const key = mediaInputKeys[oldIdx];
+      const newIdx = streamInputIdx[key];
+      if (newIdx == null) {
+        throw new Error(`filter referenced non-stream input ${key} as [${oldIdx}:v]`);
+      }
+      return `[${newIdx}:v]`;
+    });
+  });
   const ffmpegCmd =
-    `${inputArgs} -filter_complex "${filterParts.join(";")}" -map "[${currentLabel}]" ` +
+    `${inputArgs} -filter_complex "${fixedFilterParts.join(";")}" -map "[${currentLabel}]" ` +
     `-c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -movflags +faststart {{out_1}}`;
 
   // Submit + poll Rendi.

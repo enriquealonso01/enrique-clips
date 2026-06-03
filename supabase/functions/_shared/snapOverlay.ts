@@ -19,6 +19,7 @@
 
 // @deno-types="https://esm.sh/opentype.js@1.3.4/dist/opentype.d.ts"
 import opentype from "https://esm.sh/opentype.js@1.3.4";
+import { mediaPublicUrl } from "./r2.ts";
 
 // Codepoints currently used across the live POV-hook variants. Adding a new
 // emoji to a variant requires (a) adding its stem here AND (b) uploading
@@ -37,15 +38,17 @@ export const KNOWN_EMOJIS: Record<string, string> = {
   "\u{1f622}": "1f622", // 😢
 };
 
-// Inter Regular — the snap-caption text font. Cached at module scope across
-// invocations in the same edge function container.
-const INTER_URL = "https://cdn.jsdelivr.net/npm/@fontsource/inter/files/inter-latin-400-normal.ttf";
+// Inter Regular — the snap-caption text font. Sourced from Supabase Storage
+// at fonts/Inter-Regular.ttf (uploaded once, out of band) so we don't depend
+// on an external CDN. Cached at module scope across invocations in the same
+// edge function container.
 let interFont: any = null;
 
 async function getInterFont(): Promise<any> {
   if (interFont) return interFont;
-  const resp = await fetch(INTER_URL);
-  if (!resp.ok) throw new Error(`Failed to fetch Inter font: ${resp.status}`);
+  const url = mediaPublicUrl("fonts/Inter-Regular.ttf");
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to fetch Inter font from ${url}: ${resp.status}`);
   const buf = await resp.arrayBuffer();
   interFont = (opentype as any).parse(buf);
   return interFont;
