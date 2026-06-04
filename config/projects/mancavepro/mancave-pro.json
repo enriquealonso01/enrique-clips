@@ -126,8 +126,9 @@
           "uppercase": false,
           "accent_color": "#FFFFFF",
           "shadow": false,
-          "top_pct": 50,
-          "stroke_width": 0
+          "top_pct": 70,
+          "stroke_width": 0,
+          "style_preset": "snapchat"
         },
         "content_prompt": "Output the chosen line EXACTLY as written, with no quotes and no added punctuation. Approved overlays: He's been planning this for two years | Wait until you see what's behind this | You won't believe what's in here | His wife has no idea about this | He's been working on this every night | The neighbors think he's gone mad | He hasn't told a single person | He sold his motorcycle for this | He drew the plans on napkins for months | He took six weeks off for this project | He told her it was just storage | He hid the door behind a bookcase | He worked alone the entire time | He won't let anyone past this point | He measured this room twelve times | He skipped the family vacation for this | He spent his entire bonus on this | He won't even tell his best friend | He hasn't slept properly in weeks | He told his wife it was just a closet | He learned construction from scratch for this | He's been watching YouTube for over a year | He built every inch with his own hands | Behind this ordinary basement door | He's about to shock his entire family | He bought this house just for this room | He's been dreaming of this since high school | He told her not to ask any questions | He convinced her it was for the kids | He started before he even told his wife | He swore his brother to total secrecy | The entire house is normal except in here | Every dad has wanted his own version of this | He waited until she was out of town | He told her he was just doing repairs | He hasn't told his parents yet | The contractor agreed never to talk about it | He smuggled the materials in at night | He pretended he was just reorganizing | He told her he was building a guest room"
       },
