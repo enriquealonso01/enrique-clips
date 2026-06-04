@@ -2300,38 +2300,33 @@ Deno.serve(async (req) => {
               // the snap appears only during the hook portion of the
               // final video. Body image/text overlays render after this in
               // the chain so they sit on top if the windows overlap.
-              if (povHookEnabled && snapOverlayText.trim()) {
-                const fontIdx = getInputIndex("in_font_snap");
-                if (fontIdx >= 0) {
-                  try {
-                    const snapLayout = await buildSnapCaptionFilter({
-                      text: snapOverlayText,
-                      fontSize: snapOverlayFontSize,
-                      frameW: targetVideoWidth,
-                      frameH: targetVideoHeight,
-                      positionPct: snapOverlayPositionPct,
-                      bandAlpha: snapOverlayBandAlpha,
-                      enableExpr: `between(t\\,0\\,${povHookDurSec.toFixed(1)})`,
-                      inputVideoLabel: currentVideoLabel,
-                      fontInputIndex: fontIdx,
-                      emojiInputIndex: (cp) => getInputIndex(`in_emoji_${cp}`),
-                      startIdx: filterIdx,
-                    });
-                    // Replace the helper's {{in_font_snap}} placeholder with
-                    // the actual Rendi input placeholder (keeps the helper
-                    // testable without Rendi at hand).
-                    for (const part of snapLayout.filterParts) {
-                      filterParts.push(part.replace(/\{\{in_font_snap\}\}/g, "{{in_font_snap}}"));
-                    }
-                    currentVideoLabel = snapLayout.outputVideoLabel;
-                    filterIdx += snapLayout.filterParts.length;
-                    await log("info", `Snap caption: ${snapLayout.filterParts.length} filter parts, fontSize=${snapLayout.fontSize} (req=${snapOverlayFontSize}), positionPct=${snapOverlayPositionPct}`);
-                  } catch (snapLayoutErr) {
-                    await log("warn", `Snap caption build failed (non-fatal — hook clip will play without overlay): ${(snapLayoutErr as Error).message}`);
-                  }
-                } else {
-                  await log("warn", "POV-hook snap caption: in_font_snap not registered — skipping.");
+              if (povHookEnabled && snapOverlayText.trim() && inputFiles["in_font_snap"]) {
+                try {
+                  const snapLayout = await buildSnapCaptionFilter({
+                    text: snapOverlayText,
+                    fontSize: snapOverlayFontSize,
+                    frameW: targetVideoWidth,
+                    frameH: targetVideoHeight,
+                    positionPct: snapOverlayPositionPct,
+                    bandAlpha: snapOverlayBandAlpha,
+                    enableExpr: `between(t\\,0\\,${povHookDurSec.toFixed(1)})`,
+                    inputVideoLabel: currentVideoLabel,
+                    // fontInputIndex is unused by the helper (font is only
+                    // referenced via the {{in_font_snap}} placeholder, never
+                    // as a stream index) but the interface still requires it.
+                    fontInputIndex: -1,
+                    emojiInputIndex: (cp) => getInputIndex(`in_emoji_${cp}`),
+                    startIdx: filterIdx,
+                  });
+                  for (const part of snapLayout.filterParts) filterParts.push(part);
+                  currentVideoLabel = snapLayout.outputVideoLabel;
+                  filterIdx += snapLayout.filterParts.length;
+                  await log("info", `Snap caption: ${snapLayout.filterParts.length} filter parts, fontSize=${snapLayout.fontSize} (req=${snapOverlayFontSize}), positionPct=${snapOverlayPositionPct}`);
+                } catch (snapLayoutErr) {
+                  await log("warn", `Snap caption build failed (non-fatal — hook clip will play without overlay): ${(snapLayoutErr as Error).message}`);
                 }
+              } else if (povHookEnabled && snapOverlayText.trim()) {
+                await log("warn", "POV-hook snap caption: in_font_snap missing from inputFiles — skipping.");
               }
 
               // Image overlays: chain overlay filters
