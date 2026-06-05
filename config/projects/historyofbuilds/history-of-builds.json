@@ -137,29 +137,6 @@
     "items": [
       {
         "style": "minimal",
-        "end_pct": 100,
-        "z_index": 2,
-        "bg_color": "rgba(0,0,0,0)",
-        "position": "top_left",
-        "font_size": 18,
-        "start_pct": 10,
-        "font_color": "#FFFFFF",
-        "sort_order": 3,
-        "content_mode": "ai_generated",
-        "overlay_type": "text",
-        "style_config": {
-          "shadow": true,
-          "font_family": "Montserrat-Black.ttf",
-          "accent_color": "#F7C204",
-          "stroke_width": 1,
-          "preserve_newlines": true,
-          "accent_lines": "top",
-          "padding_x": 80
-        },
-        "content_prompt": "Generate exactly TWO lines of text for this overlay. Line 1: the exact name of the landmark being built in ALL CAPS (for example EIFFEL TOWER, GREAT PYRAMID OF GIZA, GOLDEN GATE BRIDGE). Line 2: the real historical city and country in Title Case WITHOUT COMMAS (for example Paris France, Giza Egypt, San Francisco USA) — the renderer strips commas so omit them. Separate the two lines with a newline character. The renderer will color Line 1 (the landmark name) gold and Line 2 (city and country) white. Output ONLY these two lines, nothing else. No quotes, no emojis, no extra punctuation."
-      },
-      {
-        "style": "minimal",
         "end_pct": 20,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
@@ -181,11 +158,11 @@
       },
       {
         "style": "minimal",
-        "end_pct": 100,
+        "end_pct": 85,
         "bg_color": "rgba(0,0,0,0)",
         "position": "center",
         "font_size": 29,
-        "start_pct": 90,
+        "start_pct": 75,
         "z_index": 2,
         "font_color": "#FFFFFF",
         "content_mode": "ai_generated",
@@ -198,7 +175,7 @@
           "accent_color": "#F7C204",
           "stroke_width": 3
         },
-        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: SEND THIS TO A HISTORY BUFF | WHICH LANDMARK SHOULD RISE NEXT | NAME THE NEXT ONE TO BUILD | WOULD YOU VISIT THIS IN PERSON | COULD YOU BUILD THIS WITHOUT MACHINES | RATE THIS BUILD ONE TO TEN | WHAT SHOULD I BUILD NEXT | TAG SOMEONE WHO LOVES HISTORY"
+        "content_prompt": "Output the chosen line EXACTLY as written, in ALL CAPS, with no quotes and no added punctuation. Approved overlays: WAS THIS ACCURATE?"
       }
     ],
     "ending": {
@@ -259,6 +236,7 @@
       "REAL STRUCTURAL CHANGE EVERY SCENE: each scene must add a specific, nameable new piece of the actual structure (a foundation course, a row of columns, a wall section, a tower stage, an arch, a span segment, a roof). Workers, carts, animals, or equipment merely moving or re-placing WITHOUT the structure itself visibly growing does NOT count and is invalid.",
       "ARCHITECTURAL ACCURACY AT EVERY STAGE: the growing structure must match how the REAL landmark actually looked at each construction stage, in correct proportions and using its real construction method. Never invent features the real landmark does not have (no added domes, cupolas, extra towers, or ornament that is not part of the real structure).",
       "EXACT FINAL SILHOUETTE: the last scene must reproduce the real landmark's exact, instantly-recognizable silhouette and proportions — correct overall height-to-width, correct taper, correct number of levels/spans/towers, and the correct crown, spire, or top. The finished form must be unmistakably the real landmark, never an approximation, generic version, or hybrid.",
+      "REFERENCE EXACT REAL-WORLD FACTS IN EVERY END_KEYFRAME_PROMPT — NEVER WRITE GENERIC DESCRIPTIONS: before writing the scene plan, internally compile a brief fact sheet for the chosen landmark covering (1) EXACT real dimensions (overall height in meters, width, span, number of levels/spans); (2) the structure's distinguishing real architectural features that separate it from similar landmarks (and explicitly which features it does NOT have); (3) the real NAMED geographic surroundings visible from the construction site (specific mountains, rivers, coastlines, neighbouring buildings, urban context — these MUST appear consistently in every keyframe at their correct real positions and relative scale, and the landmark itself must be placed at its real footprint within them); (4) the actual historical materials and construction method used at the real build time. Then EVERY scene's end_keyframe_prompt MUST explicitly reference those specific facts — never write generic 'the tower', 'the dam', 'the bridge', 'the cathedral'. EXAMPLES: NOT 'the dam rising' but 'the 221m-tall curved concrete dam wedged between sheer 220m Black Canyon cliffs with the diverted Colorado River exiting through two upstream tunnels, alternating interlocking concrete column blocks cooled by embedded refrigeration pipes'; NOT 'iron tower rising' but 'the wrought-iron lattice tower with four splayed legs forming a 125m-square base on the Champ-de-Mars, the École Militaire visible to the south-east at its real geographic position, wrought-iron rivets joining each lattice section'; NOT 'pyramid being built' but 'the Great Pyramid of Khufu rising on the Giza Plateau west of the Nile with the Sphinx site to the south-east, limestone core blocks each ~2.5 tonnes being hauled up earthen ramps by gangs of workers, Tura limestone casing visible'. Specific real dimensions, specific real surroundings, specific real materials and method — in EVERY scene.",
       "PHYSICALLY CONTINUOUS ASSEMBLY: new structure appears only by being visibly hauled, lifted, and set in place by labor or period-correct machines. Pieces must never pop into existence, float, fly, or snap into place, and nothing already built may vanish, shrink, or be rebuilt.",
       "STRUCTURAL IDENTITY ANCHORS — LOCK ONCE, NEVER REPLACE MID-BUILD: as soon as the structure's defining footprint and dimensions first appear in an early scene (square base side-length, tower position, arch span, dome diameter, overall orientation on the site), they are LOCKED for the rest of the video. Every later scene shows the EXACT same footprint at the EXACT same position and orientation, with new construction added ON TOP of it — never restart the build at a different size, position, orientation, or shape; never swap to a different version of the same landmark. If scene 2 establishes a small square base, scene 3 shows that same square base now taller (new courses added on top), NOT a different/larger/repositioned base. The structure stamped in the first build scene IS the structure for the rest of the video."
     ],
