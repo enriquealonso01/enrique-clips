@@ -115,7 +115,7 @@
         "z_index": 2,
         "bg_color": "rgba(0,0,0,0.6)",
         "position": "top_center",
-        "font_size": 26,
+        "font_size": 24,
         "start_pct": 0,
         "font_color": "#FFFFFF",
         "sort_order": 0,
@@ -126,7 +126,7 @@
           "uppercase": false,
           "accent_color": "#FFFFFF",
           "shadow": false,
-          "top_pct": 70,
+          "top_pct": 30,
           "stroke_width": 0,
           "style_preset": "snapchat"
         },
