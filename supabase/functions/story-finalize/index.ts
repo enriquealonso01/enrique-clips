@@ -82,6 +82,8 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
   const SUBMAGIC_API_KEY = Deno.env.get("SUBMAGIC_API_KEY");
+  const OPUSCLIP_API_KEY = Deno.env.get("OPUSCLIP_API_KEY");
+  const OPUSCLIP_BASE = "https://api.opus.pro/api";
 
   let runId: string;
   let forceRetry = false;
@@ -162,17 +164,28 @@ Deno.serve(async (req) => {
       await log("info", `Resume detected: captioned video already exists at ${existingCaptioned!.supabase_path}. Skipping to end card.`);
     }
 
-    // ── Resume shortcut #2: Submagic project already submitted but not yet downloaded ──
+    // ── Subtitle provider — OpusClip is the default; Submagic is a per-project
+    // fallback toggled via config.subtitles.provider="submagic". ──
+    const subsCfg = (config.subtitles as any) || {};
+    const subsProvider: "opusclip" | "submagic" = (subsCfg.provider === "submagic") ? "submagic" : "opusclip";
+    const subsEnabled = subsCfg.enabled !== false; // default ON
+
+    // ── Resume shortcut #2: subtitle project already submitted but not yet downloaded ──
     const { data: priorRun } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
     const priorMeta = (priorRun?.generated_metadata as any) || {};
     const existingSubmagicId: string | null = !resumeFromEndCard && priorMeta.submagic_project_id ? priorMeta.submagic_project_id : null;
     const existingSubmagicStoryPath: string | null = !resumeFromEndCard && priorMeta.submagic_story_path ? priorMeta.submagic_story_path : null;
-    const resumeFromAssembledStory = !!existingSubmagicStoryPath;
-    const resumeFromSubmagic = !!existingSubmagicId && resumeFromAssembledStory;
-    if (resumeFromSubmagic) {
+    const existingOpusclipId: string | null = !resumeFromEndCard && priorMeta.opusclip_project_id ? priorMeta.opusclip_project_id : null;
+    const existingOpusclipStoryPath: string | null = !resumeFromEndCard && priorMeta.opusclip_story_path ? priorMeta.opusclip_story_path : null;
+    const resumeFromAssembledStory = !!(existingSubmagicStoryPath || existingOpusclipStoryPath);
+    const resumeFromSubmagic = !!existingSubmagicId && !!existingSubmagicStoryPath;
+    const resumeFromOpusclip = !!existingOpusclipId && !!existingOpusclipStoryPath;
+    if (resumeFromOpusclip) {
+      await log("info", `Resume detected: OpusClip project ${existingOpusclipId} already submitted. Skipping Rendi, polling OpusClip.`);
+    } else if (resumeFromSubmagic) {
       await log("info", `Resume detected: Submagic project ${existingSubmagicId} already submitted. Skipping Rendi, polling Submagic.`);
     } else if (resumeFromAssembledStory) {
-      await log("info", `Resume detected: assembled story video already exists at ${existingSubmagicStoryPath}. Skipping Rendi, creating a fresh Submagic project.`);
+      await log("info", `Resume detected: assembled story video already exists at ${existingSubmagicStoryPath || existingOpusclipStoryPath}. Skipping Rendi, creating a fresh subtitle project.`);
     }
 
     // ── Get all scene clips (completed) ──
@@ -268,14 +281,18 @@ Deno.serve(async (req) => {
       captionedPath = existingCaptioned!.supabase_path;
       storyPath = captionedPath;
       await log("info", `Resume: skipping Rendi assembly + Submagic (story_duration=${storyVideoDurationSec.toFixed(2)}s).`);
+    } else if (resumeFromOpusclip) {
+      storyPath = existingOpusclipStoryPath!;
+      captionedPath = storyPath; // will be overwritten by OpusClip download below
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to OpusClip poll.`);
     } else if (resumeFromSubmagic) {
       storyPath = existingSubmagicStoryPath!;
       captionedPath = storyPath; // will be overwritten by Submagic download below
       await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), going straight to Submagic poll.`);
     } else if (resumeFromAssembledStory) {
-      storyPath = existingSubmagicStoryPath!;
+      storyPath = (existingOpusclipStoryPath || existingSubmagicStoryPath)!;
       captionedPath = storyPath;
-      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), creating a fresh Submagic project.`);
+      await log("info", `Resume: skipping Rendi (story_video at ${storyPath}), creating a fresh subtitle project.`);
     } else {
     await updateRun({ current_stage: "video_stitching", progress_pct: 74 });
     await log("info", "Stage 12-13: Assembling story video with dissolves, narration, and optional BGM");
@@ -419,7 +436,7 @@ Deno.serve(async (req) => {
     } // end Rendi else (skipped on resumeFromEndCard / resumeFromSubmagic)
 
     // ══════════════════════════════════════════════════════
-    // STAGE 14: Subtitles via Submagic API
+    // STAGE 14: Subtitles (provider switched on config.subtitles.provider)
     // ══════════════════════════════════════════════════════
 
     if (!resumeFromEndCard) {
@@ -427,7 +444,212 @@ Deno.serve(async (req) => {
 
     captionedPath = storyPath; // fallback: use uncaptioned video
 
-    if (SUBMAGIC_API_KEY) {
+    // ── OpusClip provider (default) ──
+    // OpusClip is primarily a long-video → highlight clipper, so we set
+    // `curationPref.skipCurate=true` to caption the WHOLE video instead of
+    // slicing out a highlight. `clipDurations: [[0, 90]]` is a safety net so
+    // even if skipCurate is ignored, a ~30s input still maps to one full-
+    // length clip. The returned clip's durationMs is logged so we can verify
+    // on the FIRST paid run that the full length survived (if it comes back
+    // much shorter than the input, OpusClip re-clipped us and we revert to
+    // provider="submagic" via story_projects.config_json.subtitles.provider).
+    if (subsEnabled && subsProvider === "opusclip" && OPUSCLIP_API_KEY) {
+      await log("info", "Stage 14: Adding subtitles via OpusClip API");
+
+      try {
+        let opusProjectId: string;
+        if (existingOpusclipId) {
+          opusProjectId = existingOpusclipId;
+          await log("info", `Reusing existing OpusClip project: ${opusProjectId}`);
+        } else {
+          const videoUrl = mediaPublicUrl(storyPath);
+          if (!videoUrl) throw new Error("Could not get URL for story video");
+
+          const oc = (subsCfg.opusclip as any) || {};
+          const language = subsCfg.language || "en";
+          const ocBody: Record<string, unknown> = {
+            videoUrl,
+            uploadedVideoAttr: { title: (meta.story?.title || `Story ${String(runId).substring(0, 8)}`).substring(0, 100) },
+            curationPref: {
+              model: "ClipBasic",
+              skipCurate: true,
+              clipDurations: [[0, 90]],
+              genre: "Auto",
+            },
+            importPreference: { sourceLang: language },
+          };
+          if (oc.brand_template_id) {
+            ocBody.brandTemplateId = oc.brand_template_id;
+            ocBody.renderPref = { layoutAspectRatio: "portrait" };
+          } else {
+            ocBody.renderPref = {
+              layoutAspectRatio: "portrait",
+              enableCaption: true,
+              captionStyle: oc.caption_style || "one-line",
+              captionPosition: oc.caption_position || "auto",
+              enableCaptionAnimation: true,
+              captionAnimation: {
+                name: oc.caption_animation || "pop",
+                highlightColor: oc.highlight_color || "#04f827",
+                bgColor: "",
+              },
+            };
+          }
+
+          const createResp = await fetch(`${OPUSCLIP_BASE}/clip-projects`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${OPUSCLIP_API_KEY}`, "Content-Type": "application/json" },
+            body: JSON.stringify(ocBody),
+          });
+          if (!createResp.ok) {
+            const errText = await createResp.text();
+            throw new Error(`OpusClip create failed: ${createResp.status} ${errText.substring(0, 200)}`);
+          }
+          const created = await createResp.json();
+          // Defensive — the create response's id field isn't pinned in public docs.
+          const idCandidate = created?.id || created?.projectId || created?.data?.id || created?.data?.projectId || created?.project?.id;
+          if (!idCandidate) throw new Error(`OpusClip create: no project id in response: ${JSON.stringify(created).substring(0, 400)}`);
+          opusProjectId = String(idCandidate);
+          await log("info", `OpusClip project created: ${opusProjectId}`);
+        }
+
+        // Persist project ID immediately so chained invocations can resume polling without re-creating
+        const { data: curRunMetaOc } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+        const metaBeforeOpus = ((curRunMetaOc?.generated_metadata as any) || {});
+        const nowIsoOc = new Date().toISOString();
+        const submittedAtOc = existingOpusclipId
+          ? (metaBeforeOpus.opusclip_submitted_at || run.started_at || run.created_at || nowIsoOc)
+          : nowIsoOc;
+        const attemptsOc = Number(metaBeforeOpus.opusclip_attempts || (existingOpusclipId ? 1 : 0)) || 1;
+        const mergedMetaOc = {
+          ...metaBeforeOpus,
+          opusclip_project_id: opusProjectId,
+          opusclip_story_path: storyPath,
+          opusclip_submitted_at: submittedAtOc,
+          opusclip_attempts: attemptsOc,
+          opusclip_last_polled_at: nowIsoOc,
+        };
+        await sb.from("story_runs").update({ generated_metadata: mergedMetaOc }).eq("id", runId);
+
+        // OpusClip's effective "max age" for a stuck job — mirrors Submagic's 45m budget.
+        const OPUSCLIP_MAX_AGE_MS = 45 * 60 * 1000;
+        const OPUSCLIP_MAX_ATTEMPTS = 2;
+        const elapsedMsOc = existingOpusclipId ? Date.now() - Date.parse(submittedAtOc) : 0;
+        if (existingOpusclipId && Number.isFinite(elapsedMsOc) && elapsedMsOc > OPUSCLIP_MAX_AGE_MS) {
+          if (attemptsOc < OPUSCLIP_MAX_ATTEMPTS) {
+            const nextAttempts = attemptsOc + 1;
+            await log("warn", `OpusClip stuck after ${Math.round(elapsedMsOc / 60000)}m — abandoning and creating a fresh OpusClip project (attempt ${nextAttempts}/${OPUSCLIP_MAX_ATTEMPTS})`);
+            await sb.from("story_runs").update({
+              generated_metadata: {
+                ...mergedMetaOc,
+                opusclip_project_id: null,
+                opusclip_story_path: storyPath,
+                opusclip_submitted_at: null,
+                opusclip_attempts: nextAttempts,
+                opusclip_stuck_project_id: opusProjectId,
+              },
+            }).eq("id", runId);
+            const retryUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+            const retryPromise = fetch(retryUrl, {
+              method: "POST",
+              headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ run_id: runId, force_retry: true }),
+            }).catch(() => {});
+            // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+            if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(retryPromise);
+            return json({ status: "chained_opusclip_recreate", run_id: runId });
+          }
+          throw new Error(`OpusClip stuck for ${Math.round(elapsedMsOc / 60000)} minutes after ${attemptsOc} attempt(s)`);
+        }
+
+        // Poll exportable-clips for the rendered clip. OpusClip has ONE polling
+        // step — there is no separate transcribe / export. When a clip exists
+        // and has uriForExport, the captioned video is ready.
+        let exportUrl: string | null = null;
+        let durationMs: number | null = null;
+        const t0 = Date.now();
+        // Cap polling at 70s per invocation to leave room for download+endcard or chaining
+        for (let poll = 0; poll < 14 && (Date.now() - t0) < 70000; poll++) {
+          await sleep(5000);
+          const r = await fetch(
+            `${OPUSCLIP_BASE}/exportable-clips?q=findByProjectId&projectId=${encodeURIComponent(opusProjectId)}`,
+            { headers: { Authorization: `Bearer ${OPUSCLIP_API_KEY}` } },
+          );
+          if (!r.ok) continue;
+          const payload = await r.json();
+          const clips = Array.isArray(payload) ? payload : (payload?.data || payload?.clips || []);
+          if (Array.isArray(clips) && clips.length > 0) {
+            const clip = clips[0];
+            const uri = clip?.uriForExport || clip?.exportUrl || clip?.downloadUrl;
+            if (uri) { exportUrl = uri; durationMs = clip?.durationMs ?? null; break; }
+          }
+          if (poll % 3 === 0) {
+            await log("debug", `OpusClip poll ${poll + 1}: no exportable clip yet`);
+          }
+        }
+
+        if (!exportUrl) {
+          // Chain to keep polling without hitting the 150s edge timeout
+          await log("info", "OpusClip still processing — chaining to fresh invocation to continue polling");
+          const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+          const chainPromiseOc = fetch(chainUrl, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ run_id: runId, force_retry: true }),
+          }).catch(() => {});
+          // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+          if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chainPromiseOc);
+          return json({ status: "chained_opusclip_poll", run_id: runId });
+        }
+
+        await log("info", `OpusClip clip ready (durationMs=${durationMs}) — downloading...`, { durationMs });
+
+        const captDl = await fetch(exportUrl);
+        if (!captDl.ok) throw new Error(`Failed to download OpusClip video: ${captDl.status}`);
+        const captBytes = new Uint8Array(await captDl.arrayBuffer());
+        captionedPath = `story-runs/${runId}/captioned_story_video.mp4`;
+        await r2Upload(captionedPath, captBytes, "video/mp4");
+
+        const captSignedUrlOc = { signedUrl: mediaPublicUrl(captionedPath) };
+        await sb.from("story_assets").insert({
+          run_id: runId,
+          type: "captioned_story_video",
+          supabase_path: captionedPath,
+          signed_url_last: captSignedUrlOc?.signedUrl || null,
+          metadata: { opusclip_project_id: opusProjectId, opusclip_duration_ms: durationMs, size_bytes: captBytes.length },
+        });
+
+        await log("info", `Captioned video stored (OpusClip): ${(captBytes.length / 1024 / 1024).toFixed(1)}MB`);
+
+        // Chain: re-invoke self to continue with end card stage (avoid 150s timeout)
+        await log("info", "Chaining: re-invoking story-finalize for end card stage");
+        const chainUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/story-finalize`;
+        const chainPromise = fetch(chainUrl, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${Deno.env.get("INTERNAL_FN_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ run_id: runId, force_retry: true }),
+        }).catch(() => {});
+        // @ts-ignore EdgeRuntime is available in Supabase Edge Runtime
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(chainPromise);
+        return json({ status: "chained_to_endcard", run_id: runId });
+      } catch (subErr) {
+        const errMsg = (subErr as Error).message;
+        // Fail-soft: log + advance to end-card with UNCAPTIONED video so an
+        // OpusClip outage never blocks a post. Differs from Submagic's "pause
+        // for manual review" stance because OpusClip is less mature here.
+        await log("error", `OpusClip subtitles failed: ${errMsg}. Continuing with uncaptioned video.`);
+        captionedPath = storyPath; // already the fallback, made explicit
+        const { data: curMetaErr } = await sb.from("story_runs").select("generated_metadata").eq("id", runId).single();
+        const metaErr = (curMetaErr?.generated_metadata as any) || {};
+        await sb.from("story_runs").update({
+          generated_metadata: { ...metaErr, subtitles_failed: true, subtitles_failed_reason: errMsg.substring(0, 300), subtitles_provider_attempted: "opusclip" },
+        }).eq("id", runId);
+      }
+    } else if (subsEnabled && subsProvider === "opusclip" && !OPUSCLIP_API_KEY) {
+      await log("info", "Stage 14: Subtitles skipped (OPUSCLIP_API_KEY not configured). Publishing uncaptioned.");
+    } else if (!subsEnabled) {
+      await log("info", "Stage 14: Subtitles disabled in project config. Publishing uncaptioned.");
+    } else if (subsProvider === "submagic" && SUBMAGIC_API_KEY) {
       await log("info", "Stage 14: Adding subtitles via Submagic API");
 
       try {
@@ -670,8 +892,10 @@ Deno.serve(async (req) => {
         });
         return json({ status: "paused", reason: "submagic_failed", run_id: runId });
       }
+    } else if (subsProvider === "submagic" && !SUBMAGIC_API_KEY) {
+      await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured). Publishing uncaptioned.");
     } else {
-      await log("info", "Stage 14: Subtitles skipped (SUBMAGIC_API_KEY not configured)");
+      await log("info", `Stage 14: Subtitles skipped (provider=${subsProvider}, enabled=${subsEnabled}). Publishing uncaptioned.`);
     }
     } // end if (!resumeFromEndCard)
 

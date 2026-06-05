@@ -44,6 +44,14 @@ async function checkCancelled(sb: SB, runId: string) {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── Stories pipeline tuning constants ──
+// Target a 25-30s reel by default — short-form sweet spot. Hard-clamped in
+// stage1 so a stale story_projects row with target_duration_sec=60 (the old
+// default) still produces a tight video.
+const STORY_TARGET_DURATION_DEFAULT = 28;
+const STORY_TARGET_DURATION_MIN = 22;
+const STORY_TARGET_DURATION_MAX = 32;
+
 let PIPELINE_START = Date.now();
 const GUARD_MS = 80_000; // self-chain before 150s timeout
 
@@ -146,7 +154,11 @@ async function stage1(sb: SB, runId: string) {
   if (!run) throw new Error("Run not found");
 
   const project = run.story_projects as any;
-  const targetDuration = project?.target_duration_sec || 60;
+  const rawTargetDuration = Number(project?.target_duration_sec) || STORY_TARGET_DURATION_DEFAULT;
+  const targetDuration = Math.max(
+    STORY_TARGET_DURATION_MIN,
+    Math.min(STORY_TARGET_DURATION_MAX, rawTargetDuration),
+  );
 
   const { data: memory } = await sb.from("story_memory")
     .select("story_title, story_fingerprint")
@@ -166,19 +178,19 @@ async function stage1(sb: SB, runId: string) {
 // STAGE 2: Story Discovery
 // ══════════════════════════════════════════════════════════
 
-async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = 60, storySearchPrompt: string = "") {
+async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuration: number = STORY_TARGET_DURATION_DEFAULT, storySearchPrompt: string = "") {
   await updateRun(sb, runId, { status: "researching_story", current_stage: "researching_story", progress_pct: 8 });
   await log(sb, runId, "info", `Stage 2: Discovering story via AI${storySearchPrompt ? ` (category: ${storySearchPrompt})` : ""}`);
 
   const titlesBlock = lastTitles.length > 0
     ? `\n\nPREVIOUSLY USED TITLES (DO NOT reuse):\n${lastTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}` : "";
 
-  // Adapt beat count to target duration
-  // Encourage MANY SHORT beats: target ~1 beat per 4-6 seconds of video.
-  // Short beats keep ElevenLabs from inserting long dramatic silences that
-  // would later get stripped, so the post-trim length stays close to target.
-  const minBeats = Math.max(5, Math.round(targetDuration / 6));
-  const maxBeats = Math.max(8, Math.round(targetDuration / 3));
+  // 25-30s short-form: one beat per ~4-5s of finished narration.
+  // The narration script step (stage 6) is the source of truth for final beat
+  // count; this just gives the discovery model a sane budget so the SUMMARY
+  // is sized for a Reel, not a YouTube long-form.
+  const minBeats = Math.max(4, Math.round(targetDuration / 6));
+  const maxBeats = Math.max(6, Math.round(targetDuration / 4));
 
   const categoryInstruction = storySearchPrompt
     ? `\n- CATEGORY REQUIREMENT: The story MUST match this category/topic: "${storySearchPrompt}". Only pick stories that fit this requirement.`
@@ -186,19 +198,53 @@ async function stage2(sb: SB, runId: string, lastTitles: string[], targetDuratio
 
   return await callStructured({
     messages: [
-      { role: "system", content: "You are a viral short-form video researcher. Find real, wholesome, feel-good stories with strong hooks and emotional payoffs. Return ONLY valid JSON." },
-      { role: "user", content: `Find a NEW wholesome real-world story for a ${targetDuration}-second vertical video. Requirements:
-- Strong hook in first sentence
-- Emotional reward/payoff moment
-- Real characters, real events
-- Visual potential${categoryInstruction}
-- Story depth should match a ${targetDuration}s video (${targetDuration <= 60 ? "concise and punchy" : targetDuration <= 120 ? "moderate depth with good pacing" : "deeper narrative with multiple beats"})${titlesBlock}
+      { role: "system", content: `You are a senior story producer for a faceless emotional short-form video channel. Your only job is to find ONE real-world story that has the raw material to be told as a ${targetDuration}-second vertical Reel that LANDS emotionally and gets shared. You think like a peak-end-rule editor: every choice serves the final 3 seconds. Return ONLY valid JSON.
 
-Return JSON: {"title":"...","source_url":"...","summary":"3-5 sentence detailed summary","hook":"opening hook line","reward_moment":"emotional payoff","event_date":"when the story happened — e.g. 'March 2023', 'June 12, 2024', or '' if unknown","event_location":"where it happened — e.g. 'Austin, Texas' or 'Tokyo, Japan', or '' if unknown","characters":[{"name":"...","role":"...","appearance_notes":"..."}],"groups":[{"name":"...","description":"..."}],"locations":[{"name":"...","description":"..."}],"draft_beats":[{"text":"narration text","purpose":"hook|build|climax|resolve","visual_intent":"what to show"}],"image_search_guidance":"..."}
+NON-NEGOTIABLE STORY-SELECTION RULES:
+1. SINGULARITY — ONE identifiable protagonist, ONE relationship, ONE pivotal moment. No "many people", no statistics, no montage of cases. (Identifiable-victim effect: a single person out-moves any group.)
+2. RESOLVES UPWARD — the story MUST end higher than it started (warmth, honoring, reunion, restoration, vindication). Pure sadness without recovery is the under-shared quadrant. The emotional target is BEING MOVED ("lump in the throat, warmth in the chest"), NOT being sad.
+3. KAMA MUTA TRIGGER — there must be a "sudden intensification of love or connection" moment: a reunion, an unknown sacrifice revealed, an act of devotion across time, an honoring of someone lost. That moment is the reason this story exists.
+4. CONCRETE TEXTURE — one specific detail that no other story has (an age, an exact object, a duration, an engraving, a specific habit). NOT a verifiable famous person's full identity (we are not running a news clip — we're telling a story).
+5. VISUAL RAW MATERIAL — the story can be told with ${minBeats}-${maxBeats} discrete moments that an image+animation pipeline can render. Avoid stories whose punch is purely verbal/abstract.
+6. AVOIDS RAGEBAIT — no "the family abandoned her", no villain-coded relatives, no exploitation framing. Quiet dignity > melodrama.` },
+      { role: "user", content: `Find ONE new story for a ${targetDuration}-second vertical Reel.${categoryInstruction}
 
-IMPORTANT: For event_date and event_location, only include if you have a real, verifiable answer based on the story. Use "" (empty string) when unknown — do not guess.
+HOOK LINE (≤14 words, the opening sentence the viewer reads/hears in the first 2 seconds):
+- Hits at least TWO psychological levers. The strongest archetypes for emotional micro-stories are:
+  • In Medias Res — drop the viewer mid-action: "And that's when she opened the box."
+  • Specificity — concrete number/date/place: "Forty-one years. Then the watch stopped."
+  • Curiosity Gap — narrow, resolvable: "Nobody understood the note until they translated it."
+  • Stakes Reframe — tiny act, huge consequence: "She mailed one letter. It found him in 1974."
+- NO "Hey guys", NO "Today I want to talk about", NO context dump, NO hedging.
+- Reads SHARP at 0.0s muted, on a 9:16 screen.
 
-IMPORTANT: Provide ${minBeats}-${maxBeats} draft beats to fill ~${targetDuration} seconds of narration.` },
+REWARD MOMENT (the peak — the kama-muta beat):
+- The single moment of "sudden connection" that the whole video is built to reach. NOT "everything worked out" — the SPECIFIC visible thing that makes the viewer feel the lump in the throat.
+
+DRAFT BEATS (${minBeats}-${maxBeats} beats):
+- Each beat is ONE narrated moment, ${Math.floor(targetDuration / maxBeats)}-${Math.ceil(targetDuration / minBeats)}s of finished video.
+- Beat 0 carries the hook. The LAST beat is the BUTTON — a recontextualizing closer that makes the whole story land harder than the literal facts ("And ever since then, he keeps it on his nightstand").
+- Causal spine: every beat connects to the next with BUT (turn) or THEREFORE (consequence). If "and then" fits naturally between two beats, that seam is dead — rewrite.
+
+Return JSON:
+{
+  "title": "...",
+  "source_url": "...",
+  "summary": "3-4 sentence detailed summary",
+  "hook": "the ≤14-word opening line",
+  "reward_moment": "the specific kama-muta beat the video is built to reach",
+  "button_line": "the recontextualizing closer (the LAST thing the viewer hears, ≤12 words, present tense if possible)",
+  "event_date": "e.g. 'March 2023' — or '' if unknown",
+  "event_location": "e.g. 'Austin, Texas' — or '' if unknown",
+  "characters": [{"name":"...","role":"...","appearance_notes":"..."}],
+  "groups": [{"name":"...","description":"..."}],
+  "locations": [{"name":"...","description":"..."}],
+  "draft_beats": [{"text":"narration text","purpose":"hook|build|turn|peak|button","visual_intent":"the one specific thing on screen"}],
+  "image_search_guidance": "..."
+}
+
+IMPORTANT: For event_date and event_location, only include if verifiable. Use "" when unknown — do not guess.
+IMPORTANT: Provide EXACTLY ${minBeats}-${maxBeats} draft beats. More is worse — short-form punishes over-length.${titlesBlock}` },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_discovery",
   });
@@ -515,61 +561,139 @@ async function stage5(sb: SB, runId: string, story: any, realImage: any) {
 // STAGE 6: Final Narration Script
 // ══════════════════════════════════════════════════════════
 
-async function stage6(sb: SB, runId: string, story: any, targetDuration: number = 60) {
+async function stage6(sb: SB, runId: string, story: any, targetDuration: number = STORY_TARGET_DURATION_DEFAULT) {
   await updateRun(sb, runId, { current_stage: "narration_script", progress_pct: 28 });
   await log(sb, runId, "info", `Stage 6: Generating final narration script (target: ${targetDuration}s)`);
 
-  const minBeats = Math.max(4, Math.round(targetDuration / 12));
-  const maxBeats = Math.max(6, Math.round(targetDuration / 5));
-  // Aggressive silenceremove strips leading + trailing silence per beat,
-  // typically removing 40-60% of raw audio. Inflate the word budget so the
-  // post-trim stitched narration matches target_duration. We also instruct
-  // the model to write MANY SHORT beats (rather than few long ones) — short
-  // beats produce tighter ElevenLabs output with less dramatic internal
-  // padding that gets stripped.
-  const WORDS_PER_SEC_AFTER_TRIM = 4.0;
+  // 25-30s short-form: 4-6 beats. One beat = one Vidu clip ≈ 4-6s.
+  const minBeats = 4;
+  const maxBeats = 6;
+
+  // Word-budget math.
+  // Conversational narration runs ~2.5-3 wps (~150-180 wpm). Aggressive
+  // silenceremove between beats removes ~25-35% of raw audio. We target ~3.8
+  // wps measured on the final stitched MP3 — punchy, kinetic. For 28s that
+  // is ~106 words. We write ~110 words (a hair more) so the trimmed result
+  // lands at target instead of falling short.
+  const WORDS_PER_SEC_AFTER_TRIM = 3.8;
   const targetWords = Math.round(targetDuration * WORDS_PER_SEC_AFTER_TRIM);
-  const minWords = Math.round(targetDuration * 3.6);
+  const minWords = Math.round(targetDuration * 3.4);
+  const maxWords = Math.round(targetDuration * 4.2);
+
+  const buttonHint = story.button_line || story.reward_moment || "";
 
   const result = await callStructured({
     messages: [
-      { role: "system", content: "You are a master short-form video scriptwriter. Create scripts that hook viewers in 2 seconds and keep them until the emotional payoff. Write for narration — one spoken idea per beat, clear emotional pacing. Return ONLY valid JSON." },
-      { role: "user", content: `Write a final narration script for this story:
+      { role: "system", content: `You are the senior scriptwriter for a faceless emotional short-form video channel. Your only job is to write the spoken narration for ONE ${targetDuration}-second vertical Reel. You write for the EAR and for a muted scroller's EYE. The cadence is punchy, conversational, and never lulls.
 
-Title: "${story.title}"
-Summary: ${story.summary}
-Hook: ${story.hook}
-Reward: ${story.reward_moment}
-Draft beats: ${JSON.stringify(story.draft_beats)}
+NON-NEGOTIABLE RULES — a script that breaks any of these is rejected:
 
-Requirements:
-- Target video duration: ${targetDuration} seconds. Write AT LEAST ${minWords} words and aim for ~${targetWords} words total. CRITICAL: each beat is voiced separately and silence is trimmed between them, so write more text than feels intuitive. Use MANY SHORT beats (8-15 words each) rather than a few long ones — short beats produce tighter audio. Keep beats roughly even in length.
-- Strong opening seconds (hook immediately)
-- Clean emotional pacing
-- One spoken idea per beat
-- Clear payoff at end
-- ${minBeats}-${maxBeats} beats total
-- ${targetDuration <= 60 ? "Keep it tight and punchy — every word counts" : targetDuration <= 120 ? "Standard pacing with room for emotional beats" : "Allow deeper storytelling with more descriptive beats"}
+1. EMOTIONAL TARGET = "MOVED," NOT "SAD."
+   The dominant final feeling must be warmth, honoring, or sudden connection (lump in the throat, tears of warmth) — NEVER deflated sadness. Loss is BACKDROP only. The story MUST resolve UPWARD. End higher than it began. Never end in the sad trough.
 
-CRITICAL — FINAL BEAT (the closer):
-- The LAST beat MUST be a complete, declarative sentence that resolves the story. Its purpose MUST be "resolve".
-- It MUST end with a period "." or exclamation "!". NEVER end with a comma, semicolon, colon, dash, ellipsis, or question mark.
-- It MUST NOT begin with or trail off into continuation words like "and", "but", "so", "because", "while", "until", "then" used as a hanging clause.
-- It must SOUND finished when read aloud — falling intonation, no cliffhanger, no setup for "more coming". Think of it as the final sentence of a published article.
-- Avoid trailing prepositional phrases that imply something more is coming (e.g. "...waiting for"). Rewrite as a complete thought.
+2. BUTTON FIRST.
+   Write the LAST line first. It must RECONTEXTUALIZE the whole story (the "for sale: baby shoes" turn). Make it short, present tense if possible, falling intonation. The button is the story.
 
-Return JSON:
+3. CAUSAL SPINE — BUT / THEREFORE TEST.
+   Every beat connects to the next with BUT (a reversal) or THEREFORE (a consequence) — NEVER "and then". Read your beats aloud inserting "and then" at each seam; if it fits, the seam is dead — rewrite.
+
+4. SINGULARITY.
+   ONE protagonist, ONE relationship, ONE pivotal moment. No plurals, no statistics, no shop credentials, no "people often…". Numbers KILL the feeling. The only allowed numbers are concrete textures (an age, "forty-one years", an engraving) — not aggregates.
+
+5. SHOW, DON'T TELL (iceberg).
+   Never state the emotion ("heartbreaking", "devastated", "tragic"). Imply it through concrete fact ("the watch stopped the week he died"). NO adjective stacks. Trust the detail.
+
+6. PACE — NO LULLS.
+   Short declarative sentences. Most beats 8-14 words. Every beat earns its place: if a beat doesn't advance OR raise emotional voltage, cut it.
+
+7. UNDERSTATED.
+   Restraint reads real. Melodrama reads fake AND tips viewers into aversive distress (they scroll away). Underplay it.
+
+8. NO CTA in narration.
+   The narration ends on the BUTTON. Never end with "follow for more", "comment below", "tag a friend".
+
+VOICE: First-person narrator who is the WITNESS — the protagonist and their relationship are the subject, not the narrator. Plain, warm, unhurried, sincere. Past tense for the story; PRESENT tense at the reveal — that tense shift IS the resurrection.
+
+Return ONLY valid JSON, no markdown fences.` },
+      { role: "user", content: `Write the narration for this story.
+
+TITLE: ${story.title}
+HOOK (from discovery): ${story.hook}
+REWARD MOMENT: ${story.reward_moment}
+${buttonHint ? `BUTTON HINT: ${buttonHint}` : ""}
+SUMMARY: ${story.summary}
+DRAFT BEATS (from discovery — may need consolidation): ${JSON.stringify(story.draft_beats)}
+
+HARD CONSTRAINTS:
+
+• TARGET DURATION: ${targetDuration}s (range ${STORY_TARGET_DURATION_MIN}-${STORY_TARGET_DURATION_MAX}s). Anything past ${STORY_TARGET_DURATION_MAX}s is rejected.
+• WORD COUNT: ${minWords}-${maxWords} words total. AIM for ~${targetWords} words. Count your words before returning.
+• BEAT COUNT: ${minBeats}-${maxBeats} beats. Each beat = ONE Vidu clip of ~${Math.floor(targetDuration / maxBeats)}-${Math.ceil(targetDuration / minBeats)}s. Roughly even in length.
+• BEAT WORDS: 8-14 words per beat (the punchy short-form rhythm). Beat 0 (the hook) can drop to 6 words; the final beat (button) can drop to 5.
+
+STRUCTURE (the 5-beat spine — adapt for 4 or 6 beats by collapsing or splitting MIDDLE beats only; never collapse the hook or the button):
+
+  BEAT 0 — HOOK (≤14 words)
+    The opening line. Hits at least TWO of: in-medias-res, specificity, curiosity gap, stakes.
+    Reads SHARP at 0s. NO "Hey", "Today", "So", "Okay".
+
+  BEAT 1 — RELATIONSHIP / SETUP (10-14 words)
+    The bond, the stakes, ONE concrete texture. Plant the essence that the reveal will reactivate.
+
+  BEAT 2 — THE TURN (10-14 words)
+    The pivot. "But..." or the moment everything changed. Restrained — implied, not wallowed.
+
+  BEAT 3 — THE WORK / BUILD (8-12 words)
+    Brief. The doing/searching/fixing. Sparse VO over visuals.
+
+  BEAT 4 — REVEAL / PEAK (6-10 words)
+    The kama-muta moment. Present tense. The moment of sudden connection. Land it on a single specific image.
+
+  BEAT 5 — BUTTON (≤10 words, ≤8 if possible)
+    The recontextualizing closer. Falls in pitch. Present tense if possible. RECONTEXTUALIZES — does not just summarize.
+
+If using ${minBeats} beats: collapse beats 2-3 into one "turn + work" beat. If using ${maxBeats} beats: split beat 3 (work) into "search" + "find". NEVER drop the hook or the button.
+
+CRITICAL — THE BUTTON (the closer):
+- The LAST beat MUST be a complete declarative sentence ending with "." or "!".
+- It MUST RECONTEXTUALIZE — re-cast the meaning of what came before. Example: hook says "He pawned his father's watch." Button says "He finally had the time." (the inscription re-fires).
+- NEVER end with a question, comma, dash, ellipsis, semicolon.
+- NEVER start with "and", "but", "so", "because", "while", "until", "then" used as a hanging fragment.
+- NEVER end with prepositions implying continuation ("...waiting for…").
+
+CRITICAL — THE HOOK (beat 0):
+- ≤14 words. The viewer reads/hears it in the first 2 seconds.
+- Hits at least TWO psychological levers (in-medias-res, specificity, curiosity gap, stakes-reframe).
+- Sets up an "open loop" the rest of the script closes.
+- Must read SHARP muted at 0s.
+
+CAUSAL SEAM CHECK (do this before returning):
+- Read beats 0→1, 1→2, 2→3, 3→4, 4→5 aloud. If "and then" fits naturally at ANY seam, REWRITE the second beat to make it BUT or THEREFORE.
+
+EMOTIONAL ARC CHECK:
+- The viewer should END on UPWARD warmth, not downward sadness. If your final beat leaves them deflated, rewrite the button.
+
+Return JSON ONLY (no prose, no markdown):
 {
-  "full_script": "the complete narration text as one block",
+  "button_line": "the closer — write this FIRST and use it verbatim as the LAST beat's text",
+  "full_script": "the complete narration as one flowing block (concatenation of beat texts with spaces)",
   "beats": [
-    {"index": 0, "text": "narration text for this beat", "purpose": "hook|build|escalate|climax|resolve", "visual_intent": "what should be shown visually"}
-  ]
+    {"index": 0, "text": "<words>", "purpose": "hook", "visual_intent": "the ONE specific thing on screen for this beat"},
+    {"index": 1, "text": "<words>", "purpose": "build", "visual_intent": "..."},
+    {"index": 2, "text": "<words>", "purpose": "turn", "visual_intent": "..."},
+    {"index": 3, "text": "<words>", "purpose": "work", "visual_intent": "..."},
+    {"index": 4, "text": "<words>", "purpose": "peak", "visual_intent": "..."},
+    {"index": 5, "text": "<button_line verbatim>", "purpose": "button", "visual_intent": "..."}
+  ],
+  "word_count": <integer>,
+  "emotion_check": "<one sentence: the warm upward feeling the button leaves>"
 }` },
     ],
     model: MODELS.TEXT_DEFAULT, parseJSON: true, endpoint: "story_narration_script",
   });
 
-  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${result.full_script?.length || 0} chars (~${Math.round((result.full_script?.split(/\s+/).length || 0) / 2.5)}s estimated)`);
+  const wordsOut = (result.full_script || "").split(/\s+/).filter(Boolean).length;
+  await log(sb, runId, "info", `Narration script: ${result.beats?.length || 0} beats, ${wordsOut} words, button="${(result.button_line || "").substring(0, 60)}"`);
   return result;
 }
 
@@ -577,14 +701,47 @@ Return JSON:
 // STAGE 7: Generate Narrator MP3 (ElevenLabs)
 // ══════════════════════════════════════════════════════════
 
-const ELEVENLABS_VOICE_ID = "3RbK5MAeB6NkutT3d6qF";
-const ELEVENLABS_VOICE_SETTINGS = {
-  stability: 0.55,
-  similarity_boost: 0.7,
-  style: 0.4,
+// Default voice — used when project.config_json.narration.voice is absent.
+// Tuned for emotional micro-stories: lower stability + higher style = more
+// expressive variation (the engagement lever); slightly faster speed = the
+// punchy short-form tempo. Per-project override via config_json.narration.voice.
+const DEFAULT_ELEVENLABS_VOICE_ID = "3RbK5MAeB6NkutT3d6qF";
+const DEFAULT_ELEVENLABS_VOICE_SETTINGS = {
+  stability: 0.45,
+  similarity_boost: 0.75,
+  style: 0.55,
   use_speaker_boost: true,
-  speed: 1.05,
+  speed: 1.10,
 };
+
+type ElevenLabsVoiceSettings = {
+  stability: number;
+  similarity_boost: number;
+  style: number;
+  use_speaker_boost: boolean;
+  speed: number;
+};
+
+type ElevenLabsVoiceConfig = {
+  voiceId: string;
+  settings: ElevenLabsVoiceSettings;
+};
+
+function resolveVoiceConfig(projectConfig: any): ElevenLabsVoiceConfig {
+  const narration = (projectConfig?.narration as any) || {};
+  const voice = (narration.voice as any) || {};
+  const settings = (voice.settings as any) || {};
+  return {
+    voiceId: typeof voice.voice_id === "string" && voice.voice_id.trim() ? voice.voice_id.trim() : DEFAULT_ELEVENLABS_VOICE_ID,
+    settings: {
+      stability: typeof settings.stability === "number" ? settings.stability : DEFAULT_ELEVENLABS_VOICE_SETTINGS.stability,
+      similarity_boost: typeof settings.similarity_boost === "number" ? settings.similarity_boost : DEFAULT_ELEVENLABS_VOICE_SETTINGS.similarity_boost,
+      style: typeof settings.style === "number" ? settings.style : DEFAULT_ELEVENLABS_VOICE_SETTINGS.style,
+      use_speaker_boost: typeof settings.use_speaker_boost === "boolean" ? settings.use_speaker_boost : DEFAULT_ELEVENLABS_VOICE_SETTINGS.use_speaker_boost,
+      speed: typeof settings.speed === "number" ? settings.speed : DEFAULT_ELEVENLABS_VOICE_SETTINGS.speed,
+    },
+  };
+}
 
 // Split a script into sentence-like segments. Handles common abbreviations.
 function splitIntoSegments(text: string): string[] {
@@ -609,20 +766,20 @@ function splitIntoSegments(text: string): string[] {
   return merged;
 }
 
-async function callElevenLabsWithTimestamps(text: string, prev?: string, next?: string): Promise<{ audioBytes: Uint8Array; alignment: any }> {
+async function callElevenLabsWithTimestamps(text: string, voiceCfg: ElevenLabsVoiceConfig, prev?: string, next?: string): Promise<{ audioBytes: Uint8Array; alignment: any }> {
   const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY");
   if (!ELEVENLABS_API_KEY) throw new Error("ELEVENLABS_API_KEY not configured");
 
   const body: any = {
     text,
     model_id: "eleven_multilingual_v2",
-    voice_settings: ELEVENLABS_VOICE_SETTINGS,
+    voice_settings: voiceCfg.settings,
   };
   if (prev) body.previous_text = prev;
   if (next) body.next_text = next;
 
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/with-timestamps?output_format=mp3_44100_128`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceCfg.voiceId}/with-timestamps?output_format=mp3_44100_128`,
     {
       method: "POST",
       headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
@@ -709,7 +866,7 @@ function mergeAlignments(
   return { characters, character_start_times_seconds: starts, character_end_times_seconds: ends };
 }
 
-async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number): Promise<{ path: string; signedUrl: string | undefined; alignment: any }> {
+async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number, voiceCfg: ElevenLabsVoiceConfig): Promise<{ path: string; signedUrl: string | undefined; alignment: any }> {
   const RENDI_API_KEY = Deno.env.get("RENDI_API_KEY");
   if (!RENDI_API_KEY) throw new Error("RENDI_API_KEY not configured (required for segmented narration stitching)");
 
@@ -728,7 +885,7 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
 
   if (segments.length < 2) {
     await log(sb, runId, "info", "Only one segment — falling back to single-call narration");
-    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText);
+    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText, voiceCfg);
     const path = `story-runs/${runId}/narration.mp3`;
     const url = await uploadAndStoreAsset(sb, runId, path, audioBytes, "narration_audio", {
       duration_estimate: alignment?.character_end_times_seconds?.slice(-1)?.[0] || null,
@@ -752,7 +909,7 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
     const next = i < segments.length - 1
       ? segments[i + 1]
       : "[End of narration. Silence follows.]";
-    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, prev, next);
+    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, voiceCfg, prev, next);
     const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
     const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
     await r2Upload(uploadPath, audioBytes, "audio/mpeg");
@@ -868,17 +1025,21 @@ async function stage7(sb: SB, runId: string, script: any) {
 
   const projCfg = await getProjectConfig(sb, runId);
   const narrationCfg = projCfg?.narration || {};
-  const segmentedEnabled = !!narrationCfg.segmented_enabled;
-  const gapMs = typeof narrationCfg.segment_gap_ms === "number" ? narrationCfg.segment_gap_ms : 80;
+  // Segmented narration (per-beat ElevenLabs calls + Rendi stitch with
+  // silence-trim) is THE engine for the punchy short-form pace. Default it ON
+  // unless a project explicitly opts out via narration.segmented_enabled=false.
+  const segmentedEnabled = narrationCfg.segmented_enabled !== false;
+  const gapMs = typeof narrationCfg.segment_gap_ms === "number" ? narrationCfg.segment_gap_ms : 60;
+  const voiceCfg = resolveVoiceConfig(projCfg);
 
-  await log(sb, runId, "info", `Stage 7: Generating narrator MP3 (mode=${segmentedEnabled ? `segmented gap=${gapMs}ms` : "single-call"})`);
+  await log(sb, runId, "info", `Stage 7: Generating narrator MP3 (voice=${voiceCfg.voiceId}, speed=${voiceCfg.settings.speed}, mode=${segmentedEnabled ? `segmented gap=${gapMs}ms` : "single-call"})`);
 
   if (segmentedEnabled) {
-    return await stage7Segmented(sb, runId, script, gapMs);
+    return await stage7Segmented(sb, runId, script, gapMs, voiceCfg);
   }
 
   const fullText = script.full_script;
-  const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText);
+  const { audioBytes, alignment } = await callElevenLabsWithTimestamps(fullText, voiceCfg);
   const path = `story-runs/${runId}/narration.mp3`;
   const url = await uploadAndStoreAsset(sb, runId, path, audioBytes, "narration_audio", {
     duration_estimate: alignment?.character_end_times_seconds?.slice(-1)?.[0] || null,
@@ -960,42 +1121,76 @@ async function stage9(sb: SB, runId: string, story: any, timedBeats: any[]) {
 
   const result = await callStructured({
     messages: [
-      { role: "system", content: `You are a visual director for short-form emotional storytelling videos in a CONSISTENT WARM SEMI-REALISTIC CINEMATIC STYLE.
+      { role: "system", content: `You are a visual director for a faceless emotional short-form video channel. Each beat is ONE static-camera clip (~3-6 seconds) that an image-to-video model will animate from a still keyframe. The viewer must understand EVERY clip in under 2 seconds and feel the narrated line literally play out on screen.
 
-Art style rules (apply to EVERY scene):
-- Warm, semi-realistic human characters, soft facial features, expressive eyes, natural skin texture
-- Slightly stylized proportions (not cartoon, not hyper-realistic)
-- Cinematic lighting, shallow depth of field, 35mm lens look, soft contrast, warm color grading
-- Highly detailed but NOT hyper-realistic; NOT cartoon, NOT anime, NOT 3D render, NOT stock photo
-- Maintain the SAME character design (face shape, hair, outfit colors, distinguishing features) in every scene
+ART STYLE (apply to EVERY scene, identically):
+- Warm semi-realistic cinematic style — soft facial features, expressive eyes, natural skin texture, slightly stylized proportions.
+- Cinematic lighting, shallow depth of field, 35mm lens look, soft contrast, warm color grading.
+- NOT cartoon, NOT anime, NOT 3D render, NOT hyper-realistic stock photo.
+- SAME character design across every beat — identical face shape, hair color, outfit colors, distinguishing features. Treat it as a locked character sheet.
+- NO text, logos, watermarks, or typography in the frame (overlays come from a separate system).
 
-You are also a motion director. For each beat you must produce a SECOND prompt ("motion_prompt") that tells an image-to-video model exactly what should HAPPEN on-screen during the few seconds the narration line is spoken — the literal action, gesture, expression, object movement, or environmental change that visually depicts the words being narrated. The motion must match the meaning of the narration line, not just generic "cinematic energy".
+CAMERA — THE STABILITY RULE (this is the engagement-killer if violated):
+- LOCKED TRIPOD camera. The camera DOES NOT MOVE.
+- NO push-in, NO pull-back, NO pan, NO tilt, NO zoom, NO dolly, NO rack-focus, NO handheld, NO drone.
+- The composition of the keyframe is the composition for the entire clip — only the SUBJECT and ENVIRONMENT inside the frame change.
 
-Return ONLY valid JSON.` },
-      { role: "user", content: `Generate one visual scene prompt + one motion prompt per beat for this story video. Every image prompt MUST describe the scene in the consistent warm semi-realistic cinematic style defined above. Every motion_prompt MUST literally depict what the narration line of that beat is saying at that exact moment.
+MOTION — WHAT ANIMATES:
+- ONLY: character gesture, facial expression, object movement, lighting/weather shifts, paper unfolding, hands working, eyes widening.
+- The motion must LITERALLY depict the narration line of that beat. If the narration says "she opened the envelope", the hands open an envelope on screen — not a moody face shot.
+- ONE action per beat. No second action. No scene change inside the clip.
+- The keyframe captures the BEGINNING of the action (the "before"). The clip animates INTO the moment.
+
+CONTINUITY:
+- Identical character design in every beat. Same hair color, same outfit, same age.
+- The HOOK beat (beat 0) carries the strongest, most informative single frame — the viewer must understand the story setup from this frame alone with sound off.
+- The BUTTON beat (final beat) is the warm payoff frame — a quiet held image. Often a close-up of the object that recontextualized the story.
+
+Return ONLY valid JSON, no markdown fences.` },
+      { role: "user", content: `Generate ONE visual scene prompt + ONE motion prompt per narration beat.
 
 Story: "${story.title}"
 Summary: ${story.summary}
 Characters: ${JSON.stringify(story.characters)}
 Locations: ${JSON.stringify(story.locations)}
 
-Beats (each becomes ONE clip — the motion must illustrate the narrated text within its duration):
-${timedBeats.map((b: any, i: number) => `Beat ${i} (${b.duration?.toFixed(1)}s, ${b.purpose}):
+Beats (each becomes ONE locked-camera clip — the on-screen action must illustrate the narrated text inside its duration):
+${timedBeats.map((b: any, i: number) => `Beat ${i} (${b.duration?.toFixed(1)}s, purpose=${b.purpose}):
   Narration: "${b.text}"
   Visual intent: ${b.visual_intent}`).join("\n\n")}
 
 For each beat return:
-1. "prompt" — detailed still-image description starting with "Warm semi-realistic cinematic style:" (used to generate the starting frame). Include character appearance (hair color, outfit, distinguishing features) for cross-scene consistency.
-2. "motion_prompt" — 1–2 short sentences describing the LITERAL action/motion that depicts the narration line. Name the subject, the action verb, and the camera move. Examples:
-   - Narration "She opened the letter with trembling hands" → motion_prompt: "Sarah's trembling hands tear open the envelope, paper unfolding; slow push-in on her face as her eyes widen."
-   - Narration "The crowd erupted in cheers" → motion_prompt: "Crowd throws arms up and cheers, mouths open mid-shout; quick pull-back reveals the full stadium."
-   - Narration "Years passed in silence" → motion_prompt: "Slow time-lapse drift across the empty room, dust motes floating, light shifting from day to dusk."
-   The motion MUST match what the narration says — never substitute a generic "snappy cinematic" motion.
+
+1. "prompt" — detailed still-image description, used to generate the LOCKED keyframe. Must begin with "Warm semi-realistic cinematic style, locked tripod composition:" and include:
+   - The exact character(s) in frame (NAMES + identical appearance to other beats)
+   - The exact location
+   - The character's POSE at the START of the narrated action (their position BEFORE the motion happens)
+   - Composition (close-up / medium / wide; what's in the foreground vs. background)
+   - Lighting + color grading
+   - Vertical 9:16 framing implied
+
+2. "motion_prompt" — 1-2 short sentences in this STRUCTURE:
+   "SUBJECT performs ACTION. <one specific micro-detail of how>."
+   - The motion must LITERALLY depict the narration line.
+   - NO camera moves. NO "the camera pushes in", NO "pull-back", NO "pan", NO "zoom".
+   - Locked-frame subject motion only.
+   - Examples:
+     • Narration "She opened the letter with trembling hands" → "Hands tremble as they tear open the envelope; paper unfolds upward into the frame."
+     • Narration "He found the engraving inside the watch" → "Thumb opens the caseback; engraved text rises into focus as the case lifts away."
+     • Narration "The crowd erupted in cheers" → "Crowd raises arms and shouts in unison; mouths open mid-cheer, hands punch upward."
+     • Narration "Years passed in silence" → "Light slowly shifts from morning to dusk across the empty room; dust motes drift across the still air."
 
 Return JSON:
 {
   "scenes": [
-    {"beat_index": 0, "prompt": "Warm semi-realistic cinematic style: [detailed scene]...", "motion_prompt": "[literal depiction of what is narrated, with subject + action + camera move]", "characters_in_scene": ["names"], "location": "where", "target_duration": 3.65}
+    {
+      "beat_index": 0,
+      "prompt": "Warm semi-realistic cinematic style, locked tripod composition: <detailed still-image scene with character pose at the START of the action>",
+      "motion_prompt": "<SUBJECT performs ACTION literally depicting the narration. One micro-detail. NO camera moves.>",
+      "characters_in_scene": ["names"],
+      "location": "where",
+      "target_duration": 4.5
+    }
   ]
 }` },
     ],
@@ -1048,9 +1243,9 @@ async function stage10(sb: SB, runId: string, scenes: any[], castImagePath: stri
 
     const scene = scenes[i];
     try {
-      const stylePrefix = "Warm, semi-realistic human character, soft facial features, expressive eyes, natural skin texture, slightly stylized proportions, cinematic lighting, shallow depth of field, 35mm lens, soft contrast, warm color grading, highly detailed but not hyper-realistic, consistent character design. ";
+      const stylePrefix = "Warm semi-realistic cinematic style, LOCKED tripod composition (no camera move will follow). Soft facial features, expressive eyes, natural skin texture, slightly stylized proportions, cinematic lighting, shallow depth of field, 35mm lens, soft contrast, warm color grading, highly detailed but not hyper-realistic, consistent character design. ";
       const imgResult = await callImage({
-        prompt: `${stylePrefix}${scene.prompt}\n\nIMPORTANT: Warm semi-realistic cinematic style — NOT cartoon, NOT anime, NOT 3D render, NOT hyper-realistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Cinematic warm lighting, shallow depth of field, 35mm lens look. NO text, words, letters, watermarks, or typography in the image.`,
+        prompt: `${stylePrefix}${scene.prompt}\n\nIMPORTANT: Warm semi-realistic cinematic style — NOT cartoon, NOT anime, NOT 3D render, NOT hyper-realistic. Use the cast reference image for character design consistency (same face shape, hair, outfit colors). Vertical 9:16 format. Cinematic warm lighting, shallow depth of field, 35mm lens look. The character should be posed at the BEGINNING of the narrated action (the "before" frame) — the clip animates INTO the moment. NO text, words, letters, watermarks, or typography in the image.`,
         model: MODELS.IMAGE_FINAL, size: "9:16", quality: "medium",
         endpoint: `story_scene_image_${i}`,
         referenceImage: castRef,
@@ -1189,30 +1384,25 @@ async function stage11(sb: SB, runId: string, scenes: any[], offPeak = false) {
       throw new Error(message);
     }
 
-    // Build a narration-driven motion prompt so what happens on screen
-    // matches what is being SAID in this beat (not just generic "snappy" motion).
+    // Narration-driven, LOCKED-CAMERA motion prompt. The shorter and more
+    // imperative the prompt, the more faithfully Vidu Q3 Turbo follows it.
+    // Stage 9 already produces a clean action-only "motion_prompt"; we add a
+    // short narration anchor and a strict camera-lock negative.
     const narration = (scene.beat_text || "").toString().trim();
-    const visualIntent = (scene.visual_intent || "").toString().trim();
     const motionPrompt = (scene.motion_prompt || "").toString().trim();
-    const sceneDesc = (scene.prompt || "").toString().trim();
 
-    const parts: string[] = [];
-    if (motionPrompt) {
-      parts.push(`ACTION (must literally depict the narration): ${motionPrompt}`);
-    }
-    if (narration) {
-      parts.push(`NARRATION SPOKEN OVER THIS CLIP: "${narration}"`);
-    }
-    if (visualIntent) {
-      parts.push(`VISUAL INTENT: ${visualIntent}`);
-    }
-    if (sceneDesc) {
-      parts.push(`SCENE CONTEXT: ${sceneDesc.substring(0, 220)}`);
-    }
-    parts.push(
-      "Animate the starting image so the on-screen action visually illustrates the narration line above. Subject and action must match the words being spoken. Use cinematic but purposeful motion — character gestures, facial reactions, environmental changes, or camera moves (push-in, pan, tilt, rack-focus) that REINFORCE the meaning of the narration. Avoid generic random motion, avoid contradicting the narration, no morphing, no extra characters appearing."
-    );
-    const viduPrompt = parts.join(" ").substring(0, 1500);
+    const actionLine = motionPrompt
+      ? motionPrompt
+      : (narration ? `Animate the subject to depict: ${narration}` : "Subtle subject motion only.");
+
+    // Compact prompt — under 400 chars. Action first, locked-camera enforcement
+    // second. Avoids the long context dump that previously made Vidu invent
+    // generic camera moves and morphing artifacts.
+    const viduPrompt = [
+      actionLine,
+      "Locked tripod camera. NO camera movement, NO pan, NO tilt, NO zoom, NO push-in, NO pull-back, NO dolly.",
+      "Identical subject design throughout. NO morphing, NO new characters appearing, NO transformation, NO scene change.",
+    ].join(" ").substring(0, 1500);
 
     try {
       const viduResp = await fetch("https://api.vidu.com/ent/v2/img2video", {
@@ -1309,7 +1499,7 @@ serve(async (req) => {
     if (resumeStage === "stage6") {
       await log(sb, runId, "info", "Resuming from stage 6 (narration)");
       const story = meta.story;
-      const script = await stage6(sb, runId, story, meta.target_duration || 60);
+      const script = await stage6(sb, runId, story, meta.target_duration || STORY_TARGET_DURATION_DEFAULT);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script } });
 
       if (shouldChain()) { await selfChain(runId, "stage7"); return new Response(JSON.stringify({ status: "chaining" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -1366,7 +1556,7 @@ serve(async (req) => {
       if (shouldChain()) { await selfChain(runId, "stage6"); return new Response(JSON.stringify({ status: "chaining_stage6" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
 
       // Continue to stage 6+
-      const script = await stage6(sb, runId, story, meta.target_duration || 60);
+      const script = await stage6(sb, runId, story, meta.target_duration || STORY_TARGET_DURATION_DEFAULT);
       await updateRun(sb, runId, { generated_metadata: { ...meta, cast_image: castResult, script } });
 
       if (shouldChain()) { await selfChain(runId, "stage7"); return new Response(JSON.stringify({ status: "chaining_stage7" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
@@ -1393,7 +1583,7 @@ serve(async (req) => {
 
     if (resumeStage === "stage7") {
       const story = meta.story;
-      const script = meta.script || await stage6(sb, runId, story, meta.target_duration || 60);
+      const script = meta.script || await stage6(sb, runId, story, meta.target_duration || STORY_TARGET_DURATION_DEFAULT);
       const narration = await stage7(sb, runId, script);
       const timedBeats = await stage8(sb, runId, script, narration.alignment);
       await updateRun(sb, runId, { generated_metadata: { ...meta, script, narration: { path: narration.path }, timed_beats: timedBeats } });
