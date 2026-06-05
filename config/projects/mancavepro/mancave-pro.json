@@ -122,7 +122,7 @@
         "content_mode": "ai_generated",
         "overlay_type": "text",
         "style_config": {
-          "font_family": "Montserrat-Black.ttf",
+          "font_family": "Inter-Regular.ttf",
           "uppercase": false,
           "accent_color": "#FFFFFF",
           "shadow": false,
