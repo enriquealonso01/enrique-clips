@@ -2419,12 +2419,49 @@ Deno.serve(async (req) => {
                   const lineGapPx = (typeof sc.line_gap_px === "number")
                     ? Math.max(0, Math.round(sc.line_gap_px)) : 0;
 
+                  // Snap-preset-aware re-wrap. The outer wrapOverlayText()
+                  // (defined ~L113) uses a synthetic 304*scale frame width
+                  // calibrated for the LEGACY text-tight-box column at the
+                  // channel's centered position, not the snapchat preset's
+                  // full-width band. For a typical Inter Regular caption that
+                  // wraps at ~17 chars/line (fontSize 48 effective, charFactor
+                  // 0.62) and turns a single-line POV-hook-style snap into a
+                  // tall multi-line block that doesn't match SBB4's
+                  // pov_hook.snap_overlay look (see _shared/snapOverlay.ts).
+                  // Re-wrap here against the ACTUAL band width using a
+                  // charFactor calibrated for Inter Regular (~0.50). Both
+                  // knobs overridable in style_config. GATED behind
+                  // style_preset === "snapchat" so no other channel/overlay
+                  // is affected.
+                  const sBandWPx = bandWidthPct >= 100
+                    ? targetVideoWidth
+                    : Math.round(targetVideoWidth * bandWidthPct / 100);
+                  const sSideMargin = (typeof sc.side_margin_px === "number")
+                    ? Math.max(0, Math.round(sc.side_margin_px)) : 40;
+                  const sAvailW = Math.max(120, sBandWPx - 2 * sSideMargin);
+                  const sCharFactor = (typeof sc.wrap_char_factor === "number")
+                    ? Math.max(0.3, sc.wrap_char_factor) : 0.50;
+                  const sMaxChars = Math.max(12, Math.floor(sAvailW / (fontSize * sCharFactor)));
+                  const sSegs = sc.preserve_newlines ? rawText.split("\n") : [rawText];
+                  const sLines: string[] = [];
+                  for (const seg of sSegs) {
+                    const sWords = seg.split(/\s+/);
+                    let sCur = "";
+                    for (const sW of sWords) {
+                      if (sCur.length === 0) sCur = sW;
+                      else if ((sCur + " " + sW).length <= sMaxChars) sCur += " " + sW;
+                      else { sLines.push(sCur); sCur = sW; }
+                    }
+                    if (sCur) sLines.push(sCur);
+                  }
+                  if (sLines.length === 0) sLines.push("");
+
                   // Band sizing — uses an estimate of text_h since FFmpeg's
                   // runtime text_h isn't usable in drawbox y/h. ~1.18x fontsize
                   // approximates the rendered bbox height for Public Sans /
                   // Inter / Arial Regular at common sizes.
                   const estTextH = Math.round(fontSize * 1.18);
-                  const n = lines.length;
+                  const n = sLines.length;
                   const visibleBlockH = n * estTextH + Math.max(0, n - 1) * lineGapPx;
                   const sBarPadV = Math.max(6, Math.round(fontSize * padVFactor));
                   const sBh = visibleBlockH + 2 * sBarPadV;
@@ -2475,8 +2512,8 @@ Deno.serve(async (req) => {
                   //   n≥3:  symmetric stacking around the band center
                   const sCenterExpr = `${sBy} + ${sBh}/2`;
                   const sFontFileRef = `fontfile={{in_font}}`;
-                  for (let li = 0; li < lines.length; li++) {
-                    const sLineText = escapeFFmpegDrawtextText(lines[li]);
+                  for (let li = 0; li < sLines.length; li++) {
+                    const sLineText = escapeFFmpegDrawtextText(sLines[li]);
                     const sOutLabel = `v${filterIdx}`;
                     let sYExpr: string;
                     if (n === 1) {
