@@ -778,12 +778,18 @@ async function callElevenLabsWithTimestamps(text: string, voiceCfg: ElevenLabsVo
   if (prev) body.previous_text = prev;
   if (next) body.next_text = next;
 
+  // Hard 30s per-call timeout. The Supabase edge runtime kills the whole
+  // function at 150s of idle wall-clock; without this guard, a slow/stuck
+  // ElevenLabs response hangs forever, the function dies mid-segment, and
+  // the scheduler watchdog re-triggers a fresh story (paid-spend loop).
+  // Better to fail fast and let the run be marked `failed` cleanly.
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${voiceCfg.voiceId}/with-timestamps?output_format=mp3_44100_128`,
     {
       method: "POST",
       headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
     }
   );
   if (!response.ok) {
@@ -900,21 +906,34 @@ async function stage7Segmented(sb: SB, runId: string, script: any, gapMs: number
   // generate a long end-of-sentence pause. Context (previous_text/next_text) keeps prosody seamless.
   const stripTrailingPunct = (s: string) => s.replace(/[.!?]+\s*$/u, "").trim();
   const perSegment: { audioBytes: Uint8Array; alignment: any; duration: number; uploadPath: string }[] = [];
-  for (let i = 0; i < segments.length; i++) {
-    const isLast = i === segments.length - 1;
-    const ttsText = isLast ? segments[i] : stripTrailingPunct(segments[i]);
-    const prev = i > 0 ? segments[i - 1] : undefined;
-    // For the final segment, pass an explicit terminal cue as next_text so ElevenLabs
-    // applies a falling, finished intonation instead of an upward "more coming" lift.
-    const next = i < segments.length - 1
-      ? segments[i + 1]
-      : "[End of narration. Silence follows.]";
-    const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, voiceCfg, prev, next);
-    const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
-    const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
-    await r2Upload(uploadPath, audioBytes, "audio/mpeg");
-    perSegment.push({ audioBytes, alignment, duration, uploadPath });
-    await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB${isLast ? "" : " (period stripped)"}`);
+  // Fail-fast guard: an ElevenLabs hang on segment N (or any other error)
+  // must NOT leave the run in an "active" stage where the watchdog can
+  // re-trigger it indefinitely. On the first failure, mark the run failed
+  // with a clear error_message and throw — the outer handler catches and
+  // updates status="failed", which the watchdog ignores.
+  try {
+    for (let i = 0; i < segments.length; i++) {
+      const isLast = i === segments.length - 1;
+      const ttsText = isLast ? segments[i] : stripTrailingPunct(segments[i]);
+      const prev = i > 0 ? segments[i - 1] : undefined;
+      // For the final segment, pass an explicit terminal cue as next_text so ElevenLabs
+      // applies a falling, finished intonation instead of an upward "more coming" lift.
+      const next = i < segments.length - 1
+        ? segments[i + 1]
+        : "[End of narration. Silence follows.]";
+      const { audioBytes, alignment } = await callElevenLabsWithTimestamps(ttsText, voiceCfg, prev, next);
+      const duration = alignment?.character_end_times_seconds?.slice(-1)?.[0] ?? 0;
+      const uploadPath = `story-runs/${runId}/narration-segments/seg-${String(i).padStart(3, "0")}.mp3`;
+      await r2Upload(uploadPath, audioBytes, "audio/mpeg");
+      perSegment.push({ audioBytes, alignment, duration, uploadPath });
+      await log(sb, runId, "info", `  Seg ${i + 1}/${segments.length}: ${duration.toFixed(2)}s, ${(audioBytes.length / 1024).toFixed(0)}KB${isLast ? "" : " (period stripped)"}`);
+    }
+  } catch (segErr) {
+    const completedSegs = perSegment.length;
+    const errMsg = `Stage 7 segmented narration failed at segment ${completedSegs + 1}/${segments.length}: ${(segErr as Error).message}`;
+    await log(sb, runId, "error", errMsg);
+    await failRun(sb, runId, errMsg);
+    throw segErr;
   }
 
   // Build signed URLs for each segment for Rendi

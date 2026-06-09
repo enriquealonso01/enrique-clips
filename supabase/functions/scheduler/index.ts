@@ -254,10 +254,13 @@ Deno.serve(async (req) => {
           let targetFn: "story-pipeline" | "story-finalize" = "story-pipeline";
           switch (stuck.current_stage) {
             case "scene_images_generating": resumeStage = "stage10_continue"; break;
+            case "scene_prompts":           resumeStage = "stage9"; break; // had no case → fell through to resume=full (fresh story discovery, paid spend loop)
             case "beats_extracted":         resumeStage = "stage9"; break;
             case "narration_generated":     resumeStage = "stage9"; break;
             case "cast_generated":          resumeStage = "stage6"; break;
             case "story_selected":          resumeStage = "stage5"; break;
+            case "narration_script":        resumeStage = "stage6"; break; // mid-stage-6 stalls used to restart from stage 1
+            case "real_image":              resumeStage = "stage5"; break;
             case "audio_mixing":
             case "subtitles_processing":
             case "end_card_rendering":
