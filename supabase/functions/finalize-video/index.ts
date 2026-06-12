@@ -2799,6 +2799,20 @@ Deno.serve(async (req) => {
                        if (!dlResp.ok) throw new Error(`Rendi output download failed: ${dlResp.status}`);
                        finalVideo = new Uint8Array(await dlResp.arrayBuffer());
                        await log("info", `Rendi post-production succeeded. Size: ${(finalVideo.length / 1024 / 1024).toFixed(1)}MB, hasAudio=${hasAudioTrack(finalVideo)}`);
+                       // Delete the stored output from Rendi now that it's in memory —
+                       // stored files count against the account storage quota, and a
+                       // full quota 403s every future submit (2026-06-12 outage).
+                       try {
+                         const cleanupResp = await fetch(`https://api.rendi.dev/v1/commands/${command_id}/files`, {
+                           method: "DELETE",
+                           headers: { "X-API-KEY": RENDI_API_KEY },
+                         });
+                         if (!cleanupResp.ok && cleanupResp.status !== 404) {
+                           await log("warn", `Rendi storage cleanup returned ${cleanupResp.status} for command ${command_id} (non-fatal)`);
+                         }
+                       } catch (cleanupErr) {
+                         await log("warn", `Rendi storage cleanup failed (non-fatal): ${(cleanupErr as Error).message}`);
+                       }
                        return;
                      }
 
