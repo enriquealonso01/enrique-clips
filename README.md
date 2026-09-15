@@ -1,73 +1,43 @@
-# Welcome to your Lovable project
+# enrique-clips
 
-## Project info
+Faceless AI video pipeline: short-form videos (TikTok / Reels / Shorts)
+generated end to end — planning, keyframes, video generation, stitching,
+subtitles, metadata, publishing — from a single prompt config.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## How it works
 
-## How can I edit this code?
+A 7-step pipeline runs server-side in Supabase Edge Functions:
 
-There are several ways of editing your application.
+1. **Plan** — AI writes a Style Bible and a structured scene plan
+2. **Keyframes** — chained AI-generated end-frames per scene (K0–Kn)
+3. **Video generation** — each keyframe drives a motion clip (Kling / Pika / Vidu)
+4. **Polling** — wait for every clip to finish
+5. **Stitch** — concatenate, add music, burn overlays (FFmpeg, via Rendi)
+6. **Metadata** — AI generates title / description / hashtags
+7. **Publish** — optionally post to connected platforms
 
-**Use Lovable**
+Details: [docs/AI_ARCHITECTURE.md](docs/AI_ARCHITECTURE.md) (model routing,
+secrets) and [docs/PROMPT_CONFIG_REFERENCE.md](docs/PROMPT_CONFIG_REFERENCE.md)
+(the full `prompt_config_json` contract).
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Stack
 
-Changes made via Lovable will be committed automatically to this repo.
+- Vite + React 18 + TypeScript + Tailwind + shadcn-ui (frontend)
+- Supabase Edge Functions (`supabase/functions/`) — pipeline stages, scheduling, webhooks
+- OpenAI for text, Google Gemini for images, ElevenLabs for narration,
+  Submagic/OpusClip for subtitles
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Development
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+npm install
+npm run dev        # local dev server
+npm run build      # production build
+npm run test       # vitest
+npm run lint       # eslint
+npm run config:export   # export project configs from the database
+npm run config:push     # push project configs back
 ```
 
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Deployment is via Netlify (`netlify.toml`); Edge Functions deploy with the
+Supabase CLI.
