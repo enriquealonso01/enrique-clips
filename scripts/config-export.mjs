@@ -22,17 +22,30 @@ const newOnly = process.argv.slice(2).includes("--new-only");
 
 const supabase = await getServiceClient();
 
-const { data: projects, error } = await supabase
-  .from("projects")
-  .select("id, title, uploadpost_profile_username, prompt_config_json")
-  .eq("is_archived", false)
-  .order("uploadpost_profile_username", { ascending: true })
-  .order("title", { ascending: true });
+// The scheduled capture run intermittently dies with "canceling statement due to
+// statement timeout" from Supabase (seen 2026-10-08 and 2026-10-10). The query is a
+// single small read, so a short retry with backoff rides out the transient timeouts
+// instead of failing the daily job.
+async function fetchProjects(attempts = 3, delayMs = 10_000) {
+  for (let i = 1; i <= attempts; i++) {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id, title, uploadpost_profile_username, prompt_config_json")
+      .eq("is_archived", false)
+      .order("uploadpost_profile_username", { ascending: true })
+      .order("title", { ascending: true });
 
-if (error) {
-  console.error("Query failed:", error.message);
-  process.exit(1);
+    if (!error) return data;
+
+    const retryable = /timeout|5[0-9]{2}|connection/i.test(error.message || "");
+    console.error(`Query failed (attempt ${i}/${attempts}):`, error.message);
+    if (!retryable || i === attempts) process.exit(1);
+    await new Promise((r) => setTimeout(r, delayMs * i));
+  }
 }
+
+const projects = await fetchProjects();
+if (!projects) process.exit(1);
 
 // Load the existing manifest so --new-only knows which projects are already
 // tracked (by id) and which file paths are already taken.
