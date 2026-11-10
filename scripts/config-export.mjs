@@ -23,10 +23,11 @@ const newOnly = process.argv.slice(2).includes("--new-only");
 const supabase = await getServiceClient();
 
 // The scheduled capture run intermittently dies with "canceling statement due to
-// statement timeout" from Supabase (seen 2026-10-08 and 2026-10-10). The query is a
-// single small read, so a short retry with backoff rides out the transient timeouts
-// instead of failing the daily job.
-async function fetchProjects(attempts = 3, delayMs = 10_000) {
+// statement timeout" from Supabase (seen 2026-10-08, 2026-10-10, and 2026-11-06,
+// when all three retries were exhausted by ~3 minutes of upstream timeouts). The
+// query is a single small read, so a wider retry window rides out the transient
+// timeouts instead of failing the daily job.
+async function fetchProjects(attempts = 6, delayMs = 30_000) {
   for (let i = 1; i <= attempts; i++) {
     const { data, error } = await supabase
       .from("projects")
